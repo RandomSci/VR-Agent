@@ -80,7 +80,7 @@ async def process_single_conversation(
                 conf_uid=context.character_config.conf_uid,
                 history_uid=context.history_uid,
                 role="human",
-                content=input_text,
+                content=(metadata or {}).get("history_text") or input_text,
                 name=input_name,
             )
 

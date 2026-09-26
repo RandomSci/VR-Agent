@@ -241,7 +241,16 @@ class BasicMemoryAgent(AgentInterface):
 
     def _to_messages(self, input_data: BatchInput) -> List[Dict[str, Any]]:
         """Prepare messages for LLM API call."""
-        messages = self._memory.copy()
+        metadata = input_data.metadata or {}
+        # Livestream turns send only recent history. Unbounded history makes
+        # every request slower and more expensive the longer a stream runs.
+        history_limit = int(metadata.get("history_limit") or 0)
+        if history_limit > 0:
+            if len(self._memory) > history_limit * 4:
+                self._memory = self._memory[-history_limit * 2 :]
+            messages = self._memory[-history_limit:]
+        else:
+            messages = self._memory.copy()
         user_content = []
         text_prompt = self._to_text_prompt(input_data)
         if text_prompt:
@@ -279,8 +288,12 @@ class BasicMemoryAgent(AgentInterface):
                 skip_memory = True
 
             if not skip_memory:
+                # A compact form keeps per-turn instructions out of memory.
+                memory_text = metadata.get("memory_text")
                 self._add_message(
-                    text_prompt if text_prompt else "[User provided image(s)]", "user"
+                    memory_text
+                    or (text_prompt if text_prompt else "[User provided image(s)]"),
+                    "user",
                 )
         else:
             logger.warning("No content generated for user message.")

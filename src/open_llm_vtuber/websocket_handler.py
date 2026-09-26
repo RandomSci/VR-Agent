@@ -405,6 +405,13 @@ class WebSocketHandler:
             "viewer_message": message.text,
             "youtube_message_id": message.message_id,
             "skip_history": is_system,
+            "skip_memory": is_system,
+            # Compact record for memory and the history file; the full prompt
+            # with per-turn instructions is only sent once to the LLM.
+            "memory_text": f"{clean_viewer_text(viewer_name, 60)}: "
+            f"{clean_viewer_text(message.text, 280)}",
+            "history_text": clean_viewer_text(message.text, 500),
+            "history_limit": max(0, int(settings.max_history_messages)),
         }
 
         timing = runtime.latency.start(message.message_id, received_at or time.time())

@@ -25,7 +25,7 @@ def build_livestream_prompt(
         # Internal nudges (quiet-chat banter) are not viewer messages.
         return (
             "[Livestream] You are live on YouTube right now. "
-            f"{viewer_text} Keep it to one or two short sentences."
+            f"{viewer_text} Keep it to one short sentence. Never use <think> tags."
         )
 
     name = prompt_quote(viewer_name, 60) or "a viewer"
@@ -60,8 +60,9 @@ def build_livestream_prompt(
             )
 
     lines.append(
-        "Reply naturally as the configured character. Keep it stream-friendly and concise. "
-        "Do not write stage directions or describe actions in asterisks. "
+        "Reply naturally as the configured character in one or two short spoken "
+        "sentences, under 30 words, starting with the answer right away. "
+        "Never use <think> tags, inner thoughts, stage directions or asterisks. "
         "Acknowledge the viewer when it feels natural, but do not say the username every time."
     )
     return "\n".join(lines)

@@ -30,6 +30,7 @@ class AsyncLLM(StatelessLLMInterface):
         organization_id: str = "z",
         project_id: str = "z",
         temperature: float = 1.0,
+        max_tokens: int | None = None,
     ):
         """
         Initializes an instance of the `AsyncLLM` class.
@@ -45,6 +46,7 @@ class AsyncLLM(StatelessLLMInterface):
         self.base_url = base_url
         self.model = model
         self.temperature = temperature
+        self.max_tokens = max_tokens if max_tokens and max_tokens > 0 else NOT_GIVEN
         self.client = AsyncOpenAI(
             base_url=base_url,
             organization=organization_id,
@@ -104,6 +106,7 @@ class AsyncLLM(StatelessLLMInterface):
                 model=self.model,
                 stream=True,
                 temperature=self.temperature,
+                max_tokens=self.max_tokens,
                 tools=available_tools,
             )
             logger.debug(

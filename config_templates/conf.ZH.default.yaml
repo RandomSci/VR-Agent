@@ -143,6 +143,7 @@ character_config:
         llm_api_key: 'Your Open AI API key' # OpenAI API 密钥
         model: 'gpt-4o' # 使用的模型
         temperature: 1.0 # 温度，介于 0 到 2 之间
+        max_tokens: null # 可选的回复长度上限，例如直播用 90
 
       gemini_llm:
         llm_api_key: 'Your Gemini API Key' # Gemini API 密钥
@@ -506,7 +507,7 @@ live_config:
     video_id: null
     prefer_stream_list: true
     message_buffer_seconds: 180
-    response_cooldown_seconds: 5
+    response_cooldown_seconds: 1
     max_buffer_messages: 100
     same_user_cooldown_seconds: 90
     idle_banter_enabled: false
@@ -538,6 +539,8 @@ live_config:
     idle_max_seconds: 15
     idle_in_dev_mode: true
     viewer_actions_enabled: true
+    # Recent messages sent to the LLM per livestream reply. Lower is faster and cheaper.
+    max_history_messages: 10
 
   bilibili_live:
     # 要监控的B站直播间ID列表（直播间URL中的数字）
