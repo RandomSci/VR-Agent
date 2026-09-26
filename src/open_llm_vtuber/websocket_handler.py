@@ -544,6 +544,14 @@ class WebSocketHandler:
             if self.room_session.active:
                 self.room_client_uids.add(client_uid)
                 await self.room_session.register(client_uid, websocket.send_text)
+                # Latency: build the characters' agents now instead of on the
+                # first viewer message. No API request is made here.
+                if getattr(self.default_context_cache, "character_config", None):
+                    try:
+                        self._room_director_ready(client_uid, websocket)
+                        self._room_runtimes.prewarm()
+                    except Exception as exc:
+                        logger.debug(f"VR Room: prewarm skipped: {exc}")
             else:
                 # The room page falls back to the classic livestream page.
                 await websocket.send_text(

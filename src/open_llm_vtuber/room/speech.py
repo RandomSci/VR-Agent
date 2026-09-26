@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
@@ -249,6 +250,11 @@ class SpeakingCoordinator:
         self.clock = clock
         self.lock = asyncio.Lock()
         self.lines_spoken = 0
+        # Template lines ("Too slow, chat!", "Another point for Mika!") repeat a
+        # lot. Their audio is kept, so a repeat needs no TTS request at all.
+        self._line_cache: "OrderedDict[tuple, list[dict]]" = OrderedDict()
+        self.cache_hits = 0
+        self.cache_limit = 96
 
     @property
     def busy(self) -> bool:
@@ -283,6 +289,7 @@ class SpeakingCoordinator:
                     produced["audio"] += 1
                 else:
                     produced["silent"] += 1
+                captured.append(data)
                 payload = json.dumps(data)
             await send(payload)
 
@@ -305,7 +312,26 @@ class SpeakingCoordinator:
             )
             manager = TTSTaskManager()
             ok = False
+            cache_key = (id(engine), character_id, text)
+            cached = self._line_cache.get(cache_key) if len(text) <= 160 else None
+            captured: list[dict] = []
             try:
+                if cached:
+                    self._line_cache.move_to_end(cache_key)
+                    self.cache_hits += 1
+                    waiter = asyncio.create_task(
+                        message_handler.wait_for_response(
+                            client_uid, "frontend-playback-complete", timeout=seconds + 12
+                        )
+                    )
+                    await asyncio.sleep(0)
+                    for payload in cached:
+                        await send(json.dumps(payload))
+                    await send(json.dumps({"type": "backend-synth-complete"}))
+                    await waiter
+                    self.lines_spoken += 1
+                    self.session.state.add_line(character_id, text)
+                    return True
                 await manager.speak(
                     tts_text=text,
                     display_text=DisplayText(text=text, name=profile.name, avatar=None),
@@ -330,6 +356,10 @@ class SpeakingCoordinator:
                 await send(json.dumps({"type": "backend-synth-complete"}))
                 await waiter
                 ok = produced["audio"] > 0
+                if ok and produced["silent"] == 0 and len(text) <= 160:
+                    self._line_cache[cache_key] = captured
+                    while len(self._line_cache) > self.cache_limit:
+                        self._line_cache.popitem(last=False)
                 if ok:
                     self.lines_spoken += 1
                     self.session.record_success(character_id)

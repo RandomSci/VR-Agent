@@ -141,6 +141,61 @@ def comma_splitter(text: str) -> Tuple[str, str]:
     return text, ""
 
 
+# Words that sound natural spoken alone before a comma ("Oh, ..." "Well, ...").
+STANDALONE_OPENERS = {
+    "oh",
+    "ooh",
+    "ah",
+    "aww",
+    "well",
+    "wow",
+    "hmm",
+    "okay",
+    "ok",
+    "yes",
+    "yeah",
+    "yep",
+    "no",
+    "nope",
+    "ugh",
+    "sure",
+    "alright",
+    "honestly",
+    "actually",
+    "hehe",
+    "haha",
+    "yay",
+    "whoa",
+    "huh",
+    "so",
+    "right",
+    "true",
+}
+
+
+def first_clause_split(text: str, min_words: int = 2) -> Optional[Tuple[str, str]]:
+    """Split the first chunk of a reply at a natural comma so speech starts early.
+
+    A comma qualifies when at least ``min_words`` words come before it, or the
+    single word before it is a natural standalone opener ("Oh," "Well,").
+    Broken fragments ("I," "Think,") wait for a better boundary instead.
+    """
+    for index, char in enumerate(text):
+        if char not in COMMAS:
+            continue
+        head = text[: index + 1].strip()
+        body = head[:-1].strip()
+        if " " in body:
+            words = body.split()
+            if len(words) >= min_words:
+                return head, text[index + 1 :].strip()
+        elif body.lower().strip("!?.'\"") in STANDALONE_OPENERS:
+            return head, text[index + 1 :].strip()
+        elif len(body) >= 4 and not body.isascii():  # CJK clause without spaces
+            return head, text[index + 1 :].strip()
+    return None
+
+
 def has_punctuation(text: str) -> bool:
     """
     Check if the text is a punctuation mark.
@@ -490,12 +545,15 @@ class SentenceDivider:
                 current_tags = self._get_current_tags()
 
                 # Handle first sentence with comma if enabled
-                if (
-                    self._is_first_sentence
+                split = (
+                    first_clause_split(self._buffer)
+                    if self._is_first_sentence
                     and self.faster_first_response
                     and contains_comma(self._buffer)
-                ):
-                    sentence, remaining = comma_splitter(self._buffer)
+                    else None
+                )
+                if split:
+                    sentence, remaining = split
                     if sentence.strip():
                         yield SentenceWithTags(
                             text=sentence.strip(),

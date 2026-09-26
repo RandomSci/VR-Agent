@@ -24,6 +24,7 @@ class TTSEngine(TTSInterface):
         similarity_boost: float = 0.5,
         style: float = 0.0,
         use_speaker_boost: bool = True,
+        optimize_streaming_latency: int | None = None,
     ):
         """
         Initializes the ElevenLabs TTS engine.
@@ -46,6 +47,11 @@ class TTSEngine(TTSInterface):
         self.similarity_boost = similarity_boost
         self.style = style
         self.use_speaker_boost = use_speaker_boost
+        self.optimize_streaming_latency = (
+            max(0, min(4, int(optimize_streaming_latency)))
+            if optimize_streaming_latency is not None
+            else None
+        )
 
         # Determine file extension from output format
         if "mp3" in output_format:
@@ -94,7 +100,11 @@ class TTSEngine(TTSInterface):
             )
 
             # Generate audio using ElevenLabs API
+            extra = {}
+            if self.optimize_streaming_latency is not None:
+                extra["optimize_streaming_latency"] = self.optimize_streaming_latency
             audio = self.client.text_to_speech.convert(
+                **extra,
                 text=text,
                 voice_id=self.voice_id,
                 model_id=self.model_id,

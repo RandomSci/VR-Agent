@@ -596,8 +596,15 @@ class ElevenLabsTTSConfig(I18nMixin):
     similarity_boost: float = Field(0.5, alias="similarity_boost")
     style: float = Field(0.0, alias="style")
     use_speaker_boost: bool = Field(True, alias="use_speaker_boost")
+    optimize_streaming_latency: Optional[int] = Field(
+        None, alias="optimize_streaming_latency"
+    )
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
+        "optimize_streaming_latency": Description(
+            en="ElevenLabs latency optimization 0 to 4 (higher is faster, may affect number reading). Leave empty for the default.",
+            zh="ElevenLabs 延迟优化 0 到 4",
+        ),
         "api_key": Description(
             en="API key for ElevenLabs TTS service", zh="ElevenLabs TTS 服务的 API 密钥"
         ),

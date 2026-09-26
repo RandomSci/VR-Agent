@@ -43,10 +43,14 @@ from loguru import logger  # noqa: E402
 logger.remove()
 logger.add(sys.stderr, level="WARNING")
 
-REPLY = (
-    "Oh, stars are my favorite thing to look at on quiet nights. "
-    "Orion is the easiest one to find, even from the city."
-)
+REPLIES = {
+    "normal": (
+        "Oh, stars are my favorite thing to look at on quiet nights. "
+        "Orion is the easiest one to find, even from the city."
+    ),
+    "short": "Hi there, welcome in!",
+}
+REPLY = REPLIES["normal"]
 
 
 class SimLLM:
@@ -203,6 +207,7 @@ async def run(args) -> dict:
         idle_banter_enabled=False,
         idle_banter_delay_seconds=0,
         discovery_retry_seconds=10,
+        single_message_fast_path=not args.no_fast_path,
     )
     service = YouTubeLiveChatService(config, None, handler)
     handler.register_chat_service(service)
@@ -277,7 +282,11 @@ def main() -> None:
     parser.add_argument("--gap", type=float, default=1.5)
     parser.add_argument("--play-delay", type=float, default=0.01)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--reply", choices=list(REPLIES), default="normal")
+    parser.add_argument("--no-fast-path", action="store_true")
     args = parser.parse_args()
+    global REPLY
+    REPLY = REPLIES[args.reply]
     out = asyncio.run(run(args))
     if args.json:
         print(json.dumps(out, indent=1))

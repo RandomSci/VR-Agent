@@ -483,6 +483,8 @@ class YouTubeLiveChatService:
         self._last_message_seen_at = time.time()
         self._last_response_debug_at = 0.0
         self._message_event = asyncio.Event()
+        self.fast_path_selections = 0
+        self.selector_selections = 0
         self._received_at: dict[str, float] = {}
 
     def enabled(self) -> bool:
@@ -607,6 +609,8 @@ class YouTubeLiveChatService:
             if not self.playwright_source
             else self.playwright_source.health.chat_attached,
             "buffer_size": len(self.buffer.messages),
+            "fast_path_selections": self.fast_path_selections,
+            "selector_selections": self.selector_selections,
             "vr_agent": runtime.snapshot(),
             "latency": runtime.latency.summary(),
         }
@@ -682,31 +686,37 @@ class YouTubeLiveChatService:
                     continue
                 if not self.connection_provider.is_idle():
                     continue
-                cooldown_remaining = self.config.response_cooldown_seconds - (
-                    time.time() - self._last_response_completed_at
-                )
-                if cooldown_remaining > 0:
-                    if buffer_size:
-                        await asyncio.sleep(min(cooldown_remaining, 1.0))
-                        self._message_event.set()
-                    continue
-
                 messages = self.buffer.get_eligible(self.config.selector_max_messages)
                 if not messages:
                     await self._maybe_idle_banter()
                     continue
 
-                selection = await self.selector.select(
-                    messages, self.buffer.author_recently_answered
-                )
-                if not selection.selected_message_id:
-                    continue
-                selected = next(
-                    (m for m in messages if m.message_id == selection.selected_message_id),
-                    None,
-                )
-                if not selected:
-                    continue
+                if len(messages) == 1 and getattr(self.config, "single_message_fast_path", True):
+                    # Fast path: one eligible message needs no pacing or ranking.
+                    # Moderation, deduplication and spam checks already ran in the buffer.
+                    selected = messages[0]
+                    selection = SelectionResult(selected.message_id, "single eligible message (fast path)", 1.0)
+                    self.fast_path_selections += 1
+                else:
+                    cooldown_remaining = self.config.response_cooldown_seconds - (
+                        time.time() - self._last_response_completed_at
+                    )
+                    if cooldown_remaining > 0:
+                        await asyncio.sleep(min(cooldown_remaining, 1.0))
+                        self._message_event.set()
+                        continue
+                    selection = await self.selector.select(
+                        messages, self.buffer.author_recently_answered
+                    )
+                    self.selector_selections += 1
+                    if not selection.selected_message_id:
+                        continue
+                    selected = next(
+                        (m for m in messages if m.message_id == selection.selected_message_id),
+                        None,
+                    )
+                    if not selected:
+                        continue
 
                 logger.info(
                     f"YouTube message selected: id={selected.message_id}, "

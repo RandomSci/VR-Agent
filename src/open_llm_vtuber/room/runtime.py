@@ -210,6 +210,17 @@ class RoomRuntimes:
             character.recent_dialogue.append(text[:200])
         return text
 
+    def prewarm(self) -> None:
+        """Build every character's agent and emotion map now, not on the first
+        viewer message. Creating an agent makes no API request."""
+        started = time.perf_counter()
+        for cid in self.session.state.characters:
+            try:
+                self.agent(cid)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(f"VR Room: prewarm {cid} failed: {exc}")
+        logger.info(f"VR Room: character agents ready in {(time.perf_counter() - started) * 1000:.0f} ms")
+
     def describe(self) -> dict[str, Any]:
         return {
             cid: {
