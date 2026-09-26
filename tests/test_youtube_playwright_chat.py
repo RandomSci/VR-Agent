@@ -353,3 +353,28 @@ def test_supervisor_attaches_delivers_and_recovers_from_a_closed_page(monkeypatc
     assert [m.text for m in received] == ["first message", "after recovery"]
     assert received[0].author_display_name == "@new-viewer"
     assert source.health.browser_running is False  # torn down on cancel
+
+
+def test_browser_does_not_announce_headless_chrome():
+    """YouTube live chat shows 'update your browser' to HeadlessChrome."""
+    source = make_source()
+    source.config.playwright_headless = True
+    source.config.playwright_user_data_dir = ""
+    source.config.playwright_user_agent = ""
+
+    async def scenario():
+        try:
+            await source._ensure_browser()
+        except Exception as exc:
+            if "Executable doesn't exist" in str(exc):
+                pytest.skip("Chromium unavailable")
+            raise
+        try:
+            page = await source._context.new_page()
+            await page.set_content("<p>x</p>")
+            return await page.evaluate("navigator.userAgent")
+        finally:
+            await source._teardown(full=True)
+
+    ua = run(scenario())
+    assert "Headless" not in ua and "Chrome/" in ua
