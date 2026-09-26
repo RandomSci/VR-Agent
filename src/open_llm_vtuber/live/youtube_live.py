@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator, Callable, Deque, Optional
 import httpx
 from loguru import logger
 
+from ..vr_agent import latency_trace
 from ..vr_agent.state import VRAgentState, runtime
 
 
@@ -48,6 +49,8 @@ class YouTubeChatMessage:
     kind: str = "text"  # "text" or "paid" (Super Chat)
     amount: str = ""
     author_type: str = ""  # "", "member", "moderator", "owner"
+    dom_at: float = 0.0  # when the chat node appeared in the YouTube page (latency trace)
+    detected_at: float = 0.0  # when the server received it
 
     @property
     def age_seconds(self) -> float:
@@ -546,7 +549,12 @@ class YouTubeLiveChatService:
         return consumed
 
     def _accept(self, message: YouTubeChatMessage, source_label: str) -> bool:
+        trace = latency_trace.tracker.start(message.message_id)
+        if message.dom_at:
+            trace.mark("chat_dom_inserted", at=message.dom_at)
+        trace.mark("chat_detected", at=message.detected_at or None)
         accepted, reason = self.buffer.add(message)
+        trace.mark("chat_filtered")
         if accepted and self._observe(message):
             self._last_message_seen_at = time.time()
             return True
@@ -705,6 +713,7 @@ class YouTubeLiveChatService:
                     f"confidence={selection.confidence:.2f}, reason={selection.reason}"
                 )
                 received_at = self._received_at.pop(selected.message_id, time.time())
+                latency_trace.tracker.start(selected.message_id).mark("chat_selected")
                 # Mark before responding so a slow response cannot answer twice.
                 self.buffer.mark_answered(selected)
                 completed = await self.connection_provider.process_youtube_live_message(

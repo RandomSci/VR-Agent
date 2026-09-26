@@ -8,6 +8,7 @@ from loguru import logger
 
 from ..agent.output_types import DisplayText, Actions
 from ..live2d_model import Live2dModel
+from ..vr_agent import latency_trace
 from ..tts.tts_interface import TTSInterface
 from ..utils.stream_audio import prepare_audio_payload
 from .types import WebSocketSend
@@ -65,6 +66,7 @@ class TTSTaskManager:
         logger.debug(
             f"🏃Queuing TTS task for: '''{tts_text}''' (by {display_text.name})"
         )
+        latency_trace.mark("first_speakable_chunk_ready")
 
         # Get current sequence number
         current_sequence = self._sequence_counter
@@ -106,6 +108,8 @@ class TTSTaskManager:
                 while self._next_sequence_to_send in buffered_payloads:
                     next_payload = buffered_payloads.pop(self._next_sequence_to_send)
                     await websocket_send(json.dumps(next_payload))
+                    if next_payload.get("audio"):
+                        latency_trace.mark("audio_payload_sent")
                     self._next_sequence_to_send += 1
 
                 self._payload_queue.task_done()
@@ -139,7 +143,11 @@ class TTSTaskManager:
         """Process TTS generation and queue the result for ordered delivery"""
         audio_file_path = None
         try:
+            if sequence_number == 0:
+                latency_trace.mark("tts_request_started")
             audio_file_path = await self._generate_audio(tts_engine, tts_text)
+            if sequence_number == 0:
+                latency_trace.mark("tts_first_audio_received")
             payload = prepare_audio_payload(
                 audio_path=audio_file_path,
                 display_text=display_text,

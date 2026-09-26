@@ -37,6 +37,7 @@ from .vr_agent.prompting import build_livestream_prompt
 from .vr_agent.text_safety import clean_viewer_text
 from .vr_agent.usage import usage
 from .room.profiles import RoomConfig, load_room
+from .vr_agent import latency_trace
 from .room.session import RoomSession
 
 
@@ -357,8 +358,17 @@ class WebSocketHandler:
         if live.is_system or not self._room_director_ready(client_uid, websocket):
             return None
         session = self.room_session
+        trace = latency_trace.tracker.start(message.message_id)
+        trace.mark("routing_started")
         try:
             plan = session.director.plan(live)
+            trace.mark("routing_finished")
+            trace.info.update(
+                path="room",
+                mode=plan.decision.mode,
+                speakers=[t.speaker for t in plan.turns],
+                character_routing_ms=trace.span_ms("routing_started", "routing_finished"),
+            )
         except Exception as exc:
             logger.error(f"VR Room: director planning failed, using classic reply: {exc}")
             return None
@@ -395,11 +405,19 @@ class WebSocketHandler:
             )
         await session.speech.lock.acquire()
         session.begin_conversation()
-        task = asyncio.create_task(session.director.run(plan))
+        latency_trace.tracker.set_client_trace(client_uid, trace)
+        token = latency_trace.activate(trace)
+        try:
+            task = asyncio.create_task(session.director.run(plan))
+        finally:
+            latency_trace.deactivate(token)
         self.current_conversation_tasks[client_uid] = task
 
         def on_done(finished: asyncio.Task) -> None:
             timing.finished_at = time.time()
+            trace.mark("interaction_finished")
+            if latency_trace.tracker.client_trace(client_uid) is trace:
+                latency_trace.tracker.set_client_trace(client_uid, None)
             if session.speech.lock.locked():
                 session.speech.lock.release()
             session.end_conversation()
@@ -683,6 +701,12 @@ class WebSocketHandler:
             await self.room_session.speech.lock.acquire()
             self.room_session.begin_conversation()
         runtime.set(VRAgentState.THINKING, message.message_id)
+        classic_trace = latency_trace.tracker.start(message.message_id)
+        classic_trace.info.setdefault("path", "classic")
+        classic_trace.mark("routing_started")
+        classic_trace.mark("routing_finished")
+        latency_trace.tracker.set_client_trace(client_uid, classic_trace)
+        trace_token = latency_trace.activate(classic_trace)
         task = asyncio.create_task(
             process_single_conversation(
                 context=context,
@@ -693,10 +717,14 @@ class WebSocketHandler:
                 metadata=metadata,
             )
         )
+        latency_trace.deactivate(trace_token)
         self.current_conversation_tasks[client_uid] = task
 
         def on_done(finished: asyncio.Task) -> None:
             timing.finished_at = time.time()
+            classic_trace.mark("interaction_finished")
+            if latency_trace.tracker.client_trace(client_uid) is classic_trace:
+                latency_trace.tracker.set_client_trace(client_uid, None)
             if finished.cancelled():
                 outcome = "interrupted"
             elif finished.exception():
@@ -1053,6 +1081,16 @@ class WebSocketHandler:
         """
         Handle audio playback start notification
         """
+        trace = latency_trace.tracker.client_trace(client_uid)
+        if trace is not None:
+            client_time = data.get("client_time")
+            at = None
+            try:
+                if client_time and abs(float(client_time) / 1000 - time.time()) < 5:
+                    at = float(client_time) / 1000
+            except (TypeError, ValueError):
+                at = None
+            trace.mark("audio_playback_started", at=at)
         group_members = self.chat_group_manager.get_group_members(client_uid)
         if len(group_members) > 1:
             display_text = data.get("display_text")

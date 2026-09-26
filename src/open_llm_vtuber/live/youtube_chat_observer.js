@@ -143,7 +143,8 @@
   }
 
   // Polymer may stamp the message text a tick after the node is inserted.
-  function handleRenderer(el, attempt) {
+  function handleRenderer(el, attempt, domAt) {
+    domAt = domAt || Date.now(); // when the message node was first seen (latency trace)
     const data = extract(el);
     if (!data) return;
     if (seen.has(data.id)) return;
@@ -152,10 +153,11 @@
       return;
     }
     if (!data.text && !data.amount && attempt < RETRY_DELAYS_MS.length) {
-      setTimeout(() => handleRenderer(el, attempt + 1), RETRY_DELAYS_MS[attempt]);
+      setTimeout(() => handleRenderer(el, attempt + 1, domAt), RETRY_DELAYS_MS[attempt]);
       return;
     }
     if (!remember(data.id)) return;
+    data.dom_at = domAt;
     if (data.text || data.amount) queue(data);
   }
 

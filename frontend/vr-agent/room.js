@@ -754,7 +754,12 @@
         if (speech.pendingAction && character.primary) flushPendingAction();
       }
       showCaption(character, item.text);
-      sendToServer({ type: "audio-play-start", display_text: item.text ? { text: item.text } : null, forwarded: true });
+      sendToServer({
+        type: "audio-play-start",
+        display_text: item.text ? { text: item.text } : null,
+        forwarded: true,
+        client_time: Date.now(), // latency trace: when audio actually started
+      });
     };
     const finish = () => {
       if (speech.current !== current) return;

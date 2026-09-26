@@ -597,9 +597,10 @@ class YouTubePlaywrightChatSource:
         if not isinstance(batch, list) or not self._on_messages:
             return
         now = datetime.now(timezone.utc)
+        detected_at = time.time()
         messages: list[YouTubeChatMessage] = []
         for raw in batch[:200]:
-            msg = self._to_message(raw, now)
+            msg = self._to_message(raw, now, detected_at)
             if msg:
                 messages.append(msg)
         if not messages:
@@ -611,7 +612,9 @@ class YouTubePlaywrightChatSource:
         except Exception as exc:
             logger.error(f"YouTube chat message handler failed: {exc}")
 
-    def _to_message(self, raw: Any, now: datetime) -> Optional[YouTubeChatMessage]:
+    def _to_message(
+        self, raw: Any, now: datetime, detected_at: float = 0.0
+    ) -> Optional[YouTubeChatMessage]:
         if not isinstance(raw, dict):
             return None
         message_id = str(raw.get("id") or "")[:200]
@@ -633,4 +636,17 @@ class YouTubePlaywrightChatSource:
             kind=kind,
             amount=amount,
             author_type=author_type,
+            dom_at=_dom_seconds(raw.get("dom_at"), detected_at),
+            detected_at=detected_at,
         )
+
+
+def _dom_seconds(value: Any, detected_at: float) -> float:
+    """Browser Date.now() milliseconds to seconds, ignoring implausible values."""
+    try:
+        seconds = float(value) / 1000.0
+    except (TypeError, ValueError):
+        return 0.0
+    if not detected_at or abs(detected_at - seconds) > 60:
+        return 0.0
+    return seconds

@@ -77,8 +77,14 @@ def count_llm_calls(llm: Any, source: str = "agent") -> Any:
         return llm
 
     def chat_completion(*args, **kwargs):
+        from . import latency_trace
+
         usage.record_llm(getattr(llm, "_vr_usage_source", None) or source)
-        return original(*args, **kwargs)
+        latency_trace.mark("llm_request_started")
+        result = original(*args, **kwargs)
+        if hasattr(result, "__aiter__"):
+            return _first_token_marker(result)
+        return result
 
     chat_completion._vr_counted = True  # type: ignore[attr-defined]
     try:
@@ -86,3 +92,15 @@ def count_llm_calls(llm: Any, source: str = "agent") -> Any:
     except Exception:  # pragma: no cover - exotic LLM objects
         return llm
     return llm
+
+
+async def _first_token_marker(stream: Any):
+    """Pass an LLM token stream through, marking the first token's arrival."""
+    from . import latency_trace
+
+    first = True
+    async for item in stream:
+        if first:
+            latency_trace.mark("llm_first_token")
+            first = False
+        yield item

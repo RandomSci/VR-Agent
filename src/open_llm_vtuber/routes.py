@@ -183,6 +183,13 @@ def init_webtool_routes(
         )
         return JSONResponse({"sent": name, "client": client_uid})
 
+    @router.get("/vr-agent/latency")
+    async def vr_agent_latency():
+        """Developer monitoring: per-stage latency from chat message to first audible speech."""
+        from .vr_agent.latency_trace import tracker
+
+        return JSONResponse({"summary": tracker.summary(), "recent": tracker.recent(10)})
+
     @router.get("/vr-agent/room/status")
     async def vr_room_status():
         """Developer monitoring for the multi-character room."""

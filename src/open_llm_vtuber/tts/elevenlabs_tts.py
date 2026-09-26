@@ -108,8 +108,11 @@ class TTSEngine(TTSInterface):
             )
 
             # Write the audio data to file
+            from ..vr_agent import latency_trace
+
             with open(speech_file_path, "wb") as f:
                 for chunk in audio:
+                    latency_trace.mark("tts_first_byte")
                     f.write(chunk)
 
             logger.info(
