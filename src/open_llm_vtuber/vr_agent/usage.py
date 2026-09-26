@@ -104,3 +104,6 @@ async def _first_token_marker(stream: Any):
             latency_trace.mark("llm_first_token")
             first = False
         yield item
+    # Not a stage on the critical path; lets tests and the report prove that
+    # speech started before the model finished writing.
+    latency_trace.mark("llm_completed")

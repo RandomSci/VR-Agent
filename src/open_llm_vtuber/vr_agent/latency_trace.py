@@ -89,6 +89,14 @@ class LatencyTrace:
             **self.info,
             "spans_ms": {label: self.span_ms(a, b) for label, a, b in SPANS},
             "stages": [s for s in STAGES if s in self.marks],
+            # seconds since the first mark, for every mark (including extras
+            # such as llm_completed that are not on the critical path)
+            "marks_s": {
+                name: round(at - min(self.marks.values()), 4)
+                for name, at in sorted(self.marks.items(), key=lambda kv: kv[1])
+            }
+            if self.marks
+            else {},
         }
 
 
