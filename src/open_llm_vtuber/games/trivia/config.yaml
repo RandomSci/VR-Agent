@@ -6,6 +6,11 @@ aliases: [trivia, trivia battle, quiz, trivia game, quiz game]
 enabled: true
 players: 2
 viewer_participation: true
+# Read out when a viewer asks how the game works. Keep it true to the code below.
+how_to_play: >-
+  A question pops up on the board. Chat gets a few seconds to type the answer first,
+  then Mika and Luna take their guesses. Every correct answer is a point, and after
+  five rounds whoever has the most points wins. Chat plays as one team!
 
 rounds_per_game: 5
 default_difficulty: medium          # easy, medium, hard, or mixed

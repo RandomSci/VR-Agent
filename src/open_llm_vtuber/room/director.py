@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import itertools
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
@@ -33,6 +34,21 @@ if TYPE_CHECKING:  # pragma: no cover
 
 HARD_TURN_LIMIT = 4
 _ids = itertools.count(1)
+
+
+def asks_character(text: str, profile: Any) -> bool:
+    """True when ``text`` puts a question to that character by name
+    ("What do you think, Luna?", "Mika, would you like to go first?")."""
+    if not text or profile is None or "?" not in text:
+        return False
+    names = [n for n in getattr(profile, "names", []) if n]
+    if not names:
+        return False
+    alternation = "|".join(sorted((re.escape(n) for n in names), key=len, reverse=True))
+    for sentence in re.findall(r"[^.!?]*\?", text):
+        if re.search(rf"(?<![a-z0-9])(?:{alternation})(?![a-z0-9])", sentence.lower()):
+            return True
+    return False
 
 
 @dataclass
@@ -162,7 +178,10 @@ class ConversationDirector:
                 and plan.decision.mode in ("group", "compare")
                 and len(plan.turns) > 1
             ):
-                return f"{quote} They asked everyone. Answer for yourself only; {name(plan.turns[1].speaker)} speaks after you."
+                return (
+                    f"{quote} They asked everyone. Give your own answer; {name(plan.turns[1].speaker)} "
+                    f"answers right after you, so you may end by asking {name(plan.turns[1].speaker)} what she thinks."
+                )
             if previous:
                 return (
                     f'{quote} {name(previous.speaker)} already answered: "{prompt_quote(previous.text, 200)}". '
@@ -170,9 +189,17 @@ class ConversationDirector:
                 )
             return f"{quote} Answer them."
         if turn.kind == "follow_up" and previous:
+            said = prompt_quote(previous.text, 200)
+            if asks_character(previous.text, room.get(turn.speaker)):
+                return (
+                    f'{quote} {name(previous.speaker)} answered and then asked you: "{said}" '
+                    f"Answer {name(previous.speaker)}'s question directly with your own opinion, talking to her, "
+                    "in one or two short sentences."
+                )
             return (
-                f'{name(previous.speaker)} just said: "{prompt_quote(previous.text, 200)}" '
-                f"React to {name(previous.speaker)} in one short sentence, in character, then stop."
+                f'{quote} {name(previous.speaker)} answered: "{said}" '
+                f"Talk to {name(previous.speaker)} directly: agree, disagree or tease her, and add your own take, "
+                "in one or two short sentences."
             )
         if turn.kind == "ask":
             return (
@@ -180,20 +207,63 @@ class ConversationDirector:
                 "as the viewer requested."
             )
         if turn.kind == "reply" and previous:
+            last = index + 1 >= self._budget()
             return (
                 f'{name(previous.speaker)} just said to you: "{prompt_quote(previous.text, 200)}" '
-                f"Answer {name(previous.speaker)} in one or two short sentences."
+                f"Answer {name(previous.speaker)} directly, talking to her, in one or two short sentences."
+                + (" Do not ask another question back." if last else "")
             )
         return f"{quote} Answer them."
 
-    def _game_note(self) -> Optional[str]:
-        engine = self.session.show.engine
+    def _budget(self) -> int:
+        return max(1, min(HARD_TURN_LIMIT, self.session.room.director.max_turns))
+
+    def _continuation(self, plan: InteractionPlan, index: int) -> Optional[Turn]:
+        """When a character asks the other one a question, the other one answers.
+        Bounded by the turn budget, and optional so a waiting viewer wins."""
+        turn = plan.turns[index]
+        if index != len(plan.turns) - 1 or len(plan.turns) >= self._budget():
+            return None
+        available = self.session.state.available_characters()
+        for other in available:
+            if other == turn.speaker:
+                continue
+            if asks_character(turn.text, self.session.room.get(other)):
+                return Turn(other, "reply", addressee=turn.speaker, optional=True)
+        return None
+
+    GAME_TALK_RE = re.compile(
+        r"\b(?:games?|play|playing|trivia|quiz|rules|start|compete|challenge|battle|round|score)\b",
+        re.I,
+    )
+
+    def _game_note(self, plan: Optional[InteractionPlan] = None) -> Optional[str]:
+        show = self.session.show
+        engine = show.engine
         if engine.playing:
             return (
                 f"You are in the middle of {engine.active.info.display_name}. Answer briefly, "
                 "the game continues right after."
             )
-        return None
+        text = plan.message.clean_text if plan else ""
+        if not (show.current_offer() or self.GAME_TALK_RE.search(text)):
+            return None
+        games = []
+        for factory in show.registry.enabled():
+            rules = factory.info.how_to_play or factory.info.description
+            games.append(
+                f"{factory.info.display_name} ({rules})"
+                if rules
+                else factory.info.display_name
+            )
+        if not games:
+            return "No games are installed right now; say so honestly if asked."
+        return (
+            "Games the stream can run: " + "; ".join(games) + ". "
+            "The stream starts and runs games on screen by itself when a viewer says "
+            '"let\'s start" or names the game. Never invent other rules, never host a game '
+            "in conversation and never ask quiz questions yourselves; just invite them to say let's start."
+        )
 
     # ------------------------------------------------------------------
     # running
@@ -229,7 +299,10 @@ class ConversationDirector:
         await session.push(ops)
 
         rerouted = False
-        for index, turn in enumerate(plan.turns):
+        index = -1
+        while index + 1 < len(plan.turns):
+            index += 1
+            turn = plan.turns[index]
             if turn.optional and self.pending_probe():
                 turn.skipped = "viewer waiting"
                 for rest in plan.turns[index:]:
@@ -310,7 +383,17 @@ class ConversationDirector:
             turn.text = text
             session.record_success(turn.speaker)
             session.state.add_line(turn.speaker, text)
+            session.show.note_text(text)
             await session.push(self._listener_reactions(plan, turn))
+            follow = self._continuation(plan, index)
+            if follow is not None:
+                plan.turns.append(follow)
+                session.trace(
+                    "turn_added",
+                    interaction=plan.id,
+                    character=follow.speaker,
+                    reason="asked by " + turn.speaker,
+                )
 
         session.state.active_interaction = None
         spoken = sum(1 for t in plan.turns if t.text)
@@ -329,7 +412,7 @@ class ConversationDirector:
             self.session.state,
             self._instruction(plan, index),
             intent=turn.intent if turn.intent.requested else None,
-            game_note=self._game_note(),
+            game_note=self._game_note(plan),
         )
 
     def _replacement(self, speaker: str) -> Optional[str]:

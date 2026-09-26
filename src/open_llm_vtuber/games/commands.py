@@ -14,6 +14,7 @@ from typing import Optional
 from .base import (
     ChangeGame,
     Command,
+    HowToPlay,
     ListGames,
     NextRound,
     SetCategory,
@@ -133,6 +134,41 @@ _CATEGORY_ALIASES = {
 }
 
 
+_RULES_RE = re.compile(
+    r"\bhow (?:does|do|would|will) (?:it|this|that|the game|trivia|you play(?: it)?|we play(?: it)?|i play(?: it)?|that game|this game|\w+ (?:battle|game)) (?:work|go)\b"
+    r"|\bhow (?:do|does|can) (?:i|we|you|chat|one) (?:play|join|answer|win)\b|\bhow to play\b"
+    r"|\bwhat are the rules\b|\b(?:the |its |it's )?rules\?|\bexplain (?:the )?(?:game|rules|it)\b|\bhow does it work\b",
+    re.I,
+)
+# "sure", "yes!", "let's start", "I'm in" ... only meaningful right after a game was offered.
+_ACCEPT_RE = re.compile(
+    r"^(?:(?:ok(?:ay)?|sure|yes+|yeah+|yep|yup|ya|yas+|alright|all right|fine|go|lets go|let'?s go|sounds good|why not|of course|absolutely|definitely|bet|ready|im ready|i'?m ready|i'?m in|im in|count me in|me too|do it|let'?s do it|lets do it|bring it on|go for it|i'?m interested|im interested|interested|start|start it|begin|let'?s start|lets start|let'?s begin|lets begin|let'?s play|lets play|play|start the game|start now|go ahead|i want to play|wanna play|hell yeah|heck yes|please|pls|plz)[\s,.!?]*)+$",
+    re.I,
+)
+_BARE_START_RE = re.compile(
+    r"^(?:(?:ok(?:ay)?|so|then|now|alright)[\s,]+)?(?:let'?s|lets|can we|we can|pls|please)?\s*(?:start|begin|play)(?:\s+(?:the game|a game|it|now|already|please|pls))*[\s!.?]*$",
+    re.I,
+)
+
+
+def _mentioned_game(text: str, registry: GameRegistry) -> Optional[str]:
+    lowered = f" {normalise_name(text)} "
+    for factory in registry.enabled():
+        names = {
+            normalise_name(factory.info.id),
+            normalise_name(factory.info.display_name),
+            *(normalise_name(a) for a in factory.info.aliases),
+        }
+        if any(n and f" {n} " in lowered for n in names):
+            return factory.info.id
+    return None
+
+
+def mentioned_game(text: str, registry: GameRegistry) -> Optional[str]:
+    """Installed game named anywhere in ``text`` (for offers), or None."""
+    return _mentioned_game(text, registry)
+
+
 def _words(text: str) -> int:
     return len(text.split())
 
@@ -176,12 +212,26 @@ def parse_command(
     players: Optional[dict[str, str]] = None,
     game_active: bool = False,
     categories: tuple[str, ...] = (),
+    offered: Optional[str] = None,
 ) -> Optional[Command]:
-    """``players`` maps lower-case names and aliases to character ids."""
+    """``players`` maps lower-case names and aliases to character ids.
+    ``offered`` is the game the room just offered or talked about; short
+    replies like "sure" or "let's start" then start it."""
     raw = str(text or "").strip()
-    if not raw or _words(raw) > MAX_COMMAND_WORDS:
+    if not raw or _words(raw) > MAX_COMMAND_WORDS + 4:
         return None
-    lowered = raw.lower()
+    lowered = raw.lower().replace("\u2019", "'")
+
+    if not game_active:
+        named = _mentioned_game(lowered, registry)
+        if _RULES_RE.search(lowered) and (named or offered):
+            return HowToPlay(named or offered)
+        if offered and _ACCEPT_RE.match(lowered):
+            return StartGame(game_id=offered)
+        if _BARE_START_RE.match(lowered):
+            return StartGame(game_id=offered)
+    if _words(raw) > MAX_COMMAND_WORDS:
+        return None
 
     if _STOP_RE.search(lowered):
         return StopGame()

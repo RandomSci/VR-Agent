@@ -17,6 +17,20 @@ from ..utils.stream_audio import prepare_audio_payload
 
 
 # Convert class methods to standalone functions
+
+
+def join_spoken(left: str, right: str) -> str:
+    """Join two spoken chunks. The splitter strips the space between sentences,
+    so "Oh, that's easy!" + "It's Wanda." must not become "easy!It's"."""
+    left = left or ""
+    right = right or ""
+    if not left or not right:
+        return left + right
+    if left[-1].isspace() or right[0].isspace() or right[0] in ",.!?;:)]}":
+        return left + right
+    return left + " " + right
+
+
 def create_batch_input(
     input_text: str,
     images: Optional[List[Dict[str, Any]]],
@@ -101,7 +115,7 @@ async def handle_sentence_output(
         else:
             logger.debug("🚫 No translation engine available. Skipping translation.")
 
-        full_response += display_text.text
+        full_response = join_spoken(full_response, display_text.text)
         await tts_manager.speak(
             tts_text=tts_text,
             display_text=display_text,

@@ -138,9 +138,9 @@ def test_compare_runs_two_turns_then_stops_with_context():
     plan = run_plan(session, "Which one of you is smarter?", runner)
     assert len(runner.calls) == 2
     first, second = runner.calls
-    assert "Answer for yourself only" in first[2]
-    assert f"{session.room.get(first[0]).name} just said" in second[2]
-    assert "React to" in second[2]
+    assert "Give your own answer" in first[2]
+    assert f"{session.room.get(first[0]).name} answered" in second[2]
+    assert f"Talk to {session.room.get(first[0]).name} directly" in second[2]
     # Room lines include the viewer and both characters, and each prompt is bounded.
     lines = [line.speaker for line in session.state.recent_lines]
     assert lines[0] == "@ana" and set(lines[1:]) == {"mika", "luna"}

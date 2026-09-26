@@ -339,3 +339,44 @@ def test_trivia_battle_plays_on_the_board_with_chat_and_sound(browser):
         page.wait_for_selector(".vrb-board", state="hidden", timeout=5000)
         assert usage.snapshot()["llm_requests"] == 0
         assert not errors
+
+
+def test_trivia_starts_from_a_natural_conversation(browser, tmp_path):
+    """The exact chat from a real stream: the viewer asks what games there
+    are, how trivia works, then says "Sure". The board must appear, and none
+    of this may call the LLM (rules come from the game's config.yaml)."""
+    from open_llm_vtuber.vr_agent.usage import usage
+
+    usage.reset()
+    with Server() as server:
+        page, errors = open_room(browser, server)
+        page.set_viewport_size({"width": 1280, "height": 720})
+        for text in (
+            "what games can you play?",
+            "Trivia game? How does it work? I'm interested",
+        ):
+            assert httpx.post(
+                server.base + "/harness/chat", json={"user": "@selwyn", "text": text}
+            ).json()["consumed"], text
+        assert page.locator(".vrb-board:not([hidden])").count() == 0
+        assert httpx.post(
+            server.base + "/harness/chat", json={"user": "@selwyn", "text": "Sure"}
+        ).json()["consumed"]
+        page.wait_for_selector(".vrb-board:not([hidden])", timeout=5000)
+        page.wait_for_function(
+            "document.querySelector('.vrb-round').textContent === 'Round 1/5'",
+            timeout=8000,
+        )
+        assert page.inner_text(".vrb-question").endswith("?")
+        # The stage followed the viewport change without a reload.
+        box = page.evaluate(
+            "() => document.getElementById('vr-room-world').getBoundingClientRect().width"
+            " / vrRoom.state().camera.zoom"
+        )
+        assert abs(box - 1280) < 4, box
+        page.wait_for_timeout(700)  # let the question fade in before the picture
+        shot = os.environ.get("VR_SCREENSHOT_DIR")
+        if shot:
+            page.screenshot(path=str(Path(shot) / "trivia-board.png"))
+        assert usage.snapshot()["llm_requests"] == 0
+        assert not errors

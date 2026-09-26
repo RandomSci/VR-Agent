@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from . import events as ev
-from .prompting import system_prompt
+from .prompting import strip_wrapping_quotes, system_prompt
 
 if TYPE_CHECKING:  # pragma: no cover
     from .director import InteractionPlan, Turn
@@ -123,6 +123,9 @@ class RoomRuntimes:
         async def tagged_send(payload: str) -> None:
             if payload.startswith('{"type": "audio"'):
                 data = json.loads(payload)
+                shown = data.get("display_text")
+                if isinstance(shown, dict) and shown.get("text"):
+                    shown["text"] = strip_wrapping_quotes(str(shown["text"]))
                 data["character"] = cid
                 data["emotion_mode"] = "profile"
                 if data.get("audio"):
@@ -192,7 +195,7 @@ class RoomRuntimes:
                 character.speaking = False
                 character.spoken_turns += 1
             await session.push(session.emit(ev.SPEECH_ENDED, character=cid))
-        text = " ".join(str(text or "").split())
+        text = strip_wrapping_quotes(" ".join(str(text or "").split()))
         if text and state["audio"] == 0 and engine is not None:
             session.record_failure(cid, "tts produced no audio")
         session.trace(

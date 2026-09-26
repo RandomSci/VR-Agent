@@ -220,7 +220,14 @@
     layers.camera.addChild(layers.background, layers.characters);
     layers.root.addChild(layers.camera);
     app.stage.addChild(layers.root);
-    window.addEventListener("resize", fitStage);
+    // PIXI resizes the canvas on the next animation frame, so fit the stage
+    // when the renderer itself reports the new size (window resize, OBS
+    // source size change, rotation, fullscreen). No reload, no polling.
+    app.renderer.on("resize", fitStage);
+    if (window.ResizeObserver) {
+      new ResizeObserver(() => app.resize()).observe(document.documentElement);
+    }
+    window.addEventListener("resize", () => app.resize());
     fitStage();
     app.ticker.add(onFrame);
   }

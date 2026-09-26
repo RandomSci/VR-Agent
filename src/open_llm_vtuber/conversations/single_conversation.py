@@ -7,6 +7,7 @@ import numpy as np
 from .conversation_utils import (
     create_batch_input,
     process_agent_output,
+    join_spoken,
     send_conversation_start_signals,
     process_user_input,
     finalize_conversation_turn,
@@ -125,7 +126,7 @@ async def process_single_conversation(
                     response_part_str = (
                         str(response_part) if response_part is not None else ""
                     )
-                    full_response += response_part_str  # Accumulate text response
+                    full_response = join_spoken(full_response, response_part_str)
                 else:
                     logger.warning(
                         f"Received unexpected item type from agent chat stream: {type(output_item)}"

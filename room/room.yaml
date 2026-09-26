@@ -19,7 +19,7 @@ relationship: |
 
 director:
   max_turns: 3                 # hard cap of spoken turns per viewer message (never above 4)
-  follow_up_chance: 0.25       # chance the other character adds one short line
+  follow_up_chance: 0.4        # chance the other character talks back to the first one
   silent_reaction_chance: 0.9  # chance the other character reacts without speaking (free)
   fairness_window: 6
   failure_threshold: 3         # LLM or TTS failures in a row before a character cools down

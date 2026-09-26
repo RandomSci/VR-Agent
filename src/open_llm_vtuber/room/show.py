@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Deque, Optional
 from loguru import logger
 
 from ..games import GameEngine, GameRegistry, PlayerSpec, StepResult, parse_command
+from ..games.commands import mentioned_game
 from ..games.base import LineRequest
 from ..games.engine import EngineSettings, Outcome
 from . import events as ev
@@ -55,6 +56,7 @@ class QueuedLine:
 
 class ShowRunner:
     MAX_OPTIONAL_LINE_AGE = 6.0
+    OFFER_SECONDS = 180.0  # "sure" / "let's start" count as yes for this long
 
     def __init__(
         self,
@@ -82,6 +84,31 @@ class ShowRunner:
         self.lines_shown_silently = 0
         self.sleep = asyncio.sleep  # injectable for simulated-time tests
         self._pending_camera: list[dict[str, Any]] = []
+        self.offered_game: Optional[str] = None
+        self.offered_until = 0.0
+
+    # ------------------------------------------------------------------
+    # game offers: a game that was just mentioned can be started with "sure"
+    # ------------------------------------------------------------------
+    def offer(self, game_id: Optional[str], now: Optional[float] = None) -> None:
+        if not game_id or not self.registry.get(game_id):
+            return
+        self.offered_game = game_id
+        self.offered_until = (self.clock() if now is None else now) + self.OFFER_SECONDS
+
+    def current_offer(self, now: Optional[float] = None) -> Optional[str]:
+        now = self.clock() if now is None else now
+        if self.offered_game and now <= self.offered_until:
+            return self.offered_game
+        return None
+
+    def note_text(self, text: str, now: Optional[float] = None) -> None:
+        """Any line in the room (viewer or character) that names a game offers it."""
+        if self.engine.playing:
+            return
+        game_id = mentioned_game(text or "", self.registry)
+        if game_id:
+            self.offer(game_id, now)
 
     # ------------------------------------------------------------------
     # players and names
@@ -118,10 +145,23 @@ class ShowRunner:
         playing = self.engine.playing
         categories = self.engine.active.info.categories if playing else ()
         command = parse_command(
-            text, self.registry, self.name_map(), playing, categories
+            text,
+            self.registry,
+            self.name_map(),
+            playing,
+            categories,
+            offered=None if playing else self.current_offer(now),
         )
+        if command is None:
+            self.note_text(text, now)
         if command is not None:
             outcome = self.engine.handle_command(command, self.players(), now)
+            if outcome.reply == "how_to_play":
+                self.offer(outcome.values.get("game_id"), now)
+            elif outcome.reply == "games_list" and self.registry.count() == 1:
+                self.offer(self.registry.default().info.id, now)
+            elif outcome.reply == "game_started":
+                self.offered_game = None
             ops = self.apply(outcome.result)
             self._reply(outcome, message)
             logger.info(

@@ -190,6 +190,21 @@ class GameEngine:
                     "count": self.registry.count(),
                 },
             )
+        if isinstance(command, base.HowToPlay):
+            factory = self.registry.get(command.game_id) or self.registry.default()
+            if not factory:
+                return Outcome(
+                    False, "games_list", {"summary": self.registry.summary_sentence()}
+                )
+            return Outcome(
+                True,
+                "how_to_play",
+                {
+                    "game": factory.info.display_name,
+                    "game_id": factory.info.id,
+                    "rules": factory.info.how_to_play or factory.info.description,
+                },
+            )
         if isinstance(command, StartGame):
             if command.requested_name and not command.game_id:
                 return Outcome(

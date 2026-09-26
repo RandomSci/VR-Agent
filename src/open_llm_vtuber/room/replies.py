@@ -60,7 +60,12 @@ def command_reply(
     game = str(values.get("game") or "the game")
     summary = str(values.get("summary") or "")
     if key == "games_list":
-        return summary
+        if values.get("count") == 1:
+            return f"{summary} Want to play? Just say yes!"
+        return f"{summary} Which one? Say the name to start!" if summary else None
+    if key == "how_to_play":
+        rules = str(values.get("rules") or "").strip()
+        return f"{rules} Ready? Say let's start!".strip()
     if key == "unsupported_game":
         name = str(values.get("name") or "That game").strip()
         name = name[:1].upper() + name[1:]

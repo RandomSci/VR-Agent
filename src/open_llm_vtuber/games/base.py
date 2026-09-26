@@ -75,11 +75,13 @@ class GameInfo:
     categories: tuple[str, ...] = ()
     difficulties: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
+    how_to_play: str = ""
 
     def describe(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "display_name": self.display_name,
+            "how_to_play": self.how_to_play,
             "players": self.players,
             "viewer_participation": self.viewer_participation,
             "enabled": self.enabled,
@@ -138,6 +140,11 @@ class ListGames:
 
 
 @dataclass(frozen=True)
+class HowToPlay:
+    game_id: Optional[str] = None  # None means the offered or default game
+
+
+@dataclass(frozen=True)
 class SetDifficulty:
     level: str  # easy, medium, hard, or harder / easier (relative)
 
@@ -158,6 +165,7 @@ Command = Union[
     NextRound,
     ChangeGame,
     ListGames,
+    HowToPlay,
     SetDifficulty,
     SetCategory,
     SetFirstPlayer,

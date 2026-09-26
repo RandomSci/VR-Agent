@@ -92,6 +92,7 @@ def load(config: dict[str, Any], game_dir: Path) -> GameFactory:
         categories=categories,
         difficulties=DIFFICULTIES,
         aliases=tuple(str(a) for a in config.get("aliases") or []),
+        how_to_play=" ".join(str(config.get("how_to_play") or "").split())[:400],
     )
 
     def create(
