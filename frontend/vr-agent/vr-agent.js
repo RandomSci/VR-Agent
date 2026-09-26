@@ -128,7 +128,8 @@
     const phase = PHASE_TEXT[state.phase] ? state.phase : "listening";
     ui.state.dataset.phase = phase;
     ui.stateText.textContent = PHASE_TEXT[phase];
-    ui.state.hidden = !state.settings.show_state_indicator;
+    // No "Thinking" label on stream; the line reappears once she answers.
+    ui.state.hidden = !state.settings.show_state_indicator || phase === "thinking";
   }
 
   let cardHideTimer = null;

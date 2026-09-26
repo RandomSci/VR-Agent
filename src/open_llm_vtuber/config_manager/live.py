@@ -42,7 +42,7 @@ class YouTubeLiveConfig(I18nMixin):
     playwright_page_recycle_hours: float = Field(6.0, alias="playwright_page_recycle_hours")
     prefer_stream_list: bool = Field(True, alias="prefer_stream_list")
     message_buffer_seconds: int = Field(180, alias="message_buffer_seconds")
-    response_cooldown_seconds: float = Field(5.0, alias="response_cooldown_seconds")
+    response_cooldown_seconds: float = Field(1.0, alias="response_cooldown_seconds")
     max_buffer_messages: int = Field(100, alias="max_buffer_messages")
     same_user_cooldown_seconds: int = Field(90, alias="same_user_cooldown_seconds")
     idle_banter_enabled: bool = Field(False, alias="idle_banter_enabled")
@@ -94,6 +94,7 @@ class VRAgentConfig(I18nMixin):
     idle_max_seconds: float = Field(15.0, alias="idle_max_seconds")
     idle_in_dev_mode: bool = Field(True, alias="idle_in_dev_mode")
     viewer_actions_enabled: bool = Field(True, alias="viewer_actions_enabled")
+    max_history_messages: int = Field(10, alias="max_history_messages")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "overlay_title": Description(

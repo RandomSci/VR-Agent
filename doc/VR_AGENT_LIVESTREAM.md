@@ -85,3 +85,17 @@ page is recycled every 6 hours to keep memory flat.
 - `model_dict.json` emotion map for mao_pro was corrected. Anger and disgust now use the pout
   (exp_08), sadness the sad face (exp_05), fear and surprise the surprised face (exp_07). The old
   map pointed anger at closed eyes and sadness at a smile.
+
+## Speed and cost
+
+- Chat is read the moment it appears (no polling) and the reply loop wakes instantly.
+- Replies are asked for in one or two short sentences with no `<think>` tags, and the first
+  audio starts after the first phrase (`faster_first_response: True` in the agent settings).
+- Each livestream reply sends only the last `vr_agent.max_history_messages` (default 10)
+  messages. Memory and the history file store just `@viewer: message`, not the per-turn
+  instructions. Before this, history grew forever, so every reply got slower and more expensive
+  the longer a stream ran.
+- `response_cooldown_seconds` default is now 1 (was 5).
+- Optional `max_tokens` under `openai_llm` caps reply length (90 is a good livestream value).
+- The chat to voice time for every reply is logged (`VR Agent latency`) and summarised at
+  `/vr-agent/status`.

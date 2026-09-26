@@ -134,7 +134,7 @@ async def send_conversation_start_signals(
     websocket_send: WebSocketSend, metadata: Optional[Dict[str, Any]] = None
 ) -> None:
     """Send initial conversation signals"""
-    status_text = "Preparing a live reply..." if metadata and metadata.get("source") == "youtube_live" else "Thinking..."
+    is_live = bool(metadata and metadata.get("source") == "youtube_live")
     await websocket_send(
         json.dumps(
             {
@@ -143,7 +143,8 @@ async def send_conversation_start_signals(
             }
         )
     )
-    await websocket_send(json.dumps({"type": "full-text", "text": status_text}))
+    if not is_live:  # livestream replies show no "Thinking..." subtitle
+        await websocket_send(json.dumps({"type": "full-text", "text": "Thinking..."}))
 
 
 async def process_user_input(
