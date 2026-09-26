@@ -65,5 +65,8 @@ cudatoolkit = ">=11.0,<12"
 target-version = "py310"
 
 [tool.ruff.lint]
+# Pin the rule set. Ruff 0.16 widened its defaults (~950 new findings in
+# untouched upstream code), which made CI fail on every push.
+select = ["E4", "E7", "E9", "F"]
 # Ignore E402 (module level import not at top of file) for the run_bilibili_live.py script
 per-file-ignores = { "scripts/run_bilibili_live.py" = ["E402"] }
