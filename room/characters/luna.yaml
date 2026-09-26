@@ -11,9 +11,17 @@ persona: |
   often with a small understated joke.
 
 voice:
-  tts_model: edge_tts
+  # ElevenLabs "Kawaii Aerisita" (cute anime voice). api_key and model_id come from
+  # conf.yaml's elevenlabs_tts block. Other cute options: Ayla b8JMPeNuVrqqWExQc8e9,
+  # Tilly MkTSSXNgnBULS6ek4pon.
+  tts_model: elevenlabs_tts
   settings:
-    voice: en-GB-SoniaNeural
+    voice_id: vGQNBgLaiM3EdZtxIiuY
+  # Used only if ElevenLabs fails, so Luna never goes silent.
+  fallback:
+    tts_model: edge_tts
+    settings:
+      voice: en-GB-SoniaNeural
 
 layout: {x: 0.81, bottom: 1.01, height: 0.95, face_x: 0.5, face_y: 0.16}
 

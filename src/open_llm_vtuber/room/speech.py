@@ -34,6 +34,54 @@ def _default_factory(engine_type: str, **kwargs: Any) -> Any:
     return TTSFactory.get_tts_engine(engine_type, **kwargs)
 
 
+class FallbackTTS:
+    """Speaks with ``primary``; if it raises or returns no file, uses ``fallback``."""
+
+    def __init__(self, primary: Any, fallback: Any, label: str = ""):
+        self.primary = primary
+        self.fallback = fallback
+        self.label = label
+        self.fallbacks_used = 0
+
+    @staticmethod
+    def _ok(path: Any) -> bool:
+        if not path:
+            return False
+        try:
+            import os
+
+            return os.path.exists(str(path)) and os.path.getsize(str(path)) > 0
+        except Exception:
+            return False
+
+    async def async_generate_audio(self, text: str, file_name_no_ext=None) -> Any:
+        try:
+            path = await self.primary.async_generate_audio(text, file_name_no_ext)
+            if self._ok(path):
+                return path
+            logger.warning(f"VR Room: primary voice for {self.label} returned no audio")
+        except Exception as exc:
+            logger.warning(f"VR Room: primary voice for {self.label} failed: {exc}")
+        self.fallbacks_used += 1
+        return await self.fallback.async_generate_audio(text, file_name_no_ext)
+
+    def generate_audio(self, text: str, file_name_no_ext=None) -> Any:
+        try:
+            path = self.primary.generate_audio(text, file_name_no_ext)
+            if self._ok(path):
+                return path
+        except Exception as exc:
+            logger.warning(f"VR Room: primary voice for {self.label} failed: {exc}")
+        self.fallbacks_used += 1
+        return self.fallback.generate_audio(text, file_name_no_ext)
+
+    def remove_file(self, filepath: str, verbose: bool = True) -> None:
+        self.primary.remove_file(filepath, verbose)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.primary, name)
+
+
 class CharacterVoices:
     def __init__(
         self,
@@ -52,11 +100,16 @@ class CharacterVoices:
         self.base_source = None
 
     def _base_settings(self, model: str) -> dict[str, Any]:
+        # conf.yaml keeps a block per engine (elevenlabs_tts: api_key, model_id, ...),
+        # even when another engine is active, so a character override only needs voice_id.
         config, _ = self._base()
-        if not config or getattr(config, "tts_model", None) != model:
+        if not config:
+            return {}
+        block = getattr(config, model.lower(), None)
+        if block is None:
             return {}
         try:
-            return getattr(config, model.lower()).model_dump()
+            return {k: v for k, v in block.model_dump().items() if v not in (None, "")}
         except Exception:
             return {}
 
@@ -95,24 +148,40 @@ class CharacterVoices:
             return self._engines[character_id]
         engine = None
         try:
-            settings = {
-                **self._base_settings(profile.voice.tts_model),
-                **profile.voice.settings,
-            }
-            engine = self.factory(profile.voice.tts_model, **settings)
-            if engine is not None:
-                try:
-                    engine._vr_usage_source = f"room:{character_id}"
-                except Exception:
-                    pass
+            engine = self._build(profile.voice, character_id)
         except Exception as exc:
             self.errors[character_id] = str(exc)[:200]
             logger.error(f"VR Room: voice for {character_id} unavailable: {exc}")
             engine = None
+        fallback_spec = getattr(profile.voice, "fallback", None)
+        if fallback_spec is not None and fallback_spec.tts_model:
+            try:
+                backup = self._build(fallback_spec, character_id)
+            except Exception as exc:
+                logger.error(
+                    f"VR Room: fallback voice for {character_id} unavailable: {exc}"
+                )
+                backup = None
+            if engine is None and backup is not None:
+                logger.warning(f"VR Room: {character_id} is using the fallback voice")
+                engine = backup
+            elif engine is not None and backup is not None:
+                engine = FallbackTTS(engine, backup, character_id)
+                engine._vr_usage_source = f"room:{character_id}"
         if engine is not None:
             # Created once and reused; a failed creation is retried next time.
             self._engines[character_id] = engine
             self.errors.pop(character_id, None)
+        return engine
+
+    def _build(self, spec: Any, character_id: str) -> Any:
+        settings = {**self._base_settings(spec.tts_model), **spec.settings}
+        engine = self.factory(spec.tts_model, **settings)
+        if engine is not None:
+            try:
+                engine._vr_usage_source = f"room:{character_id}"
+            except Exception:
+                pass
         return engine
 
     def describe(self) -> dict[str, Any]:

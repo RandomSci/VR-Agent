@@ -146,9 +146,11 @@ class VoiceSpec:
 
     tts_model: Optional[str] = None
     settings: dict[str, Any] = field(default_factory=dict)
+    # Used when the primary engine fails or returns no audio, so the character never goes silent.
+    fallback: Optional["VoiceSpec"] = None
 
     @classmethod
-    def parse(cls, raw: Any) -> "VoiceSpec":
+    def parse(cls, raw: Any, allow_fallback: bool = True) -> "VoiceSpec":
         if not isinstance(raw, dict):
             return cls()
         model = raw.get("tts_model")
@@ -159,7 +161,12 @@ class VoiceSpec:
         settings = raw.get("settings") or {}
         if not isinstance(settings, dict):
             raise ValueError("voice.settings must be a mapping")
-        return cls(tts_model=model, settings=dict(settings))
+        fallback = None
+        if allow_fallback and raw.get("fallback") is not None:
+            fallback = cls.parse(raw.get("fallback"), allow_fallback=False)
+            if not fallback.tts_model:
+                fallback = None
+        return cls(tts_model=model, settings=dict(settings), fallback=fallback)
 
     def describe(self) -> str:
         if not self.tts_model:
