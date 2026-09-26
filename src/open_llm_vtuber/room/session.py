@@ -13,6 +13,7 @@ import json
 import random
 import re
 import time
+from collections import deque
 from typing import Any, Awaitable, Callable, Optional
 
 from loguru import logger
@@ -86,6 +87,24 @@ class RoomSession:
             clock=clock,
         )
         self._conversation_paused_game = False
+        from .director import ConversationDirector
+
+        self.director = ConversationDirector(self, rng=self.rng, clock=clock)
+        self.traces: deque[dict[str, Any]] = deque(maxlen=300)
+
+    def trace(self, name: str, **data: Any) -> None:
+        """Observability: where time goes in each interaction (developer only)."""
+        entry = {"trace": name, "at": round(self.clock(), 3)}
+        for key, value in data.items():
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                entry[key] = value if not isinstance(value, str) else value[:120]
+            elif isinstance(value, (list, dict)):
+                entry[key] = value
+        self.traces.append(entry)
+        interesting = {
+            k: v for k, v in entry.items() if k not in ("trace", "at", "turns")
+        }
+        logger.info(f"VR Room {name} {interesting}")
 
     def configure_voices(self, base_tts_config: Any, base_engine: Any) -> None:
         """Called by the server with conf.yaml's TTS so 'inherit' voices work."""
@@ -421,6 +440,8 @@ class RoomSession:
             "speech_allowed": self.speech_allowed(),
             "voices": self.voices.describe(),
             "show": self.show.status(),
+            "director": self.director.status(),
+            "traces": list(self.traces)[-60:],
             "room": self.room.describe(),
             "clients": {uid: self._client_models.get(uid, {}) for uid in self._clients},
             "state": self.state.snapshot(),

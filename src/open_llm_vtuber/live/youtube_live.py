@@ -504,6 +504,9 @@ class YouTubeLiveChatService:
         if self._running:
             return
         self._running = True
+        register = getattr(self.connection_provider, "register_chat_service", None)
+        if register:
+            register(self)
         runtime.set(VRAgentState.STARTING, f"chat source {self.chat_source}")
         logger.info(f"YouTube Live mode started (chat_source={self.chat_source}).")
         ingest = (

@@ -309,6 +309,122 @@ class WebSocketHandler:
         primary = self._get_primary_client()
         return bool(primary and primary[0] in self.room_client_uids)
 
+    def register_chat_service(self, service) -> None:
+        """The chat service registers itself so the room can see waiting messages."""
+        self._chat_service = service
+
+    def pending_viewer_messages(self) -> bool:
+        service = getattr(self, "_chat_service", None)
+        try:
+            return bool(service and service.buffer.get_eligible(1))
+        except Exception:
+            return False
+
+    def _room_director_ready(self, client_uid: str, websocket: WebSocket) -> bool:
+        from .room.runtime import RoomRuntimes
+
+        runtimes = getattr(self, "_room_runtimes", None)
+        if runtimes is None:
+            runtimes = RoomRuntimes(
+                self.room_session, self.default_context_cache, client_uid, websocket.send_text
+            )
+            self._room_runtimes = runtimes
+            self.room_session.director.turn_runner = runtimes.run_turn
+            self.room_session.director.pending_probe = self.pending_viewer_messages
+        else:
+            runtimes.retarget(client_uid, websocket.send_text)
+        return self.room_session.director.ready
+
+    async def _process_room_message(
+        self,
+        message: YouTubeChatMessage,
+        client_uid: str,
+        websocket: WebSocket,
+        max_wait_seconds: float | None,
+        received_at: float | None,
+    ) -> bool | None:
+        """Run a viewer message through the Conversation Director.
+
+        Returns None when the room cannot handle it, so the classic
+        single-character reply runs instead (the ultimate fallback).
+        """
+        from .room.live_message import LiveMessage
+
+        live = LiveMessage.from_youtube(message)
+        if live.is_system or not self._room_director_ready(client_uid, websocket):
+            return None
+        session = self.room_session
+        try:
+            plan = session.director.plan(live)
+        except Exception as exc:
+            logger.error(f"VR Room: director planning failed, using classic reply: {exc}")
+            return None
+        if not plan.turns:
+            return None
+
+        settings = self._vr_agent_settings(self.client_contexts.get(client_uid) or self.default_context_cache)
+        usage.record_viewer_interaction()
+        session.trace(
+            "message_routed",
+            interaction=plan.id,
+            mode=plan.decision.mode,
+            reason=plan.decision.reason,
+            speakers=plan.decision.speakers,
+        )
+        timing = runtime.latency.start(message.message_id, received_at or time.time())
+        plan.timing = timing  # type: ignore[attr-defined]
+        runtime.set(VRAgentState.THINKING, message.message_id)
+        show_card = settings.show_comment_card
+        if show_card:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "youtube-live-selected-message",
+                        "active": True,
+                        "id": message.message_id,
+                        "author": clean_viewer_text(live.display_name, 60) or "Viewer",
+                        "message": clean_viewer_text(live.text, max(20, settings.comment_card_max_chars)),
+                        "paid": message.kind == "paid",
+                        "amount": clean_viewer_text(message.amount, 30),
+                        "to": [t.speaker for t in plan.turns[:2]],
+                    }
+                )
+            )
+        await session.speech.lock.acquire()
+        session.begin_conversation()
+        task = asyncio.create_task(session.director.run(plan))
+        self.current_conversation_tasks[client_uid] = task
+
+        def on_done(finished: asyncio.Task) -> None:
+            timing.finished_at = time.time()
+            if session.speech.lock.locked():
+                session.speech.lock.release()
+            session.end_conversation()
+            if not finished.cancelled() and finished.exception():
+                logger.error(f"VR Room: interaction failed: {finished.exception()}")
+            runtime.set(VRAgentState.IDLE, "room interaction done")
+            if show_card:
+                asyncio.ensure_future(
+                    self._safe_send(
+                        websocket,
+                        {"type": "youtube-live-selected-message", "active": False, "id": message.message_id},
+                    )
+                )
+
+        task.add_done_callback(on_done)
+        try:
+            if max_wait_seconds:
+                await asyncio.wait_for(asyncio.shield(task), timeout=max_wait_seconds)
+            else:
+                await task
+        except asyncio.TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            return False
+        except Exception as exc:
+            logger.error(f"VR Room: interaction error: {exc}")
+        return True
+
     def observe_live_message(self, message) -> bool:
         """Every accepted chat message, before selection. True means consumed.
 
@@ -457,6 +573,12 @@ class WebSocketHandler:
             return False
 
         client_uid, websocket, context = primary_client
+        if client_uid in self.room_client_uids and self.room_session.active:
+            handled = await self._process_room_message(
+                message, client_uid, websocket, max_wait_seconds, received_at
+            )
+            if handled is not None:
+                return handled
         settings = self._vr_agent_settings(context)
         caps = self.get_capabilities(context)
         is_system = message.author_channel_id.startswith("system-")
