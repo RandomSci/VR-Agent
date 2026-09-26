@@ -524,8 +524,29 @@ class YouTubeLiveChatService:
         if self.playwright_source:
             await self.playwright_source.stop()
 
+    def _observe(self, message: YouTubeChatMessage) -> bool:
+        """Let the room consume game commands and answers before selection."""
+        observer = getattr(self.connection_provider, "observe_live_message", None)
+        if not observer:
+            return False
+        try:
+            consumed = bool(observer(message))
+        except Exception as exc:
+            logger.error(f"Live message observer failed: {exc}")
+            return False
+        if consumed:
+            self.buffer.mark_answered(message)
+            logger.info(
+                f"YouTube message from {message.author_display_name} handled by the room: "
+                f"{_truncate(message.text, 60)}"
+            )
+        return consumed
+
     def _accept(self, message: YouTubeChatMessage, source_label: str) -> bool:
         accepted, reason = self.buffer.add(message)
+        if accepted and self._observe(message):
+            self._last_message_seen_at = time.time()
+            return True
         if accepted:
             now = time.time()
             self._last_message_seen_at = now
@@ -552,6 +573,9 @@ class YouTubeLiveChatService:
             timestamp=datetime.now(timezone.utc),
         )
         accepted, reason = self.buffer.add(mock)
+        if accepted and self._observe(mock):
+            self._last_message_seen_at = time.time()
+            return {"accepted": True, "reason": "handled_by_room", "message_id": mock.message_id}
         if accepted:
             self._last_message_seen_at = time.time()
             self._received_at[mock.message_id] = time.time()

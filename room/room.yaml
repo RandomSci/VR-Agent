@@ -45,7 +45,7 @@ ambient:                       # local only, no LLM or TTS
 
 # Objects that exist in the room. Positions are fractions of the 16:9 stage.
 objects:
-  game_board: {x: 0.5, y: 0.6, width: 0.38, height: 0.46}
+  game_board: {x: 0.5, y: 0.62, width: 0.44, height: 0.52}
 
 # Things that appear in the room while an action plays, so characters can look at them.
 # dx is relative to the acting character's x, y is a stage fraction, after is when it shows
@@ -57,3 +57,15 @@ world:
 
 sfx:
   volume: 0.35                 # 0 to 1, also &sfx=0-100 in the room URL
+
+# Zero activity means zero spending. Characters only speak (TTS) while a viewer has
+# chatted within this window; otherwise game lines show as captions. The LLM is only
+# ever called for replies to viewer messages.
+cost:
+  speech_window_seconds: 120
+
+# Games start only when a viewer asks ("play trivia"). When chat goes quiet the game
+# pauses at the next safe moment, then ends on its own and the room returns to idle.
+games:
+  pause_after_seconds: 90
+  end_after_seconds: 180

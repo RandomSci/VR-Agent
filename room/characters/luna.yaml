@@ -15,7 +15,7 @@ voice:
   settings:
     voice: en-GB-SoniaNeural
 
-layout: {x: 0.79, bottom: 1.01, height: 0.95, face_x: 0.5, face_y: 0.16}
+layout: {x: 0.81, bottom: 1.01, height: 0.95, face_x: 0.5, face_y: 0.16}
 
 look:
   angle_x: ParamAngleX

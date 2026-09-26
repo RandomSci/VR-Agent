@@ -7,6 +7,7 @@ tests and handy for local layout work:
     uv run python -m tests.harness.room_server --port 12399
 
 Extra developer endpoints:
+    POST /harness/chat     {"user": "@ana", "text": "play trivia"}   a viewer message
     POST /harness/push     {"ops": [...]}              raw vr-room-update ops
     POST /harness/send     {...}                       any payload to room pages
     GET  /harness/clients  connected room pages and their model status
@@ -23,19 +24,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from starlette.staticfiles import StaticFiles  # noqa: E402
 
+from open_llm_vtuber.message_handler import message_handler  # noqa: E402
+from open_llm_vtuber.room.live_message import LiveMessage  # noqa: E402
 from open_llm_vtuber.room.profiles import load_room  # noqa: E402
 from open_llm_vtuber.room.session import RoomSession  # noqa: E402
+from tests.harness.fake_tts import FakeTTS  # noqa: E402
 
 
-def create_app(room_dir: Path | None = None) -> FastAPI:
+def create_app(room_dir: Path | None = None, tts=None) -> FastAPI:
     app = FastAPI()
     session = RoomSession(load_room(room_dir or ROOT / "room", ROOT))
+    # Every voice uses the fake engine: no network, still counted as TTS usage.
+    fake = tts or FakeTTS()
+    session.voices.factory = lambda engine_type, **kwargs: fake
+    session.configure_voices(None, fake)
     app.state.session = session
+    app.state.tts = fake
     app.state.received = []  # messages from room pages, for tests
 
     @app.websocket("/client-ws")
@@ -47,6 +57,7 @@ def create_app(room_dir: Path | None = None) -> FastAPI:
                 data = await websocket.receive_json()
                 app.state.received.append({"uid": uid, **data})
                 del app.state.received[:-500]
+                message_handler.handle_message(uid, data)
                 kind = data.get("type")
                 if kind == "vr-agent-hello" and data.get("mode") == "room":
                     if session.active:
@@ -67,6 +78,22 @@ def create_app(room_dir: Path | None = None) -> FastAPI:
             pass
         finally:
             session.unregister(uid)
+
+    @app.post("/harness/chat")
+    async def chat(request: Request):
+        import time as _time
+
+        body = await request.json()
+        message = LiveMessage(
+            platform="harness",
+            message_id=f"h-{_time.time_ns()}",
+            username=str(body.get("user") or "@viewer"),
+            text=str(body.get("text") or ""),
+            timestamp=_time.time(),
+            author_id="harness-viewer",
+        )
+        consumed = session.observe_viewer_message(message)
+        return JSONResponse({"consumed": consumed})
 
     @app.post("/harness/push")
     async def push(request: Request):

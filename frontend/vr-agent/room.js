@@ -166,7 +166,7 @@
   }
 
   let captionTimer = null;
-  function showCaption(character, text) {
+  function showCaption(character, text, holdMs) {
     if (!FLAGS.subtitles || !ui.caption) return;
     const clean = safeText(text, 220);
     if (!clean) return;
@@ -176,7 +176,8 @@
     ui.captionText.textContent = clean;
     ui.caption.classList.add("vra-visible");
     clearTimeout(captionTimer);
-    captionTimer = setTimeout(() => ui.caption.classList.remove("vra-visible"), 2500 + clean.length * 60);
+    const hold = holdMs ? clamp(Number(holdMs) || 0, 800, 8000) : 2500 + clean.length * 60;
+    captionTimer = setTimeout(() => ui.caption.classList.remove("vra-visible"), hold);
   }
 
   function setPaused(paused) {
@@ -889,6 +890,7 @@
       }
     }
     if (ui.title) ui.title.textContent = safeText(spec.title, 40) || "VR AGENT";
+    if (board) board.render(payload.board && typeof payload.board === "object" ? payload.board : null);
     if (room.booted && signature === room.signature) {
       reportModels();
       applySnapshot(payload.snapshot);
@@ -945,7 +947,44 @@
     sendToServer({ type: "vr-room-client-status", loaded, failed });
   }
 
+  // Game Board and sound effects (room-board.js). Optional: the room still works without them.
+  let board = null;
+  let sfx = null;
+  function createBoardAndSfx() {
+    const B = window.VRRoomBoard;
+    const world = document.getElementById("vr-room-world");
+    if (!B || !world) return;
+    try {
+      board = B.createBoard(world, {
+        box: () => room.objects.game_board || { x: 0.5, y: 0.6, width: 0.42, height: 0.48 },
+        colorOf: (id) => {
+          const c = room.characters.get(id);
+          return c ? c.color : id === "viewers" ? "#ffd166" : "#ffffff";
+        },
+      });
+      sfx = B.createSfx({
+        volume: () => (FLAGS.sfx != null ? FLAGS.sfx : Number((room.config || {}).sfx_volume) || 0),
+        speaking: () => !!speech.current,
+      });
+    } catch (err) {
+      log("board unavailable", err);
+      board = null;
+      sfx = null;
+    }
+  }
+
   const opHandlers = {
+    board(op) {
+      if (board) board.render(op.view && typeof op.view === "object" ? op.view : null);
+    },
+    sfx(op) {
+      if (sfx && typeof op.name === "string" && sfx.names.includes(op.name) && !room.paused) sfx.play(op.name);
+    },
+    line(op) {
+      // A game line shown without voice (no viewers around, so no TTS request).
+      const c = room.characters.get(op.character);
+      if (c && typeof op.text === "string") showCaption(c, op.text, op.ms);
+    },
     attention(op) {
       const c = room.characters.get(op.character);
       if (c) c.direct(op.target, op.hold_ms, op.delay_ms);
@@ -1129,6 +1168,7 @@
       return;
     }
     createStage();
+    createBoardAndSfx();
     connect();
     log("room page started", FLAGS);
   }

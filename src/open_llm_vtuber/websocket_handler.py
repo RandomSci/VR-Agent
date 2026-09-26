@@ -92,6 +92,13 @@ class WebSocketHandler:
         except Exception as exc:
             logger.error(f"VR Room disabled: {exc}")
             self.room_session = RoomSession(RoomConfig())
+        try:
+            self.room_session.configure_voices(
+                default_context_cache.character_config.tts_config,
+                default_context_cache.tts_engine,
+            )
+        except Exception as exc:  # pragma: no cover - partial test contexts
+            logger.debug(f"VR Room: default voice unavailable: {exc}")
 
         # Message handlers mapping
         self._message_handlers = self._init_message_handlers()
@@ -290,7 +297,30 @@ class WebSocketHandler:
         return bool(self.client_connections)
 
     def is_idle(self) -> bool:
-        return all(task is None or task.done() for task in self.current_conversation_tasks.values())
+        idle = all(
+            task is None or task.done() for task in self.current_conversation_tasks.values()
+        )
+        if idle and self._room_is_primary():
+            # In the room a reply waits for the current line and a game checkpoint.
+            return self.room_session.conversation_slot_available()
+        return idle
+
+    def _room_is_primary(self) -> bool:
+        primary = self._get_primary_client()
+        return bool(primary and primary[0] in self.room_client_uids)
+
+    def observe_live_message(self, message) -> bool:
+        """Every accepted chat message, before selection. True means consumed.
+
+        In the room, game commands and game answers are handled here and never
+        reach the LLM. Without a room page this does nothing.
+        """
+        if not self.room_session.active or not self.room_session.has_clients():
+            return False
+        from .room.live_message import LiveMessage
+
+        live = message if isinstance(message, LiveMessage) else LiveMessage.from_youtube(message)
+        return self.room_session.observe_viewer_message(live)
 
     def _get_primary_client(self) -> tuple[str, WebSocket, ServiceContext] | None:
         """The client that should speak for the stream.
@@ -521,6 +551,12 @@ class WebSocketHandler:
                 )
             await websocket.send_text(payload)
 
+        room_turn = client_uid in self.room_client_uids
+        if room_turn:
+            # One voice at a time: the reply holds the room's speaking lock and
+            # pauses a running game until it finishes.
+            await self.room_session.speech.lock.acquire()
+            self.room_session.begin_conversation()
         runtime.set(VRAgentState.THINKING, message.message_id)
         task = asyncio.create_task(
             process_single_conversation(
@@ -543,6 +579,10 @@ class WebSocketHandler:
             else:
                 outcome = "done"
             runtime.set(VRAgentState.IDLE, f"response {outcome}")
+            if room_turn:
+                if self.room_session.speech.lock.locked():
+                    self.room_session.speech.lock.release()
+                self.room_session.end_conversation()
             if show_card:
                 asyncio.ensure_future(
                     self._safe_send(

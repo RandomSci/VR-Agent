@@ -271,3 +271,71 @@ def test_disabled_room_falls_back_to_classic_page(browser, tmp_path):
         page.goto(server.base + "/vr-agent/room.html?subtitles=0")
         page.wait_for_url("**/?mode=live&subtitles=0", timeout=20000)
         page.close()
+
+
+def test_trivia_battle_plays_on_the_board_with_chat_and_sound(browser):
+    """A viewer starts Trivia Battle; the board shows the question, a viewer
+    answers first, the score and feed update, sound effect ops arrive, and a
+    stop command removes the board. Characters look at the board."""
+    with Server() as server:
+        page, errors = open_room(browser, server)
+        page.evaluate(
+            "() => { window.__sfx = []; const a = HTMLMediaElement.prototype.play;"
+            "HTMLMediaElement.prototype.play = function () {"
+            "  if (String(this.src).includes('/sfx/')) window.__sfx.push(String(this.src).split('/').pop());"
+            "  return a.call(this); }; }"
+        )
+        consumed = httpx.post(
+            server.base + "/harness/chat", json={"user": "@ana", "text": "play trivia"}
+        ).json()
+        assert consumed["consumed"] is True
+        page.wait_for_selector(".vrb-board:not([hidden])", timeout=5000)
+        assert page.inner_text(".vrb-title") == "TRIVIA BATTLE"
+        page.wait_for_function(
+            "document.querySelector('.vrb-round').textContent === 'Round 1/5'",
+            timeout=8000,
+        )
+        question = page.inner_text(".vrb-question")
+        assert question.endswith("?")
+        # Both characters turn toward the board when the question appears.
+        page.wait_for_function(
+            "vrRoom.state().characters.every(c => c.focus.y < -0.2)", timeout=4000
+        )
+
+        session = server.app.state.session
+        answer = session.show.engine.active.question["correct_answer"]
+        wrong = session.show.engine.active.question["wrong_answers"][0]
+        assert httpx.post(
+            server.base + "/harness/chat", json={"user": "@ben", "text": wrong}
+        ).json()["consumed"]
+        assert httpx.post(
+            server.base + "/harness/chat", json={"user": "@cy", "text": answer}
+        ).json()["consumed"]
+        page.wait_for_function(
+            "document.querySelector('.vrb-status').textContent === '@cy got it first!'",
+            timeout=4000,
+        )
+        chips = page.eval_on_selector_all(
+            ".vrb-chip", "els => els.map(e => e.textContent)"
+        )
+        assert chips[-1].replace(" ", "").upper() == "CHAT1"
+        feed = page.inner_text(".vrb-feed")
+        assert "@ben" in feed and "@cy" in feed
+        assert page.inner_text(".vrb-reveal").startswith("Answer:")
+        page.wait_for_function("window.__sfx.length >= 2", timeout=4000)
+        assert "game_start.wav" in page.evaluate("window.__sfx")
+
+        # "what games" is answered from the registry and spoken, no LLM.
+        from open_llm_vtuber.vr_agent.usage import usage
+
+        assert httpx.post(
+            server.base + "/harness/chat",
+            json={"user": "@dee", "text": "what games can you play?"},
+        ).json()["consumed"]
+        httpx.post(
+            server.base + "/harness/chat",
+            json={"user": "@dee", "text": "stop the game"},
+        )
+        page.wait_for_selector(".vrb-board", state="hidden", timeout=5000)
+        assert usage.snapshot()["llm_requests"] == 0
+        assert not errors

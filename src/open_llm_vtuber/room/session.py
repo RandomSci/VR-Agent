@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import re
 import time
 from typing import Any, Awaitable, Callable, Optional
 
@@ -20,20 +21,36 @@ from . import events as ev
 from .actions import ActionDirector
 from .attention import AttentionDirector
 from .events import EventBus
+from .live_message import LiveMessage
 from .profiles import RoomConfig
+from .show import ShowRunner
+from .speech import CharacterVoices, SpeakingCoordinator
 from .state import AttentionTarget, CharacterState, RoomObject, RoomState
 from .world import WorldDirector
 
 Send = Callable[[str], Awaitable[None]]
 
-OP_KINDS = ("attention", "action", "speaking", "object", "camera", "sfx", "board")
+OP_KINDS = (
+    "attention",
+    "action",
+    "speaking",
+    "object",
+    "camera",
+    "sfx",
+    "board",
+    "line",
+)
 
 
 class RoomSession:
-    TICK_SECONDS = 1.0
+    TICK_SECONDS = 0.25
 
     def __init__(
-        self, room: RoomConfig, rng: Optional[random.Random] = None, clock=time.time
+        self,
+        room: RoomConfig,
+        rng: Optional[random.Random] = None,
+        clock=time.time,
+        registry=None,
     ):
         self.room = room
         self.clock = clock
@@ -53,6 +70,27 @@ class RoomSession:
         self.world = WorldDirector(self, clock=clock)
         self.attention = AttentionDirector(self, rng=self.rng)
         self.actions = ActionDirector(self, rng=self.rng, clock=clock)
+        # Speech (TTS) and games. Speech is only allowed for viewer-triggered work.
+        self.voices = CharacterVoices(self)
+        self.speech = SpeakingCoordinator(self, self.voices, clock=clock)
+        from ..games.engine import EngineSettings
+
+        self.show = ShowRunner(
+            self,
+            registry=registry,
+            settings=EngineSettings(
+                pause_after_seconds=room.game_pause_after_seconds,
+                end_after_seconds=room.game_end_after_seconds,
+            ),
+            rng=self.rng,
+            clock=clock,
+        )
+        self._conversation_paused_game = False
+
+    def configure_voices(self, base_tts_config: Any, base_engine: Any) -> None:
+        """Called by the server with conf.yaml's TTS so 'inherit' voices work."""
+        self.voices.base_config = base_tts_config
+        self.voices.base_engine = base_engine
 
     # ------------------------------------------------------------------
     # clients
@@ -113,8 +151,126 @@ class RoomSession:
         return ops
 
     def tick(self) -> list[dict[str, Any]]:
-        """Local housekeeping, once a second. Never calls an LLM or TTS."""
-        return self.world.expire()
+        """Local housekeeping and game clock. Never calls an LLM or TTS itself.
+
+        Game lines queued here are only spoken when ``speech_allowed`` says a
+        viewer is around; otherwise they are shown as captions.
+        """
+        ops = self.world.expire()
+        ops += self.show.tick()
+        return ops
+
+    # ------------------------------------------------------------------
+    # viewers, speech gating and failures
+    # ------------------------------------------------------------------
+    def speech_target(self) -> Optional[tuple[str, Send]]:
+        for client_uid, send in self._clients.items():
+            models = self._client_models.get(client_uid)
+            if models is None or models.get("loaded"):
+                return client_uid, send
+        return None
+
+    def speech_allowed(self, now: Optional[float] = None) -> bool:
+        """TTS may only run for viewer-triggered work: someone chatted recently."""
+        from ..vr_agent.state import runtime
+
+        now = self.clock() if now is None else now
+        if runtime.paused or not self.state.last_viewer_at or not self.speech_target():
+            return False
+        return now - self.state.last_viewer_at <= self.room.speech_window_seconds
+
+    def note_viewer_activity(self, now: Optional[float] = None) -> None:
+        now = self.clock() if now is None else now
+        self.state.last_viewer_at = now
+        self.show.engine.notify_viewer_activity(now)
+
+    def observe_viewer_message(self, message: LiveMessage) -> bool:
+        """Every accepted chat message passes here first.
+
+        Game commands and game answers are consumed (they never reach the LLM).
+        Returns True when consumed.
+        """
+        if message.is_system:
+            return False
+        self.note_viewer_activity()
+        try:
+            consumed, ops = self.show.observe(message)
+        except Exception as exc:  # a game problem must not break chat
+            logger.error(f"VR Room: game observe failed: {exc}")
+            return False
+        if consumed:
+            from ..vr_agent.usage import usage
+
+            usage.record_viewer_interaction()
+        if ops:
+            try:
+                asyncio.get_running_loop().create_task(self.push(ops))
+            except RuntimeError:
+                pass
+        return consumed
+
+    def addressed_or_primary(self, text: str) -> Optional[str]:
+        lowered = f" {str(text).lower()} "
+        available = self.state.available_characters()
+        for profile in self.room.characters:
+            if profile.id not in available:
+                continue
+            for name in profile.names:
+                if re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", lowered):
+                    return profile.id
+        primary = self.room.primary
+        if primary and primary.id in available:
+            return primary.id
+        return available[0] if available else None
+
+    def record_failure(self, character_id: str, reason: str) -> None:
+        character = self.state.characters.get(character_id)
+        if not character:
+            return
+        character.failures += 1
+        logger.warning(
+            f"VR Room: {character_id} failure {character.failures}: {reason}"
+        )
+        if character.failures >= self.room.director.failure_threshold:
+            character.cooldown_until = (
+                self.clock() + self.room.director.cooldown_seconds
+            )
+            character.failures = 0
+            logger.error(
+                f"VR Room: {character_id} cooling down for {self.room.director.cooldown_seconds:.0f}s"
+            )
+
+    def record_success(self, character_id: str) -> None:
+        character = self.state.characters.get(character_id)
+        if character:
+            character.failures = 0
+
+    # ------------------------------------------------------------------
+    # conversation slots (replies to normal chat)
+    # ------------------------------------------------------------------
+    def conversation_slot_available(self) -> bool:
+        """A reply may start: nobody is speaking and the game is at a checkpoint."""
+        return (
+            not self.speech.busy and not self.show.lines and self.show.at_checkpoint()
+        )
+
+    def begin_conversation(self) -> None:
+        if self.show.engine.playing and not self.show.engine.active.paused:
+            self._push_soon(self.show.apply(self.show.engine.pause("conversation")))
+            self._conversation_paused_game = True
+
+    def end_conversation(self) -> None:
+        if self._conversation_paused_game:
+            self._conversation_paused_game = False
+            self._push_soon(self.show.apply(self.show.engine.resume()))
+
+    def _push_soon(self, ops: list[dict[str, Any]]) -> None:
+        if not ops:
+            return
+        try:
+            asyncio.get_running_loop().create_task(self.push(ops))
+        except RuntimeError:
+            pass
 
     def ensure_loop(self) -> None:
         if self._loop_task and not self._loop_task.done():
@@ -170,6 +326,8 @@ class RoomSession:
             "type": "vr-room-config",
             "room": self.room.to_frontend(),
             "snapshot": self.state.snapshot(),
+            # A page that reconnects mid game redraws the board from this.
+            "board": self.show.engine.view(),
         }
 
     async def _send(self, client_uid: str, payload: dict[str, Any]) -> None:
@@ -260,6 +418,9 @@ class RoomSession:
 
         return {
             "usage": usage.snapshot(),
+            "speech_allowed": self.speech_allowed(),
+            "voices": self.voices.describe(),
+            "show": self.show.status(),
             "room": self.room.describe(),
             "clients": {uid: self._client_models.get(uid, {}) for uid in self._clients},
             "state": self.state.snapshot(),

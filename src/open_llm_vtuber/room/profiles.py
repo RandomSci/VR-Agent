@@ -351,6 +351,9 @@ class RoomConfig:
     objects: dict[str, dict[str, float]] = field(default_factory=dict)
     action_objects: dict[str, dict[str, Any]] = field(default_factory=dict)
     sfx_volume: float = 0.35
+    speech_window_seconds: float = 120.0
+    game_pause_after_seconds: float = 90.0
+    game_end_after_seconds: float = 180.0
     problems: list[str] = field(default_factory=list)
 
     @property
@@ -603,6 +606,16 @@ def load_room(
         }
     sfx = spec.get("sfx") if isinstance(spec.get("sfx"), dict) else {}
     room.sfx_volume = _clamp(sfx.get("volume"), 0, 1, 0.35)
+    cost = spec.get("cost") if isinstance(spec.get("cost"), dict) else {}
+    room.speech_window_seconds = _clamp(cost.get("speech_window_seconds"), 10, 900, 120)
+    games = spec.get("games") if isinstance(spec.get("games"), dict) else {}
+    room.game_pause_after_seconds = _clamp(
+        games.get("pause_after_seconds"), 15, 1800, 90
+    )
+    room.game_end_after_seconds = max(
+        room.game_pause_after_seconds + 10,
+        _clamp(games.get("end_after_seconds"), 30, 3600, 180),
+    )
 
     cast = [str(c).strip().lower() for c in (spec.get("cast") or []) if str(c).strip()]
     if not cast:

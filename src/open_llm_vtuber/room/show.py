@@ -1,0 +1,341 @@
+"""ShowRunner: runs games inside the room and turns game results into a show.
+
+* Game events go through the room event bus (attention, reactions, objects),
+  become sound effect ops, and refresh the Game Board view model.
+* Template lines requested by the game are spoken in the character's voice
+  only while speech is allowed (a viewer chatted recently). Otherwise they
+  are shown as captions and the game moves on. No LLM is ever called here.
+* Chat is checked for game commands and answers before anything else; what
+  the game consumes never reaches the LLM.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import random
+import time
+from collections import deque
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Deque, Optional
+
+from loguru import logger
+
+from ..games import GameEngine, GameRegistry, PlayerSpec, StepResult, parse_command
+from ..games.base import LineRequest
+from ..games.engine import EngineSettings, Outcome
+from . import events as ev
+from .live_message import LiveMessage
+from .replies import command_reply, game_line
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .session import RoomSession
+
+# Game event -> sound effect name (files in frontend/vr-agent/sfx).
+SFX_FOR_EVENT = {
+    ev.GAME_STARTED: "game_start",
+    ev.QUESTION_SHOWN: "question",
+    ev.ANSWER_CORRECT: "correct",
+    ev.ANSWER_WRONG: "wrong",
+    ev.SCORE_CHANGED: "score",
+    ev.GAME_FINISHED: "game_win",
+    ev.GAME_STOPPED: "game_stop",
+}
+SFX_NAMES = tuple(sorted(set(SFX_FOR_EVENT.values()) | {"round_win"}))
+
+
+@dataclass
+class QueuedLine:
+    character: str
+    text: str
+    blocking: bool
+    created: float
+    addressee: Optional[str] = None
+    notify_game: bool = False
+
+
+class ShowRunner:
+    MAX_OPTIONAL_LINE_AGE = 6.0
+
+    def __init__(
+        self,
+        session: "RoomSession",
+        registry: Optional[GameRegistry] = None,
+        settings: Optional[EngineSettings] = None,
+        rng: Optional[random.Random] = None,
+        clock=time.time,
+    ):
+        self.session = session
+        self.clock = clock
+        self.rng = rng or random.Random()
+        try:
+            self.registry = registry or GameRegistry.discover()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error(f"VR Room: game registry unavailable: {exc}")
+            self.registry = GameRegistry()
+        self.engine = GameEngine(
+            self.registry, clock=clock, rng=self.rng, settings=settings
+        )
+        self.lines: Deque[QueuedLine] = deque()
+        self._line_event = asyncio.Event()
+        self._worker: Optional[asyncio.Task] = None
+        self._last_board: Optional[dict[str, Any]] = None
+        self.lines_shown_silently = 0
+        self.sleep = asyncio.sleep  # injectable for simulated-time tests
+
+    # ------------------------------------------------------------------
+    # players and names
+    # ------------------------------------------------------------------
+    def players(self) -> list[PlayerSpec]:
+        available = set(self.session.state.available_characters())
+        return [
+            PlayerSpec(p.id, p.name, dict(p.game_skill))
+            for p in self.session.room.characters
+            if p.id in available
+        ]
+
+    def name_map(self) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for profile in self.session.room.characters:
+            for name in profile.names:
+                out[name] = profile.id
+        return out
+
+    def display_names(self) -> dict[str, str]:
+        names = {p.id: p.name for p in self.session.room.characters}
+        names["viewers"] = "Chat"
+        return names
+
+    # ------------------------------------------------------------------
+    # chat
+    # ------------------------------------------------------------------
+    def observe(self, message: LiveMessage) -> tuple[bool, list[dict[str, Any]]]:
+        """Game answers and game commands. Returns (consumed, ops)."""
+        now = self.clock()
+        text = message.clean_text
+        if not text or message.is_system:
+            return False, []
+        playing = self.engine.playing
+        categories = self.engine.active.info.categories if playing else ()
+        command = parse_command(
+            text, self.registry, self.name_map(), playing, categories
+        )
+        if command is not None:
+            outcome = self.engine.handle_command(command, self.players(), now)
+            ops = self.apply(outcome.result)
+            self._reply(outcome, message)
+            logger.info(
+                f"VR Room game command from {message.display_name}: {type(command).__name__} -> {outcome.reply}"
+            )
+            return True, ops
+        if playing:
+            consumed, result = self.engine.handle_viewer_message(
+                message.display_name, text, now
+            )
+            if consumed:
+                return True, self.apply(result)
+        return False, []
+
+    def _reply(self, outcome: Outcome, message: LiveMessage) -> None:
+        text = command_reply(outcome.reply, outcome.values, self.display_names())
+        if not text:
+            return
+        speaker = self.session.addressed_or_primary(message.clean_text)
+        if speaker:
+            self.enqueue(speaker, text, blocking=False, optional=False)
+
+    # ------------------------------------------------------------------
+    # game results -> show
+    # ------------------------------------------------------------------
+    def apply(self, result: StepResult) -> list[dict[str, Any]]:
+        ops: list[dict[str, Any]] = []
+        sounds: list[str] = []
+        for event in result.events:
+            try:
+                ops += self.session.emit(event.name, **event.data)
+            except ValueError:
+                logger.warning(f"VR Room: unknown game event {event.name}")
+                continue
+            sound = SFX_FOR_EVENT.get(event.name)
+            if (
+                event.name == ev.ANSWER_CORRECT
+                and event.data.get("player") == "viewers"
+            ):
+                sound = "round_win"
+            if sound:
+                sounds.append(sound)
+        # One effect at a time: the most important sound of this step wins.
+        if sounds:
+            priority = [
+                "game_win",
+                "game_start",
+                "game_stop",
+                "round_win",
+                "correct",
+                "wrong",
+                "question",
+                "score",
+            ]
+            best = min(sounds, key=lambda s: priority.index(s) if s in priority else 99)
+            ops.append({"op": "sfx", "name": best})
+        board = self.board_op(force=bool(result.events))
+        if board:
+            ops.append(board)
+        for line in result.lines:
+            self._queue_game_line(line)
+        return ops
+
+    def board_op(self, force: bool = False) -> Optional[dict[str, Any]]:
+        view = self.engine.view()
+        if not force and view == self._last_board:
+            return None
+        if view is None and self._last_board is None:
+            return None
+        self._last_board = view
+        return {"op": "board", "view": view}
+
+    def _queue_game_line(self, line: LineRequest) -> None:
+        profile = self.session.room.get(line.player)
+        text = game_line(profile, line.kind, line.values, self.rng)
+        if not text:
+            if line.blocking:
+                self.enqueue(
+                    line.player, "", blocking=True, optional=False, notify_game=True
+                )
+            return
+        self.enqueue(
+            line.player,
+            text,
+            blocking=line.blocking,
+            optional=not line.blocking,
+            notify_game=line.blocking,
+        )
+
+    def enqueue(
+        self,
+        character: str,
+        text: str,
+        blocking: bool,
+        optional: bool,
+        notify_game: bool = False,
+        addressee: Optional[str] = None,
+    ) -> None:
+        if optional and len(self.lines) >= 2:
+            return  # do not build a backlog of chatter
+        self.lines.append(
+            QueuedLine(
+                character,
+                text,
+                blocking or not optional,
+                self.clock(),
+                addressee,
+                notify_game,
+            )
+        )
+        self._line_event.set()
+        self.ensure_worker()
+
+    # ------------------------------------------------------------------
+    # line worker: one line at a time, speech only when allowed
+    # ------------------------------------------------------------------
+    def ensure_worker(self) -> None:
+        if self._worker and not self._worker.done():
+            return
+        try:
+            self._worker = asyncio.get_running_loop().create_task(
+                self._run_lines(), name="vr-room-lines"
+            )
+        except RuntimeError:
+            self._worker = None
+
+    async def _run_lines(self) -> None:
+        while True:
+            if not self.lines:
+                self._line_event.clear()
+                await self._line_event.wait()
+                continue
+            line = self.lines.popleft()
+            try:
+                await self.play_line(line)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error(f"VR Room: line failed: {exc}")
+
+    async def play_line(self, line: QueuedLine) -> None:
+        now = self.clock()
+        if not line.blocking and now - line.created > self.MAX_OPTIONAL_LINE_AGE:
+            return
+        spoken = False
+        if line.text and self.session.speech_allowed(now):
+            spoken = await self.session.speech.say(
+                line.character, line.text, line.addressee
+            )
+        if line.text and not spoken:
+            # No viewers around (or TTS failed): show the line, no API call.
+            self.lines_shown_silently += 1
+            ms = int(min(4500, 1200 + len(line.text) * 45))
+            await self.session.push(
+                [
+                    {
+                        "op": "line",
+                        "character": line.character,
+                        "text": line.text,
+                        "ms": ms,
+                    }
+                ]
+            )
+            await self.sleep(ms / 1000)
+        if line.notify_game:
+            await self.session.push(
+                self.apply(self.engine.character_done(line.character, self.clock()))
+            )
+
+    # ------------------------------------------------------------------
+    # clock
+    # ------------------------------------------------------------------
+    def tick(self) -> list[dict[str, Any]]:
+        if not self.engine.playing and self._last_board is None:
+            return []
+        ops = self.apply(self.engine.tick(self.clock()))
+        board = self.board_op()
+        if board:
+            ops.append(board)
+        ops += self._maybe_bored()
+        return ops
+
+    def _maybe_bored(self) -> list[dict[str, Any]]:
+        now = self.clock()
+        if not self.session.speech_allowed(
+            now
+        ) or not self.engine.switch_suggestion_available(now):
+            return []
+        self.engine.mark_switch_suggested()
+        players = [p.id for p in self.players()]
+        if not players:
+            return []
+        first = players[0]
+        self._queue_game_line(LineRequest(first, "bored"))
+        if len(players) > 1:
+            self._queue_game_line(LineRequest(players[1], "bored"))
+        others = [
+            g.display_name
+            for g in self.engine.available_games()
+            if g.id != self.engine.active.info.id
+        ]
+        if others:
+            text = f"Chat, want to switch to {others[0]}?"
+        else:
+            text = "We only have Trivia Battle right now. Keep going, or say stop the game for a break!"
+        self.enqueue(first, text, blocking=False, optional=False)
+        return []
+
+    def at_checkpoint(self) -> bool:
+        return not self.engine.playing or self.engine.active.at_checkpoint()
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "engine": self.engine.current_state(),
+            "registry": self.registry.describe(),
+            "queued_lines": len(self.lines),
+            "lines_shown_silently": self.lines_shown_silently,
+        }

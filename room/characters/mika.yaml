@@ -16,7 +16,7 @@ voice:
   tts_model: inherit
 
 # Stage placement as fractions of a 16:9 stage. face_x and face_y locate the face inside the model.
-layout: {x: 0.21, bottom: 1.01, height: 0.93, face_x: 0.5, face_y: 0.2}
+layout: {x: 0.19, bottom: 1.01, height: 0.93, face_x: 0.5, face_y: 0.2}
 
 # Model parameters used for looking around. Checked against the model at startup.
 look:
