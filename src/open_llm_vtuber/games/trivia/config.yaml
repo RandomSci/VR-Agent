@@ -14,7 +14,7 @@ how_to_play: >-
   five rounds whoever has the most points wins. Chat plays as one team!
 
 rounds_per_game: 5
-default_difficulty: medium          # easy, medium, hard, or mixed
+default_difficulty: mixed           # easy, medium, hard, or mixed
 intro_seconds: 3
 # Viewer first: chat gets this long, alone, before Mika and Luna may answer. The
 # girls never answer (or hint) during chat's turn, and if chat gets it right they
@@ -37,3 +37,15 @@ viewer_feed_size: 4
 # Boredom (local counters only)
 bored_after_rounds: 10
 bored_after_minutes: 15
+
+# Question variety. Questions never repeat until every question was asked (the
+# rotation is saved in cache/trivia_seen.json, so it survives restarts).
+# AI questions: when a viewer starts a trivia game, one LLM request (the room's
+# own LLM from conf.yaml) writes a few brand-new questions in the background.
+# They are checked (short typeable answer, answer not in the question, no
+# duplicates) and saved in cache/trivia_ai_questions.json. Nothing runs while
+# nobody plays, so the idle stream still makes zero requests.
+ai_questions:
+  enabled: true
+  per_game: 8                  # new questions requested per started game
+  max_saved: 1500

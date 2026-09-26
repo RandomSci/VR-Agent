@@ -26,6 +26,7 @@ from ..games.base import LineRequest
 from ..games.engine import EngineSettings, Outcome
 from . import events as ev
 from .live_message import LiveMessage
+from .question_maker import QuestionMaker
 from .replies import command_reply, game_line
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -89,6 +90,8 @@ class ShowRunner:
         self.offered_game: Optional[str] = None
         self.offered_until = 0.0
         self.chat_ingestion: Deque[dict[str, Any]] = deque(maxlen=100)
+        # The websocket handler gives it the conf.yaml LLM; without one it is off.
+        self.question_maker = QuestionMaker()
 
     # ------------------------------------------------------------------
     # game offers: a game that was just mentioned can be started with "sure"
@@ -230,6 +233,8 @@ class ShowRunner:
         ops: list[dict[str, Any]] = []
         sounds: list[str] = []
         for event in result.events:
+            if event.name == ev.GAME_STARTED:
+                self._more_questions(event.data.get("game"))
             try:
                 ops += self.session.emit(event.name, **event.data)
             except ValueError:
@@ -273,6 +278,21 @@ class ShowRunner:
         for line in result.lines:
             self._queue_game_line(line)
         return ops
+
+    def _more_questions(self, game_id: Any) -> None:
+        """A viewer started a game: ask for fresh AI trivia questions (background)."""
+        factory = self.registry.get(str(game_id or ""))
+        bank = getattr(factory, "bank", None) if factory else None
+        if bank is None:
+            return
+        settings = factory.config.get("ai_questions")
+        if not isinstance(settings, dict) or not settings.get("enabled", False):
+            return
+        try:
+            count = max(1, min(20, int(settings.get("per_game", 8))))
+        except (TypeError, ValueError):
+            count = 8
+        self.question_maker.maybe_start(bank, count)
 
     def board_op(self, force: bool = False) -> Optional[dict[str, Any]]:
         view = self.engine.view()
@@ -436,4 +456,8 @@ class ShowRunner:
             "queued_lines": len(self.lines),
             "lines_shown_silently": self.lines_shown_silently,
             "chat_timing": self.ingestion_summary(),
+            "question_maker": self.question_maker.describe(),
+            "trivia_bank": getattr(self.registry.get("trivia"), "bank", None).describe()
+            if getattr(self.registry.get("trivia"), "bank", None)
+            else None,
         }

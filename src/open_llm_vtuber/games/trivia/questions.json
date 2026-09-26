@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "questions": [
   {
    "id": "spa000",
@@ -1114,6 +1114,3210 @@
     "1240",
     "1600",
     "1000"
+   ]
+  },
+  {
+   "id": "spa010",
+   "category": "space",
+   "difficulty": "easy",
+   "question": "What is the name of Earth's natural satellite?",
+   "correct_answer": "The Moon",
+   "accepted_answers": [
+    "The Moon",
+    "Moon"
+   ],
+   "wrong_answers": [
+    "Titan",
+    "Phobos",
+    "Europa"
+   ]
+  },
+  {
+   "id": "spa011",
+   "category": "space",
+   "difficulty": "easy",
+   "question": "Which planet is closest to the Sun?",
+   "correct_answer": "Mercury",
+   "accepted_answers": [
+    "Mercury"
+   ],
+   "wrong_answers": [
+    "Venus",
+    "Mars",
+    "Earth"
+   ]
+  },
+  {
+   "id": "spa012",
+   "category": "space",
+   "difficulty": "easy",
+   "question": "What is the name of the star at the center of our solar system?",
+   "correct_answer": "The Sun",
+   "accepted_answers": [
+    "The Sun",
+    "Sun",
+    "Sol"
+   ],
+   "wrong_answers": [
+    "Sirius",
+    "Polaris",
+    "Vega"
+   ]
+  },
+  {
+   "id": "spa013",
+   "category": "space",
+   "difficulty": "easy",
+   "question": "How many planets are in our solar system?",
+   "correct_answer": "8",
+   "accepted_answers": [
+    "8",
+    "eight"
+   ],
+   "wrong_answers": [
+    "9",
+    "7",
+    "10"
+   ]
+  },
+  {
+   "id": "spa014",
+   "category": "space",
+   "difficulty": "medium",
+   "question": "Which planet spins on its side, with an axis tilted about 98 degrees?",
+   "correct_answer": "Uranus",
+   "accepted_answers": [
+    "Uranus"
+   ],
+   "wrong_answers": [
+    "Neptune",
+    "Saturn",
+    "Jupiter"
+   ]
+  },
+  {
+   "id": "spa015",
+   "category": "space",
+   "difficulty": "medium",
+   "question": "What is the name of the space telescope launched in 1990 that orbits Earth?",
+   "correct_answer": "Hubble",
+   "accepted_answers": [
+    "Hubble",
+    "Hubble Space Telescope",
+    "Hubble telescope"
+   ],
+   "wrong_answers": [
+    "James Webb",
+    "Kepler",
+    "Spitzer"
+   ]
+  },
+  {
+   "id": "spa016",
+   "category": "space",
+   "difficulty": "medium",
+   "question": "What is the largest moon of Saturn?",
+   "correct_answer": "Titan",
+   "accepted_answers": [
+    "Titan"
+   ],
+   "wrong_answers": [
+    "Europa",
+    "Ganymede",
+    "Io"
+   ]
+  },
+  {
+   "id": "spa017",
+   "category": "space",
+   "difficulty": "medium",
+   "question": "What is the largest moon in the solar system?",
+   "correct_answer": "Ganymede",
+   "accepted_answers": [
+    "Ganymede"
+   ],
+   "wrong_answers": [
+    "Titan",
+    "Callisto",
+    "The Moon"
+   ]
+  },
+  {
+   "id": "spa018",
+   "category": "space",
+   "difficulty": "medium",
+   "question": "Which planet has a Great Red Spot?",
+   "correct_answer": "Jupiter",
+   "accepted_answers": [
+    "Jupiter"
+   ],
+   "wrong_answers": [
+    "Mars",
+    "Saturn",
+    "Neptune"
+   ]
+  },
+  {
+   "id": "spa019",
+   "category": "space",
+   "difficulty": "medium",
+   "question": "What do we call a rock from space that reaches the ground?",
+   "correct_answer": "Meteorite",
+   "accepted_answers": [
+    "Meteorite",
+    "a meteorite"
+   ],
+   "wrong_answers": [
+    "Comet",
+    "Asteroid",
+    "Meteor shower"
+   ]
+  },
+  {
+   "id": "spa020",
+   "category": "space",
+   "difficulty": "medium",
+   "question": "What is the name of the North Star?",
+   "correct_answer": "Polaris",
+   "accepted_answers": [
+    "Polaris"
+   ],
+   "wrong_answers": [
+    "Sirius",
+    "Vega",
+    "Betelgeuse"
+   ]
+  },
+  {
+   "id": "spa021",
+   "category": "space",
+   "difficulty": "medium",
+   "question": "Which country launched Sputnik, the first artificial satellite?",
+   "correct_answer": "Soviet Union",
+   "accepted_answers": [
+    "Soviet Union",
+    "USSR",
+    "the Soviet Union",
+    "Russia"
+   ],
+   "wrong_answers": [
+    "United States",
+    "China",
+    "Germany"
+   ]
+  },
+  {
+   "id": "spa022",
+   "category": "space",
+   "difficulty": "medium",
+   "question": "What is the brightest star in the night sky?",
+   "correct_answer": "Sirius",
+   "accepted_answers": [
+    "Sirius"
+   ],
+   "wrong_answers": [
+    "Polaris",
+    "Vega",
+    "Betelgeuse"
+   ]
+  },
+  {
+   "id": "spa023",
+   "category": "space",
+   "difficulty": "hard",
+   "question": "What is the name of the boundary around a black hole beyond which nothing escapes?",
+   "correct_answer": "Event horizon",
+   "accepted_answers": [
+    "Event horizon",
+    "the event horizon"
+   ],
+   "wrong_answers": [
+    "Singularity",
+    "Accretion disk",
+    "Photon sphere"
+   ]
+  },
+  {
+   "id": "spa024",
+   "category": "space",
+   "difficulty": "hard",
+   "question": "Which dwarf planet was reclassified from a planet in 2006?",
+   "correct_answer": "Pluto",
+   "accepted_answers": [
+    "Pluto"
+   ],
+   "wrong_answers": [
+    "Ceres",
+    "Eris",
+    "Makemake"
+   ]
+  },
+  {
+   "id": "spa025",
+   "category": "space",
+   "difficulty": "hard",
+   "question": "What is the closest large galaxy to the Milky Way?",
+   "correct_answer": "Andromeda",
+   "accepted_answers": [
+    "Andromeda",
+    "Andromeda galaxy",
+    "the Andromeda galaxy"
+   ],
+   "wrong_answers": [
+    "Triangulum",
+    "Sombrero",
+    "Whirlpool"
+   ]
+  },
+  {
+   "id": "spa026",
+   "category": "space",
+   "difficulty": "hard",
+   "question": "Which planet has the shortest day in the solar system?",
+   "correct_answer": "Jupiter",
+   "accepted_answers": [
+    "Jupiter"
+   ],
+   "wrong_answers": [
+    "Saturn",
+    "Mercury",
+    "Neptune"
+   ]
+  },
+  {
+   "id": "spa027",
+   "category": "space",
+   "difficulty": "hard",
+   "question": "Which planet has moons named Phobos and Deimos?",
+   "correct_answer": "Mars",
+   "accepted_answers": [
+    "Mars"
+   ],
+   "wrong_answers": [
+    "Jupiter",
+    "Neptune",
+    "Uranus"
+   ]
+  },
+  {
+   "id": "spa028",
+   "category": "space",
+   "difficulty": "hard",
+   "question": "What was the name of NASA's program that landed humans on the Moon?",
+   "correct_answer": "Apollo",
+   "accepted_answers": [
+    "Apollo",
+    "Apollo program",
+    "Project Apollo"
+   ],
+   "wrong_answers": [
+    "Gemini",
+    "Mercury",
+    "Artemis"
+   ]
+  },
+  {
+   "id": "spa029",
+   "category": "space",
+   "difficulty": "easy",
+   "question": "What color is the planet Neptune in photos?",
+   "correct_answer": "Blue",
+   "accepted_answers": [
+    "Blue"
+   ],
+   "wrong_answers": [
+    "Red",
+    "Yellow",
+    "Green"
+   ]
+  },
+  {
+   "id": "sci020",
+   "category": "science",
+   "difficulty": "easy",
+   "question": "What gas do humans need to breathe to live?",
+   "correct_answer": "Oxygen",
+   "accepted_answers": [
+    "Oxygen"
+   ],
+   "wrong_answers": [
+    "Carbon dioxide",
+    "Nitrogen",
+    "Helium"
+   ]
+  },
+  {
+   "id": "sci021",
+   "category": "science",
+   "difficulty": "easy",
+   "question": "What is H2O more commonly called?",
+   "correct_answer": "Water",
+   "accepted_answers": [
+    "Water"
+   ],
+   "wrong_answers": [
+    "Salt",
+    "Air",
+    "Hydrogen"
+   ]
+  },
+  {
+   "id": "sci022",
+   "category": "science",
+   "difficulty": "easy",
+   "question": "What organ pumps blood around the body?",
+   "correct_answer": "Heart",
+   "accepted_answers": [
+    "Heart",
+    "the heart"
+   ],
+   "wrong_answers": [
+    "Lungs",
+    "Liver",
+    "Brain"
+   ]
+  },
+  {
+   "id": "sci023",
+   "category": "science",
+   "difficulty": "easy",
+   "question": "What do bees make from nectar?",
+   "correct_answer": "Honey",
+   "accepted_answers": [
+    "Honey"
+   ],
+   "wrong_answers": [
+    "Wax",
+    "Milk",
+    "Jam"
+   ]
+  },
+  {
+   "id": "sci024",
+   "category": "science",
+   "difficulty": "easy",
+   "question": "What is the boiling point of water in Celsius at sea level?",
+   "correct_answer": "100",
+   "accepted_answers": [
+    "100",
+    "100 degrees",
+    "one hundred"
+   ],
+   "wrong_answers": [
+    "90",
+    "120",
+    "212"
+   ]
+  },
+  {
+   "id": "sci025",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "What is the largest organ of the human body?",
+   "correct_answer": "Skin",
+   "accepted_answers": [
+    "Skin",
+    "the skin"
+   ],
+   "wrong_answers": [
+    "Liver",
+    "Heart",
+    "Brain"
+   ]
+  },
+  {
+   "id": "sci026",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "What is the chemical symbol for iron?",
+   "correct_answer": "Fe",
+   "accepted_answers": [
+    "Fe"
+   ],
+   "wrong_answers": [
+    "Ir",
+    "In",
+    "I"
+   ]
+  },
+  {
+   "id": "sci027",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "What makes a compass needle point north?",
+   "correct_answer": "Magnetic field",
+   "accepted_answers": [
+    "Magnetic field",
+    "magnetism",
+    "Earth's magnetic field",
+    "the magnetic field"
+   ],
+   "wrong_answers": [
+    "Gravity",
+    "Friction",
+    "Wind"
+   ]
+  },
+  {
+   "id": "sci028",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "What is the center of an atom called?",
+   "correct_answer": "Nucleus",
+   "accepted_answers": [
+    "Nucleus",
+    "the nucleus"
+   ],
+   "wrong_answers": [
+    "Electron",
+    "Proton",
+    "Shell"
+   ]
+  },
+  {
+   "id": "sci029",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "What type of blood cells fight infection?",
+   "correct_answer": "White blood cells",
+   "accepted_answers": [
+    "White blood cells",
+    "white cells",
+    "leukocytes"
+   ],
+   "wrong_answers": [
+    "Red blood cells",
+    "Platelets",
+    "Plasma"
+   ]
+  },
+  {
+   "id": "sci030",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "What vitamin does the skin make from sunlight?",
+   "correct_answer": "Vitamin D",
+   "accepted_answers": [
+    "Vitamin D",
+    "D"
+   ],
+   "wrong_answers": [
+    "Vitamin C",
+    "Vitamin A",
+    "Vitamin B12"
+   ]
+  },
+  {
+   "id": "sci031",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "What is the chemical symbol for silver?",
+   "correct_answer": "Ag",
+   "accepted_answers": [
+    "Ag"
+   ],
+   "wrong_answers": [
+    "Si",
+    "Sv",
+    "Au"
+   ]
+  },
+  {
+   "id": "sci032",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "Which gas makes up most of the Sun?",
+   "correct_answer": "Hydrogen",
+   "accepted_answers": [
+    "Hydrogen"
+   ],
+   "wrong_answers": [
+    "Helium",
+    "Oxygen",
+    "Carbon"
+   ]
+  },
+  {
+   "id": "sci033",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "What do you call animals that eat only plants?",
+   "correct_answer": "Herbivores",
+   "accepted_answers": [
+    "Herbivores",
+    "herbivore"
+   ],
+   "wrong_answers": [
+    "Carnivores",
+    "Omnivores",
+    "Insectivores"
+   ]
+  },
+  {
+   "id": "sci034",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "How many teeth does a typical adult human have?",
+   "correct_answer": "32",
+   "accepted_answers": [
+    "32",
+    "thirty two",
+    "thirty-two"
+   ],
+   "wrong_answers": [
+    "28",
+    "30",
+    "36"
+   ]
+  },
+  {
+   "id": "sci035",
+   "category": "science",
+   "difficulty": "hard",
+   "question": "What is the powerhouse of the cell?",
+   "correct_answer": "Mitochondria",
+   "accepted_answers": [
+    "Mitochondria",
+    "mitochondrion",
+    "the mitochondria"
+   ],
+   "wrong_answers": [
+    "Nucleus",
+    "Ribosome",
+    "Chloroplast"
+   ]
+  },
+  {
+   "id": "sci036",
+   "category": "science",
+   "difficulty": "hard",
+   "question": "What is the pH of pure water?",
+   "correct_answer": "7",
+   "accepted_answers": [
+    "7",
+    "seven"
+   ],
+   "wrong_answers": [
+    "0",
+    "14",
+    "5"
+   ]
+  },
+  {
+   "id": "sci037",
+   "category": "science",
+   "difficulty": "hard",
+   "question": "What is the most common element in Earth's crust?",
+   "correct_answer": "Oxygen",
+   "accepted_answers": [
+    "Oxygen"
+   ],
+   "wrong_answers": [
+    "Silicon",
+    "Iron",
+    "Aluminum"
+   ]
+  },
+  {
+   "id": "sci038",
+   "category": "science",
+   "difficulty": "hard",
+   "question": "What particle has a negative electric charge?",
+   "correct_answer": "Electron",
+   "accepted_answers": [
+    "Electron",
+    "an electron"
+   ],
+   "wrong_answers": [
+    "Proton",
+    "Neutron",
+    "Photon"
+   ]
+  },
+  {
+   "id": "sci039",
+   "category": "science",
+   "difficulty": "hard",
+   "question": "What is the speed of light, roughly, in kilometers per second?",
+   "correct_answer": "300000",
+   "accepted_answers": [
+    "300000",
+    "300,000",
+    "300 000",
+    "three hundred thousand"
+   ],
+   "wrong_answers": [
+    "150000",
+    "30000",
+    "1000000"
+   ]
+  },
+  {
+   "id": "sci040",
+   "category": "science",
+   "difficulty": "hard",
+   "question": "What is the study of fungi called?",
+   "correct_answer": "Mycology",
+   "accepted_answers": [
+    "Mycology"
+   ],
+   "wrong_answers": [
+    "Botany",
+    "Zoology",
+    "Virology"
+   ]
+  },
+  {
+   "id": "sci041",
+   "category": "science",
+   "difficulty": "hard",
+   "question": "Which scientist proposed the theory of general relativity?",
+   "correct_answer": "Albert Einstein",
+   "accepted_answers": [
+    "Albert Einstein",
+    "Einstein"
+   ],
+   "wrong_answers": [
+    "Isaac Newton",
+    "Niels Bohr",
+    "Stephen Hawking"
+   ]
+  },
+  {
+   "id": "sci042",
+   "category": "science",
+   "difficulty": "hard",
+   "question": "What is the smallest bone in the human body?",
+   "correct_answer": "Stapes",
+   "accepted_answers": [
+    "Stapes",
+    "the stapes",
+    "stirrup"
+   ],
+   "wrong_answers": [
+    "Femur",
+    "Incus",
+    "Tibia"
+   ]
+  },
+  {
+   "id": "sci043",
+   "category": "science",
+   "difficulty": "medium",
+   "question": "What is frozen water called?",
+   "correct_answer": "Ice",
+   "accepted_answers": [
+    "Ice"
+   ],
+   "wrong_answers": [
+    "Steam",
+    "Snowball",
+    "Frost"
+   ]
+  },
+  {
+   "id": "sci044",
+   "category": "science",
+   "difficulty": "easy",
+   "question": "How many legs does a crab usually walk on, not counting claws?",
+   "correct_answer": "8",
+   "accepted_answers": [
+    "8",
+    "eight"
+   ],
+   "wrong_answers": [
+    "6",
+    "10",
+    "4"
+   ]
+  },
+  {
+   "id": "geo030",
+   "category": "geography",
+   "difficulty": "easy",
+   "question": "What is the capital of France?",
+   "correct_answer": "Paris",
+   "accepted_answers": [
+    "Paris"
+   ],
+   "wrong_answers": [
+    "Lyon",
+    "Marseille",
+    "Nice"
+   ]
+  },
+  {
+   "id": "geo031",
+   "category": "geography",
+   "difficulty": "easy",
+   "question": "What is the largest country in the world by area?",
+   "correct_answer": "Russia",
+   "accepted_answers": [
+    "Russia"
+   ],
+   "wrong_answers": [
+    "Canada",
+    "China",
+    "United States"
+   ]
+  },
+  {
+   "id": "geo032",
+   "category": "geography",
+   "difficulty": "easy",
+   "question": "What is the capital of Italy?",
+   "correct_answer": "Rome",
+   "accepted_answers": [
+    "Rome"
+   ],
+   "wrong_answers": [
+    "Milan",
+    "Venice",
+    "Naples"
+   ]
+  },
+  {
+   "id": "geo033",
+   "category": "geography",
+   "difficulty": "easy",
+   "question": "Which continent is Brazil in?",
+   "correct_answer": "South America",
+   "accepted_answers": [
+    "South America"
+   ],
+   "wrong_answers": [
+    "Africa",
+    "North America",
+    "Europe"
+   ]
+  },
+  {
+   "id": "geo034",
+   "category": "geography",
+   "difficulty": "easy",
+   "question": "What is the capital of South Korea?",
+   "correct_answer": "Seoul",
+   "accepted_answers": [
+    "Seoul"
+   ],
+   "wrong_answers": [
+    "Busan",
+    "Incheon",
+    "Pyongyang"
+   ]
+  },
+  {
+   "id": "geo035",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "What is the longest river in the world?",
+   "correct_answer": "Nile",
+   "accepted_answers": [
+    "Nile",
+    "the Nile",
+    "Nile River"
+   ],
+   "wrong_answers": [
+    "Amazon",
+    "Yangtze",
+    "Mississippi"
+   ]
+  },
+  {
+   "id": "geo036",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "What is the largest desert in the world, counting cold deserts?",
+   "correct_answer": "Antarctica",
+   "accepted_answers": [
+    "Antarctica",
+    "Antarctic",
+    "Antarctic desert"
+   ],
+   "wrong_answers": [
+    "Sahara",
+    "Gobi",
+    "Arctic"
+   ]
+  },
+  {
+   "id": "geo037",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "What is the largest hot desert in the world?",
+   "correct_answer": "Sahara",
+   "accepted_answers": [
+    "Sahara",
+    "the Sahara",
+    "Sahara desert"
+   ],
+   "wrong_answers": [
+    "Gobi",
+    "Kalahari",
+    "Mojave"
+   ]
+  },
+  {
+   "id": "geo038",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "What is the capital of Spain?",
+   "correct_answer": "Madrid",
+   "accepted_answers": [
+    "Madrid"
+   ],
+   "wrong_answers": [
+    "Barcelona",
+    "Seville",
+    "Valencia"
+   ]
+  },
+  {
+   "id": "geo039",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "Which country has the most islands in the world?",
+   "correct_answer": "Sweden",
+   "accepted_answers": [
+    "Sweden"
+   ],
+   "wrong_answers": [
+    "Philippines",
+    "Indonesia",
+    "Norway"
+   ]
+  },
+  {
+   "id": "geo040",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "What is the capital of Thailand?",
+   "correct_answer": "Bangkok",
+   "accepted_answers": [
+    "Bangkok"
+   ],
+   "wrong_answers": [
+    "Phuket",
+    "Chiang Mai",
+    "Pattaya"
+   ]
+  },
+  {
+   "id": "geo041",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "What is the highest waterfall in the world?",
+   "correct_answer": "Angel Falls",
+   "accepted_answers": [
+    "Angel Falls",
+    "Angel"
+   ],
+   "wrong_answers": [
+    "Niagara Falls",
+    "Victoria Falls",
+    "Iguazu Falls"
+   ]
+  },
+  {
+   "id": "geo042",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "What is the capital of Germany?",
+   "correct_answer": "Berlin",
+   "accepted_answers": [
+    "Berlin"
+   ],
+   "wrong_answers": [
+    "Munich",
+    "Hamburg",
+    "Frankfurt"
+   ]
+  },
+  {
+   "id": "geo043",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "In which country is the city of Cebu?",
+   "correct_answer": "Philippines",
+   "accepted_answers": [
+    "Philippines",
+    "the Philippines"
+   ],
+   "wrong_answers": [
+    "Indonesia",
+    "Malaysia",
+    "Vietnam"
+   ]
+  },
+  {
+   "id": "geo044",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "What is the largest island in the world?",
+   "correct_answer": "Greenland",
+   "accepted_answers": [
+    "Greenland"
+   ],
+   "wrong_answers": [
+    "Australia",
+    "Borneo",
+    "Madagascar"
+   ]
+  },
+  {
+   "id": "geo045",
+   "category": "geography",
+   "difficulty": "hard",
+   "question": "What is the capital of New Zealand?",
+   "correct_answer": "Wellington",
+   "accepted_answers": [
+    "Wellington"
+   ],
+   "wrong_answers": [
+    "Auckland",
+    "Christchurch",
+    "Queenstown"
+   ]
+  },
+  {
+   "id": "geo046",
+   "category": "geography",
+   "difficulty": "hard",
+   "question": "What is the deepest point in the world's oceans?",
+   "correct_answer": "Mariana Trench",
+   "accepted_answers": [
+    "Mariana Trench",
+    "Challenger Deep",
+    "the Mariana Trench",
+    "Marianas Trench"
+   ],
+   "wrong_answers": [
+    "Puerto Rico Trench",
+    "Java Trench",
+    "Tonga Trench"
+   ]
+  },
+  {
+   "id": "geo047",
+   "category": "geography",
+   "difficulty": "hard",
+   "question": "What is the capital of Turkey?",
+   "correct_answer": "Ankara",
+   "accepted_answers": [
+    "Ankara"
+   ],
+   "wrong_answers": [
+    "Istanbul",
+    "Izmir",
+    "Antalya"
+   ]
+  },
+  {
+   "id": "geo048",
+   "category": "geography",
+   "difficulty": "hard",
+   "question": "Which river flows through Baghdad?",
+   "correct_answer": "Tigris",
+   "accepted_answers": [
+    "Tigris",
+    "the Tigris"
+   ],
+   "wrong_answers": [
+    "Euphrates",
+    "Nile",
+    "Jordan"
+   ]
+  },
+  {
+   "id": "geo049",
+   "category": "geography",
+   "difficulty": "hard",
+   "question": "What is the only country that is also a continent?",
+   "correct_answer": "Australia",
+   "accepted_answers": [
+    "Australia"
+   ],
+   "wrong_answers": [
+    "Greenland",
+    "Antarctica",
+    "New Zealand"
+   ]
+  },
+  {
+   "id": "geo050",
+   "category": "geography",
+   "difficulty": "hard",
+   "question": "What is the capital of Brazil?",
+   "correct_answer": "Brasilia",
+   "accepted_answers": [
+    "Brasilia",
+    "Brasília"
+   ],
+   "wrong_answers": [
+    "Rio de Janeiro",
+    "Sao Paulo",
+    "Salvador"
+   ]
+  },
+  {
+   "id": "geo051",
+   "category": "geography",
+   "difficulty": "hard",
+   "question": "Which country has the city of Timbuktu?",
+   "correct_answer": "Mali",
+   "accepted_answers": [
+    "Mali"
+   ],
+   "wrong_answers": [
+    "Niger",
+    "Chad",
+    "Morocco"
+   ]
+  },
+  {
+   "id": "geo052",
+   "category": "geography",
+   "difficulty": "hard",
+   "question": "What is the largest lake in Africa?",
+   "correct_answer": "Lake Victoria",
+   "accepted_answers": [
+    "Lake Victoria",
+    "Victoria"
+   ],
+   "wrong_answers": [
+    "Lake Tanganyika",
+    "Lake Malawi",
+    "Lake Chad"
+   ]
+  },
+  {
+   "id": "geo053",
+   "category": "geography",
+   "difficulty": "medium",
+   "question": "What is the capital of Vietnam?",
+   "correct_answer": "Hanoi",
+   "accepted_answers": [
+    "Hanoi"
+   ],
+   "wrong_answers": [
+    "Ho Chi Minh City",
+    "Da Nang",
+    "Hue"
+   ]
+  },
+  {
+   "id": "geo054",
+   "category": "geography",
+   "difficulty": "easy",
+   "question": "What is the capital of the United Kingdom?",
+   "correct_answer": "London",
+   "accepted_answers": [
+    "London"
+   ],
+   "wrong_answers": [
+    "Manchester",
+    "Edinburgh",
+    "Liverpool"
+   ]
+  },
+  {
+   "id": "ani040",
+   "category": "animals",
+   "difficulty": "easy",
+   "question": "What animal says moo?",
+   "correct_answer": "Cow",
+   "accepted_answers": [
+    "Cow",
+    "a cow"
+   ],
+   "wrong_answers": [
+    "Sheep",
+    "Pig",
+    "Horse"
+   ]
+  },
+  {
+   "id": "ani041",
+   "category": "animals",
+   "difficulty": "easy",
+   "question": "What is the largest land animal?",
+   "correct_answer": "Elephant",
+   "accepted_answers": [
+    "Elephant",
+    "African elephant",
+    "an elephant"
+   ],
+   "wrong_answers": [
+    "Rhino",
+    "Hippo",
+    "Giraffe"
+   ]
+  },
+  {
+   "id": "ani042",
+   "category": "animals",
+   "difficulty": "easy",
+   "question": "What animal has the longest neck?",
+   "correct_answer": "Giraffe",
+   "accepted_answers": [
+    "Giraffe",
+    "a giraffe"
+   ],
+   "wrong_answers": [
+    "Camel",
+    "Ostrich",
+    "Llama"
+   ]
+  },
+  {
+   "id": "ani043",
+   "category": "animals",
+   "difficulty": "easy",
+   "question": "What do pandas mostly eat?",
+   "correct_answer": "Bamboo",
+   "accepted_answers": [
+    "Bamboo"
+   ],
+   "wrong_answers": [
+    "Fish",
+    "Berries",
+    "Grass"
+   ]
+  },
+  {
+   "id": "ani044",
+   "category": "animals",
+   "difficulty": "easy",
+   "question": "What is a baby dog called?",
+   "correct_answer": "Puppy",
+   "accepted_answers": [
+    "Puppy",
+    "pup"
+   ],
+   "wrong_answers": [
+    "Kitten",
+    "Calf",
+    "Cub"
+   ]
+  },
+  {
+   "id": "ani045",
+   "category": "animals",
+   "difficulty": "medium",
+   "question": "What is the only bird known to fly backwards?",
+   "correct_answer": "Hummingbird",
+   "accepted_answers": [
+    "Hummingbird",
+    "hummingbirds"
+   ],
+   "wrong_answers": [
+    "Swallow",
+    "Sparrow",
+    "Kingfisher"
+   ]
+  },
+  {
+   "id": "ani046",
+   "category": "animals",
+   "difficulty": "medium",
+   "question": "How many legs does a lobster have, including its claws?",
+   "correct_answer": "10",
+   "accepted_answers": [
+    "10",
+    "ten"
+   ],
+   "wrong_answers": [
+    "8",
+    "6",
+    "12"
+   ]
+  },
+  {
+   "id": "ani047",
+   "category": "animals",
+   "difficulty": "medium",
+   "question": "What is a group of lions called?",
+   "correct_answer": "Pride",
+   "accepted_answers": [
+    "Pride",
+    "a pride"
+   ],
+   "wrong_answers": [
+    "Pack",
+    "Herd",
+    "School"
+   ]
+  },
+  {
+   "id": "ani048",
+   "category": "animals",
+   "difficulty": "medium",
+   "question": "What is the largest species of shark?",
+   "correct_answer": "Whale shark",
+   "accepted_answers": [
+    "Whale shark",
+    "whale sharks"
+   ],
+   "wrong_answers": [
+    "Great white",
+    "Hammerhead",
+    "Tiger shark"
+   ]
+  },
+  {
+   "id": "ani049",
+   "category": "animals",
+   "difficulty": "medium",
+   "question": "What animal is known for changing its skin color to blend in?",
+   "correct_answer": "Chameleon",
+   "accepted_answers": [
+    "Chameleon",
+    "a chameleon"
+   ],
+   "wrong_answers": [
+    "Gecko",
+    "Iguana",
+    "Frog"
+   ]
+  },
+  {
+   "id": "ani050",
+   "category": "animals",
+   "difficulty": "medium",
+   "question": "Which animal sleeps standing up and is related to zebras?",
+   "correct_answer": "Horse",
+   "accepted_answers": [
+    "Horse",
+    "a horse"
+   ],
+   "wrong_answers": [
+    "Cow",
+    "Camel",
+    "Deer"
+   ]
+  },
+  {
+   "id": "ani051",
+   "category": "animals",
+   "difficulty": "medium",
+   "question": "What is the fastest bird in a dive?",
+   "correct_answer": "Peregrine falcon",
+   "accepted_answers": [
+    "Peregrine falcon",
+    "peregrine",
+    "falcon"
+   ],
+   "wrong_answers": [
+    "Golden eagle",
+    "Ostrich",
+    "Swift"
+   ]
+  },
+  {
+   "id": "ani052",
+   "category": "animals",
+   "difficulty": "medium",
+   "question": "What is the tallest bird in the world?",
+   "correct_answer": "Ostrich",
+   "accepted_answers": [
+    "Ostrich",
+    "an ostrich"
+   ],
+   "wrong_answers": [
+    "Emu",
+    "Flamingo",
+    "Crane"
+   ]
+  },
+  {
+   "id": "ani053",
+   "category": "animals",
+   "difficulty": "medium",
+   "question": "How many stomach compartments does a cow have?",
+   "correct_answer": "4",
+   "accepted_answers": [
+    "4",
+    "four"
+   ],
+   "wrong_answers": [
+    "1",
+    "2",
+    "3"
+   ]
+  },
+  {
+   "id": "ani054",
+   "category": "animals",
+   "difficulty": "hard",
+   "question": "What is a female fox called?",
+   "correct_answer": "Vixen",
+   "accepted_answers": [
+    "Vixen",
+    "a vixen"
+   ],
+   "wrong_answers": [
+    "Doe",
+    "Sow",
+    "Jenny"
+   ]
+  },
+  {
+   "id": "ani055",
+   "category": "animals",
+   "difficulty": "hard",
+   "question": "What mammal lays eggs and has a duck-like bill?",
+   "correct_answer": "Platypus",
+   "accepted_answers": [
+    "Platypus",
+    "a platypus",
+    "duck-billed platypus"
+   ],
+   "wrong_answers": [
+    "Echidna",
+    "Otter",
+    "Beaver"
+   ]
+  },
+  {
+   "id": "ani056",
+   "category": "animals",
+   "difficulty": "hard",
+   "question": "What is the only continent without native ants?",
+   "correct_answer": "Antarctica",
+   "accepted_answers": [
+    "Antarctica"
+   ],
+   "wrong_answers": [
+    "Australia",
+    "Europe",
+    "South America"
+   ]
+  },
+  {
+   "id": "ani057",
+   "category": "animals",
+   "difficulty": "hard",
+   "question": "What is a baby swan called?",
+   "correct_answer": "Cygnet",
+   "accepted_answers": [
+    "Cygnet",
+    "a cygnet"
+   ],
+   "wrong_answers": [
+    "Gosling",
+    "Duckling",
+    "Chick"
+   ]
+  },
+  {
+   "id": "ani058",
+   "category": "animals",
+   "difficulty": "hard",
+   "question": "How many eyes does a typical spider have?",
+   "correct_answer": "8",
+   "accepted_answers": [
+    "8",
+    "eight"
+   ],
+   "wrong_answers": [
+    "2",
+    "4",
+    "6"
+   ]
+  },
+  {
+   "id": "ani059",
+   "category": "animals",
+   "difficulty": "easy",
+   "question": "Which animal is famous for carrying its house on its back?",
+   "correct_answer": "Snail",
+   "accepted_answers": [
+    "Snail",
+    "turtle",
+    "a snail"
+   ],
+   "wrong_answers": [
+    "Frog",
+    "Rabbit",
+    "Mouse"
+   ]
+  },
+  {
+   "id": "ani060",
+   "category": "animals",
+   "difficulty": "medium",
+   "question": "What is the name of the water buffalo that is the national animal of the Philippines?",
+   "correct_answer": "Carabao",
+   "accepted_answers": [
+    "Carabao",
+    "kalabaw"
+   ],
+   "wrong_answers": [
+    "Tamaraw",
+    "Horse",
+    "Anoa"
+   ]
+  },
+  {
+   "id": "foo047",
+   "category": "food",
+   "difficulty": "easy",
+   "question": "What fruit is yellow, curved and loved by monkeys in cartoons?",
+   "correct_answer": "Banana",
+   "accepted_answers": [
+    "Banana",
+    "bananas"
+   ],
+   "wrong_answers": [
+    "Mango",
+    "Lemon",
+    "Pineapple"
+   ]
+  },
+  {
+   "id": "foo048",
+   "category": "food",
+   "difficulty": "easy",
+   "question": "What is the main ingredient of French fries?",
+   "correct_answer": "Potato",
+   "accepted_answers": [
+    "Potato",
+    "potatoes"
+   ],
+   "wrong_answers": [
+    "Corn",
+    "Rice",
+    "Cassava"
+   ]
+  },
+  {
+   "id": "foo049",
+   "category": "food",
+   "difficulty": "easy",
+   "question": "What do you call frozen cream dessert served in a cone?",
+   "correct_answer": "Ice cream",
+   "accepted_answers": [
+    "Ice cream",
+    "icecream"
+   ],
+   "wrong_answers": [
+    "Pudding",
+    "Yogurt",
+    "Custard"
+   ]
+  },
+  {
+   "id": "foo050",
+   "category": "food",
+   "difficulty": "easy",
+   "question": "Which country is famous for sushi?",
+   "correct_answer": "Japan",
+   "accepted_answers": [
+    "Japan"
+   ],
+   "wrong_answers": [
+    "China",
+    "Korea",
+    "Thailand"
+   ]
+  },
+  {
+   "id": "foo051",
+   "category": "food",
+   "difficulty": "medium",
+   "question": "What is the Filipino dessert made with shaved ice, milk and mixed sweets?",
+   "correct_answer": "Halo-halo",
+   "accepted_answers": [
+    "Halo-halo",
+    "halohalo"
+   ],
+   "wrong_answers": [
+    "Leche flan",
+    "Bibingka",
+    "Turon"
+   ]
+  },
+  {
+   "id": "foo052",
+   "category": "food",
+   "difficulty": "medium",
+   "question": "What grain is used to make Japanese sake?",
+   "correct_answer": "Rice",
+   "accepted_answers": [
+    "Rice"
+   ],
+   "wrong_answers": [
+    "Wheat",
+    "Barley",
+    "Corn"
+   ]
+  },
+  {
+   "id": "foo053",
+   "category": "food",
+   "difficulty": "medium",
+   "question": "Which country did pizza come from?",
+   "correct_answer": "Italy",
+   "accepted_answers": [
+    "Italy"
+   ],
+   "wrong_answers": [
+    "France",
+    "Greece",
+    "Spain"
+   ]
+  },
+  {
+   "id": "foo054",
+   "category": "food",
+   "difficulty": "medium",
+   "question": "What is the purple yam used in many Filipino desserts called?",
+   "correct_answer": "Ube",
+   "accepted_answers": [
+    "Ube"
+   ],
+   "wrong_answers": [
+    "Taro",
+    "Gabi",
+    "Camote"
+   ]
+  },
+  {
+   "id": "foo055",
+   "category": "food",
+   "difficulty": "medium",
+   "question": "What is the main ingredient in Korean kimchi?",
+   "correct_answer": "Cabbage",
+   "accepted_answers": [
+    "Cabbage",
+    "napa cabbage",
+    "chinese cabbage"
+   ],
+   "wrong_answers": [
+    "Radish",
+    "Cucumber",
+    "Seaweed"
+   ]
+  },
+  {
+   "id": "foo056",
+   "category": "food",
+   "difficulty": "medium",
+   "question": "What fruit has its seeds on the outside?",
+   "correct_answer": "Strawberry",
+   "accepted_answers": [
+    "Strawberry",
+    "strawberries"
+   ],
+   "wrong_answers": [
+    "Raspberry",
+    "Kiwi",
+    "Grape"
+   ]
+  },
+  {
+   "id": "foo057",
+   "category": "food",
+   "difficulty": "medium",
+   "question": "Sinigang gets its sour taste most often from which fruit?",
+   "correct_answer": "Tamarind",
+   "accepted_answers": [
+    "Tamarind",
+    "sampalok"
+   ],
+   "wrong_answers": [
+    "Calamansi",
+    "Mango",
+    "Pineapple"
+   ]
+  },
+  {
+   "id": "foo058",
+   "category": "food",
+   "difficulty": "hard",
+   "question": "Which spice is the most expensive by weight?",
+   "correct_answer": "Saffron",
+   "accepted_answers": [
+    "Saffron"
+   ],
+   "wrong_answers": [
+    "Vanilla",
+    "Cardamom",
+    "Cinnamon"
+   ]
+  },
+  {
+   "id": "foo059",
+   "category": "food",
+   "difficulty": "hard",
+   "question": "What is the Japanese word for raw sliced fish served without rice?",
+   "correct_answer": "Sashimi",
+   "accepted_answers": [
+    "Sashimi"
+   ],
+   "wrong_answers": [
+    "Sushi",
+    "Tempura",
+    "Onigiri"
+   ]
+  },
+  {
+   "id": "foo060",
+   "category": "food",
+   "difficulty": "hard",
+   "question": "Which country invented the dish pad thai?",
+   "correct_answer": "Thailand",
+   "accepted_answers": [
+    "Thailand"
+   ],
+   "wrong_answers": [
+    "Vietnam",
+    "Laos",
+    "Cambodia"
+   ]
+  },
+  {
+   "id": "foo061",
+   "category": "food",
+   "difficulty": "hard",
+   "question": "What nut is used to make pesto?",
+   "correct_answer": "Pine nuts",
+   "accepted_answers": [
+    "Pine nuts",
+    "pine nut",
+    "pignoli"
+   ],
+   "wrong_answers": [
+    "Walnuts",
+    "Almonds",
+    "Cashews"
+   ]
+  },
+  {
+   "id": "foo062",
+   "category": "food",
+   "difficulty": "hard",
+   "question": "Lechon is a whole roasted what?",
+   "correct_answer": "Pig",
+   "accepted_answers": [
+    "Pig",
+    "pork",
+    "a pig"
+   ],
+   "wrong_answers": [
+    "Chicken",
+    "Cow",
+    "Goat"
+   ]
+  },
+  {
+   "id": "foo063",
+   "category": "food",
+   "difficulty": "easy",
+   "question": "What color is the inside of a watermelon?",
+   "correct_answer": "Red",
+   "accepted_answers": [
+    "Red",
+    "pink"
+   ],
+   "wrong_answers": [
+    "Green",
+    "Yellow",
+    "Orange"
+   ]
+  },
+  {
+   "id": "his054",
+   "category": "history",
+   "difficulty": "easy",
+   "question": "Who was the first president of the United States?",
+   "correct_answer": "George Washington",
+   "accepted_answers": [
+    "George Washington",
+    "Washington"
+   ],
+   "wrong_answers": [
+    "Abraham Lincoln",
+    "Thomas Jefferson",
+    "John Adams"
+   ]
+  },
+  {
+   "id": "his055",
+   "category": "history",
+   "difficulty": "medium",
+   "question": "What ship sank in 1912 after hitting an iceberg?",
+   "correct_answer": "Titanic",
+   "accepted_answers": [
+    "Titanic",
+    "the Titanic",
+    "RMS Titanic"
+   ],
+   "wrong_answers": [
+    "Lusitania",
+    "Britannic",
+    "Olympic"
+   ]
+  },
+  {
+   "id": "his056",
+   "category": "history",
+   "difficulty": "medium",
+   "question": "Who discovered penicillin?",
+   "correct_answer": "Alexander Fleming",
+   "accepted_answers": [
+    "Alexander Fleming",
+    "Fleming"
+   ],
+   "wrong_answers": [
+    "Louis Pasteur",
+    "Marie Curie",
+    "Edward Jenner"
+   ]
+  },
+  {
+   "id": "his057",
+   "category": "history",
+   "difficulty": "medium",
+   "question": "In which year did World War II end?",
+   "correct_answer": "1945",
+   "accepted_answers": [
+    "1945"
+   ],
+   "wrong_answers": [
+    "1944",
+    "1939",
+    "1918"
+   ]
+  },
+  {
+   "id": "his058",
+   "category": "history",
+   "difficulty": "medium",
+   "question": "Who was the first woman to win a Nobel Prize?",
+   "correct_answer": "Marie Curie",
+   "accepted_answers": [
+    "Marie Curie",
+    "Curie"
+   ],
+   "wrong_answers": [
+    "Ada Lovelace",
+    "Rosalind Franklin",
+    "Florence Nightingale"
+   ]
+  },
+  {
+   "id": "his059",
+   "category": "history",
+   "difficulty": "medium",
+   "question": "Which famous explorer's expedition first sailed around the world, reaching the Philippines in 1521?",
+   "correct_answer": "Ferdinand Magellan",
+   "accepted_answers": [
+    "Ferdinand Magellan",
+    "Magellan"
+   ],
+   "wrong_answers": [
+    "Christopher Columbus",
+    "Vasco da Gama",
+    "James Cook"
+   ]
+  },
+  {
+   "id": "his060",
+   "category": "history",
+   "difficulty": "medium",
+   "question": "What was the name of the ancient Egyptian writing system using pictures?",
+   "correct_answer": "Hieroglyphics",
+   "accepted_answers": [
+    "Hieroglyphics",
+    "hieroglyphs",
+    "hieroglyphic"
+   ],
+   "wrong_answers": [
+    "Cuneiform",
+    "Runes",
+    "Sanskrit"
+   ]
+  },
+  {
+   "id": "his061",
+   "category": "history",
+   "difficulty": "medium",
+   "question": "Who invented the telephone?",
+   "correct_answer": "Alexander Graham Bell",
+   "accepted_answers": [
+    "Alexander Graham Bell",
+    "Graham Bell",
+    "Bell"
+   ],
+   "wrong_answers": [
+    "Thomas Edison",
+    "Nikola Tesla",
+    "Guglielmo Marconi"
+   ]
+  },
+  {
+   "id": "his062",
+   "category": "history",
+   "difficulty": "medium",
+   "question": "Which city was destroyed by the eruption of Mount Vesuvius in 79 AD?",
+   "correct_answer": "Pompeii",
+   "accepted_answers": [
+    "Pompeii"
+   ],
+   "wrong_answers": [
+    "Rome",
+    "Athens",
+    "Carthage"
+   ]
+  },
+  {
+   "id": "his063",
+   "category": "history",
+   "difficulty": "medium",
+   "question": "Who was the Filipino hero known as the Father of the Katipunan?",
+   "correct_answer": "Andres Bonifacio",
+   "accepted_answers": [
+    "Andres Bonifacio",
+    "Bonifacio",
+    "Andrés Bonifacio"
+   ],
+   "wrong_answers": [
+    "Emilio Aguinaldo",
+    "Apolinario Mabini",
+    "Jose Rizal"
+   ]
+  },
+  {
+   "id": "his064",
+   "category": "history",
+   "difficulty": "hard",
+   "question": "In which year did the Berlin Wall fall?",
+   "correct_answer": "1989",
+   "accepted_answers": [
+    "1989"
+   ],
+   "wrong_answers": [
+    "1991",
+    "1985",
+    "1961"
+   ]
+  },
+  {
+   "id": "his065",
+   "category": "history",
+   "difficulty": "hard",
+   "question": "Who was the first emperor of Rome?",
+   "correct_answer": "Augustus",
+   "accepted_answers": [
+    "Augustus",
+    "Octavian",
+    "Caesar Augustus"
+   ],
+   "wrong_answers": [
+    "Julius Caesar",
+    "Nero",
+    "Caligula"
+   ]
+  },
+  {
+   "id": "his066",
+   "category": "history",
+   "difficulty": "hard",
+   "question": "What year did the Philippines declare independence from Spain?",
+   "correct_answer": "1898",
+   "accepted_answers": [
+    "1898"
+   ],
+   "wrong_answers": [
+    "1946",
+    "1896",
+    "1872"
+   ]
+  },
+  {
+   "id": "his067",
+   "category": "history",
+   "difficulty": "hard",
+   "question": "Which queen ruled England for 63 years in the 1800s?",
+   "correct_answer": "Queen Victoria",
+   "accepted_answers": [
+    "Queen Victoria",
+    "Victoria"
+   ],
+   "wrong_answers": [
+    "Queen Elizabeth I",
+    "Queen Mary",
+    "Queen Anne"
+   ]
+  },
+  {
+   "id": "his068",
+   "category": "history",
+   "difficulty": "hard",
+   "question": "Who made the first successful powered airplane flight in 1903?",
+   "correct_answer": "Wright brothers",
+   "accepted_answers": [
+    "Wright brothers",
+    "the Wright brothers",
+    "Wright"
+   ],
+   "wrong_answers": [
+    "Montgolfier brothers",
+    "Lumiere brothers",
+    "Grimm brothers"
+   ]
+  },
+  {
+   "id": "his069",
+   "category": "history",
+   "difficulty": "hard",
+   "question": "Who wrote the Philippine novel Noli Me Tangere?",
+   "correct_answer": "Jose Rizal",
+   "accepted_answers": [
+    "Jose Rizal",
+    "Rizal",
+    "José Rizal"
+   ],
+   "wrong_answers": [
+    "Andres Bonifacio",
+    "Emilio Jacinto",
+    "Marcelo del Pilar"
+   ]
+  },
+  {
+   "id": "his070",
+   "category": "history",
+   "difficulty": "hard",
+   "question": "Which ancient wonder was located in Alexandria?",
+   "correct_answer": "Lighthouse of Alexandria",
+   "accepted_answers": [
+    "Lighthouse of Alexandria",
+    "lighthouse",
+    "the lighthouse",
+    "Pharos"
+   ],
+   "wrong_answers": [
+    "Hanging Gardens",
+    "Colossus",
+    "Great Pyramid"
+   ]
+  },
+  {
+   "id": "his071",
+   "category": "history",
+   "difficulty": "easy",
+   "question": "Who is famous for the theory of evolution by natural selection?",
+   "correct_answer": "Charles Darwin",
+   "accepted_answers": [
+    "Charles Darwin",
+    "Darwin"
+   ],
+   "wrong_answers": [
+    "Isaac Newton",
+    "Gregor Mendel",
+    "Galileo"
+   ]
+  },
+  {
+   "id": "tec060",
+   "category": "technology",
+   "difficulty": "easy",
+   "question": "What company makes the iPhone?",
+   "correct_answer": "Apple",
+   "accepted_answers": [
+    "Apple"
+   ],
+   "wrong_answers": [
+    "Samsung",
+    "Google",
+    "Sony"
+   ]
+  },
+  {
+   "id": "tec061",
+   "category": "technology",
+   "difficulty": "medium",
+   "question": "What does LAN stand for?",
+   "correct_answer": "Local Area Network",
+   "accepted_answers": [
+    "Local Area Network"
+   ],
+   "wrong_answers": [
+    "Large Access Node",
+    "Linked Area Net",
+    "Local Access Number"
+   ]
+  },
+  {
+   "id": "tec062",
+   "category": "technology",
+   "difficulty": "medium",
+   "question": "What does USB stand for?",
+   "correct_answer": "Universal Serial Bus",
+   "accepted_answers": [
+    "Universal Serial Bus"
+   ],
+   "wrong_answers": [
+    "Unified System Bridge",
+    "Universal Signal Board",
+    "User Serial Bus"
+   ]
+  },
+  {
+   "id": "tec063",
+   "category": "technology",
+   "difficulty": "medium",
+   "question": "What does RAM stand for?",
+   "correct_answer": "Random Access Memory",
+   "accepted_answers": [
+    "Random Access Memory"
+   ],
+   "wrong_answers": [
+    "Read Access Memory",
+    "Rapid Active Memory",
+    "Run Access Module"
+   ]
+  },
+  {
+   "id": "tec064",
+   "category": "technology",
+   "difficulty": "medium",
+   "question": "Which company owns the Android operating system?",
+   "correct_answer": "Google",
+   "accepted_answers": [
+    "Google"
+   ],
+   "wrong_answers": [
+    "Apple",
+    "Microsoft",
+    "Samsung"
+   ]
+  },
+  {
+   "id": "tec065",
+   "category": "technology",
+   "difficulty": "medium",
+   "question": "What does AI stand for?",
+   "correct_answer": "Artificial Intelligence",
+   "accepted_answers": [
+    "Artificial Intelligence"
+   ],
+   "wrong_answers": [
+    "Automatic Input",
+    "Advanced Internet",
+    "Applied Information"
+   ]
+  },
+  {
+   "id": "tec066",
+   "category": "technology",
+   "difficulty": "medium",
+   "question": "What is the name of the popular version control system created by Linus Torvalds?",
+   "correct_answer": "Git",
+   "accepted_answers": [
+    "Git"
+   ],
+   "wrong_answers": [
+    "SVN",
+    "Mercurial",
+    "Docker"
+   ]
+  },
+  {
+   "id": "tec067",
+   "category": "technology",
+   "difficulty": "medium",
+   "question": "Which company developed the Windows operating system?",
+   "correct_answer": "Microsoft",
+   "accepted_answers": [
+    "Microsoft"
+   ],
+   "wrong_answers": [
+    "Apple",
+    "IBM",
+    "Google"
+   ]
+  },
+  {
+   "id": "tec068",
+   "category": "technology",
+   "difficulty": "medium",
+   "question": "What does PDF stand for?",
+   "correct_answer": "Portable Document Format",
+   "accepted_answers": [
+    "Portable Document Format"
+   ],
+   "wrong_answers": [
+    "Printed Document File",
+    "Public Data Format",
+    "Page Design File"
+   ]
+  },
+  {
+   "id": "tec069",
+   "category": "technology",
+   "difficulty": "hard",
+   "question": "What does GPU stand for?",
+   "correct_answer": "Graphics Processing Unit",
+   "accepted_answers": [
+    "Graphics Processing Unit"
+   ],
+   "wrong_answers": [
+    "General Processing Unit",
+    "Graphical Power Unit",
+    "Game Processing Unit"
+   ]
+  },
+  {
+   "id": "tec070",
+   "category": "technology",
+   "difficulty": "hard",
+   "question": "In computing, what number system uses only 0 and 1?",
+   "correct_answer": "Binary",
+   "accepted_answers": [
+    "Binary"
+   ],
+   "wrong_answers": [
+    "Decimal",
+    "Hexadecimal",
+    "Octal"
+   ]
+  },
+  {
+   "id": "tec071",
+   "category": "technology",
+   "difficulty": "hard",
+   "question": "What does URL stand for?",
+   "correct_answer": "Uniform Resource Locator",
+   "accepted_answers": [
+    "Uniform Resource Locator"
+   ],
+   "wrong_answers": [
+    "Universal Resource Link",
+    "Unified Routing Locator",
+    "User Resource Language"
+   ]
+  },
+  {
+   "id": "tec072",
+   "category": "technology",
+   "difficulty": "hard",
+   "question": "Who co-founded Microsoft with Paul Allen?",
+   "correct_answer": "Bill Gates",
+   "accepted_answers": [
+    "Bill Gates",
+    "Gates"
+   ],
+   "wrong_answers": [
+    "Steve Jobs",
+    "Steve Wozniak",
+    "Mark Zuckerberg"
+   ]
+  },
+  {
+   "id": "tec073",
+   "category": "technology",
+   "difficulty": "hard",
+   "question": "What programming language is mainly used to make web pages interactive in the browser?",
+   "correct_answer": "JavaScript",
+   "accepted_answers": [
+    "JavaScript",
+    "js"
+   ],
+   "wrong_answers": [
+    "Python",
+    "Java",
+    "C++"
+   ]
+  },
+  {
+   "id": "tec074",
+   "category": "technology",
+   "difficulty": "hard",
+   "question": "How many bytes are in a kilobyte, in the traditional binary definition?",
+   "correct_answer": "1024",
+   "accepted_answers": [
+    "1024"
+   ],
+   "wrong_answers": [
+    "1000",
+    "512",
+    "2048"
+   ]
+  },
+  {
+   "id": "tec075",
+   "category": "technology",
+   "difficulty": "easy",
+   "question": "What do you call a small picture you click to open an app?",
+   "correct_answer": "Icon",
+   "accepted_answers": [
+    "Icon",
+    "an icon",
+    "app icon"
+   ],
+   "wrong_answers": [
+    "Cursor",
+    "Widget",
+    "Pixel"
+   ]
+  },
+  {
+   "id": "gen069",
+   "category": "general",
+   "difficulty": "easy",
+   "question": "How many days are in a week?",
+   "correct_answer": "7",
+   "accepted_answers": [
+    "7",
+    "seven"
+   ],
+   "wrong_answers": [
+    "5",
+    "6",
+    "8"
+   ]
+  },
+  {
+   "id": "gen070",
+   "category": "general",
+   "difficulty": "easy",
+   "question": "What color do you get when you mix red and white?",
+   "correct_answer": "Pink",
+   "accepted_answers": [
+    "Pink"
+   ],
+   "wrong_answers": [
+    "Purple",
+    "Orange",
+    "Peach"
+   ]
+  },
+  {
+   "id": "gen071",
+   "category": "general",
+   "difficulty": "easy",
+   "question": "How many hours are in a day?",
+   "correct_answer": "24",
+   "accepted_answers": [
+    "24",
+    "twenty four",
+    "twenty-four"
+   ],
+   "wrong_answers": [
+    "12",
+    "20",
+    "48"
+   ]
+  },
+  {
+   "id": "gen072",
+   "category": "general",
+   "difficulty": "easy",
+   "question": "What shape has three sides?",
+   "correct_answer": "Triangle",
+   "accepted_answers": [
+    "Triangle",
+    "a triangle"
+   ],
+   "wrong_answers": [
+    "Square",
+    "Circle",
+    "Pentagon"
+   ]
+  },
+  {
+   "id": "gen073",
+   "category": "general",
+   "difficulty": "easy",
+   "question": "How many months are in a year?",
+   "correct_answer": "12",
+   "accepted_answers": [
+    "12",
+    "twelve"
+   ],
+   "wrong_answers": [
+    "10",
+    "11",
+    "13"
+   ]
+  },
+  {
+   "id": "gen074",
+   "category": "general",
+   "difficulty": "easy",
+   "question": "What is the opposite of hot?",
+   "correct_answer": "Cold",
+   "accepted_answers": [
+    "Cold"
+   ],
+   "wrong_answers": [
+    "Warm",
+    "Wet",
+    "Dark"
+   ]
+  },
+  {
+   "id": "gen075",
+   "category": "general",
+   "difficulty": "medium",
+   "question": "How many players are on a soccer team on the field?",
+   "correct_answer": "11",
+   "accepted_answers": [
+    "11",
+    "eleven"
+   ],
+   "wrong_answers": [
+    "9",
+    "10",
+    "12"
+   ]
+  },
+  {
+   "id": "gen076",
+   "category": "general",
+   "difficulty": "medium",
+   "question": "What is the largest number you can roll with one standard die?",
+   "correct_answer": "6",
+   "accepted_answers": [
+    "6",
+    "six"
+   ],
+   "wrong_answers": [
+    "8",
+    "10",
+    "12"
+   ]
+  },
+  {
+   "id": "gen077",
+   "category": "general",
+   "difficulty": "medium",
+   "question": "How many strings does a standard guitar have?",
+   "correct_answer": "6",
+   "accepted_answers": [
+    "6",
+    "six"
+   ],
+   "wrong_answers": [
+    "4",
+    "5",
+    "7"
+   ]
+  },
+  {
+   "id": "gen078",
+   "category": "general",
+   "difficulty": "medium",
+   "question": "What is the plural of mouse?",
+   "correct_answer": "Mice",
+   "accepted_answers": [
+    "Mice"
+   ],
+   "wrong_answers": [
+    "Mouses",
+    "Meese",
+    "Mousen"
+   ]
+  },
+  {
+   "id": "gen079",
+   "category": "general",
+   "difficulty": "medium",
+   "question": "How many colors are in a standard rainbow?",
+   "correct_answer": "7",
+   "accepted_answers": [
+    "7",
+    "seven"
+   ],
+   "wrong_answers": [
+    "5",
+    "6",
+    "8"
+   ]
+  },
+  {
+   "id": "gen080",
+   "category": "general",
+   "difficulty": "medium",
+   "question": "How many zeros are in one million?",
+   "correct_answer": "6",
+   "accepted_answers": [
+    "6",
+    "six"
+   ],
+   "wrong_answers": [
+    "5",
+    "7",
+    "9"
+   ]
+  },
+  {
+   "id": "gen081",
+   "category": "general",
+   "difficulty": "medium",
+   "question": "What do you call a word that reads the same backwards, like level?",
+   "correct_answer": "Palindrome",
+   "accepted_answers": [
+    "Palindrome",
+    "a palindrome"
+   ],
+   "wrong_answers": [
+    "Anagram",
+    "Acronym",
+    "Homonym"
+   ]
+  },
+  {
+   "id": "gen082",
+   "category": "general",
+   "difficulty": "medium",
+   "question": "How many sides does an octagon have?",
+   "correct_answer": "8",
+   "accepted_answers": [
+    "8",
+    "eight"
+   ],
+   "wrong_answers": [
+    "6",
+    "7",
+    "10"
+   ]
+  },
+  {
+   "id": "gen083",
+   "category": "general",
+   "difficulty": "hard",
+   "question": "What is 15 multiplied by 15?",
+   "correct_answer": "225",
+   "accepted_answers": [
+    "225"
+   ],
+   "wrong_answers": [
+    "215",
+    "250",
+    "205"
+   ]
+  },
+  {
+   "id": "gen084",
+   "category": "general",
+   "difficulty": "hard",
+   "question": "What is the Roman numeral for 50?",
+   "correct_answer": "L",
+   "accepted_answers": [
+    "L"
+   ],
+   "wrong_answers": [
+    "V",
+    "C",
+    "X"
+   ]
+  },
+  {
+   "id": "gen085",
+   "category": "general",
+   "difficulty": "hard",
+   "question": "How many seconds are in an hour?",
+   "correct_answer": "3600",
+   "accepted_answers": [
+    "3600",
+    "3,600"
+   ],
+   "wrong_answers": [
+    "360",
+    "6000",
+    "1440"
+   ]
+  },
+  {
+   "id": "gen086",
+   "category": "general",
+   "difficulty": "hard",
+   "question": "What is the only even prime number?",
+   "correct_answer": "2",
+   "accepted_answers": [
+    "2",
+    "two"
+   ],
+   "wrong_answers": [
+    "4",
+    "0",
+    "6"
+   ]
+  },
+  {
+   "id": "gen087",
+   "category": "general",
+   "difficulty": "hard",
+   "question": "What is the name of the longest bone in the human body?",
+   "correct_answer": "Femur",
+   "accepted_answers": [
+    "Femur",
+    "thigh bone",
+    "thighbone"
+   ],
+   "wrong_answers": [
+    "Tibia",
+    "Humerus",
+    "Spine"
+   ]
+  },
+  {
+   "id": "gen088",
+   "category": "general",
+   "difficulty": "hard",
+   "question": "What is 12 squared?",
+   "correct_answer": "144",
+   "accepted_answers": [
+    "144"
+   ],
+   "wrong_answers": [
+    "124",
+    "132",
+    "156"
+   ]
+  },
+  {
+   "id": "mus000",
+   "category": "music",
+   "difficulty": "easy",
+   "question": "How many lines are in a standard music staff?",
+   "correct_answer": "5",
+   "accepted_answers": [
+    "5",
+    "five"
+   ],
+   "wrong_answers": [
+    "4",
+    "6",
+    "7"
+   ]
+  },
+  {
+   "id": "mus001",
+   "category": "music",
+   "difficulty": "easy",
+   "question": "Which instrument has black and white keys?",
+   "correct_answer": "Piano",
+   "accepted_answers": [
+    "Piano",
+    "the piano",
+    "keyboard"
+   ],
+   "wrong_answers": [
+    "Guitar",
+    "Violin",
+    "Drums"
+   ]
+  },
+  {
+   "id": "mus002",
+   "category": "music",
+   "difficulty": "medium",
+   "question": "Which composer wrote the Moonlight Sonata?",
+   "correct_answer": "Beethoven",
+   "accepted_answers": [
+    "Beethoven",
+    "Ludwig van Beethoven"
+   ],
+   "wrong_answers": [
+    "Mozart",
+    "Bach",
+    "Chopin"
+   ]
+  },
+  {
+   "id": "mus003",
+   "category": "music",
+   "difficulty": "medium",
+   "question": "How many strings does a violin have?",
+   "correct_answer": "4",
+   "accepted_answers": [
+    "4",
+    "four"
+   ],
+   "wrong_answers": [
+    "5",
+    "6",
+    "3"
+   ]
+  },
+  {
+   "id": "mus004",
+   "category": "music",
+   "difficulty": "medium",
+   "question": "What South Korean group sang Dynamite and Butter?",
+   "correct_answer": "BTS",
+   "accepted_answers": [
+    "BTS",
+    "Bangtan Boys",
+    "Bangtan"
+   ],
+   "wrong_answers": [
+    "Blackpink",
+    "EXO",
+    "Twice"
+   ]
+  },
+  {
+   "id": "mus005",
+   "category": "music",
+   "difficulty": "medium",
+   "question": "What instrument does a drummer hit with sticks to keep the beat?",
+   "correct_answer": "Drums",
+   "accepted_answers": [
+    "Drums",
+    "drum",
+    "drum kit"
+   ],
+   "wrong_answers": [
+    "Trumpet",
+    "Flute",
+    "Harp"
+   ]
+  },
+  {
+   "id": "mus006",
+   "category": "music",
+   "difficulty": "medium",
+   "question": "What is the highest female singing voice called?",
+   "correct_answer": "Soprano",
+   "accepted_answers": [
+    "Soprano"
+   ],
+   "wrong_answers": [
+    "Alto",
+    "Tenor",
+    "Mezzo"
+   ]
+  },
+  {
+   "id": "mus007",
+   "category": "music",
+   "difficulty": "hard",
+   "question": "Which composer became deaf but kept composing?",
+   "correct_answer": "Beethoven",
+   "accepted_answers": [
+    "Beethoven",
+    "Ludwig van Beethoven"
+   ],
+   "wrong_answers": [
+    "Mozart",
+    "Vivaldi",
+    "Handel"
+   ]
+  },
+  {
+   "id": "mus008",
+   "category": "music",
+   "difficulty": "hard",
+   "question": "How many keys does a standard piano have?",
+   "correct_answer": "88",
+   "accepted_answers": [
+    "88",
+    "eighty eight",
+    "eighty-eight"
+   ],
+   "wrong_answers": [
+    "76",
+    "61",
+    "100"
+   ]
+  },
+  {
+   "id": "mus009",
+   "category": "music",
+   "difficulty": "hard",
+   "question": "Which brass instrument has a slide?",
+   "correct_answer": "Trombone",
+   "accepted_answers": [
+    "Trombone",
+    "the trombone"
+   ],
+   "wrong_answers": [
+    "Trumpet",
+    "Tuba",
+    "French horn"
+   ]
+  },
+  {
+   "id": "mus010",
+   "category": "music",
+   "difficulty": "hard",
+   "question": "What Italian word in music means to play loudly?",
+   "correct_answer": "Forte",
+   "accepted_answers": [
+    "Forte"
+   ],
+   "wrong_answers": [
+    "Piano",
+    "Allegro",
+    "Largo"
+   ]
+  },
+  {
+   "id": "mus011",
+   "category": "music",
+   "difficulty": "medium",
+   "question": "Which K-pop girl group has the members Jisoo, Jennie, Rose and Lisa?",
+   "correct_answer": "Blackpink",
+   "accepted_answers": [
+    "Blackpink",
+    "black pink"
+   ],
+   "wrong_answers": [
+    "Twice",
+    "Red Velvet",
+    "Aespa"
+   ]
+  },
+  {
+   "id": "mov000",
+   "category": "movies",
+   "difficulty": "easy",
+   "question": "What is the name of the snowman in Frozen?",
+   "correct_answer": "Olaf",
+   "accepted_answers": [
+    "Olaf"
+   ],
+   "wrong_answers": [
+    "Sven",
+    "Kristoff",
+    "Hans"
+   ]
+  },
+  {
+   "id": "mov001",
+   "category": "movies",
+   "difficulty": "easy",
+   "question": "What kind of animal is Pumbaa in The Lion King?",
+   "correct_answer": "Warthog",
+   "accepted_answers": [
+    "Warthog",
+    "a warthog"
+   ],
+   "wrong_answers": [
+    "Meerkat",
+    "Hippo",
+    "Hyena"
+   ]
+  },
+  {
+   "id": "mov002",
+   "category": "movies",
+   "difficulty": "easy",
+   "question": "What color is Pikachu?",
+   "correct_answer": "Yellow",
+   "accepted_answers": [
+    "Yellow"
+   ],
+   "wrong_answers": [
+    "Red",
+    "Blue",
+    "Green"
+   ]
+  },
+  {
+   "id": "mov003",
+   "category": "movies",
+   "difficulty": "medium",
+   "question": "What is the name of the wizarding school in Harry Potter?",
+   "correct_answer": "Hogwarts",
+   "accepted_answers": [
+    "Hogwarts"
+   ],
+   "wrong_answers": [
+    "Durmstrang",
+    "Beauxbatons",
+    "Ilvermorny"
+   ]
+  },
+  {
+   "id": "mov004",
+   "category": "movies",
+   "difficulty": "medium",
+   "question": "In the anime One Piece, what is the name of the main character?",
+   "correct_answer": "Monkey D. Luffy",
+   "accepted_answers": [
+    "Monkey D. Luffy",
+    "Luffy"
+   ],
+   "wrong_answers": [
+    "Zoro",
+    "Naruto",
+    "Goku"
+   ]
+  },
+  {
+   "id": "mov005",
+   "category": "movies",
+   "difficulty": "medium",
+   "question": "What ninja village is Naruto from?",
+   "correct_answer": "Hidden Leaf",
+   "accepted_answers": [
+    "Hidden Leaf",
+    "Leaf",
+    "Konoha",
+    "Konohagakure",
+    "Leaf Village"
+   ],
+   "wrong_answers": [
+    "Hidden Sand",
+    "Hidden Mist",
+    "Hidden Cloud"
+   ]
+  },
+  {
+   "id": "mov006",
+   "category": "movies",
+   "difficulty": "medium",
+   "question": "What studio made Spirited Away and My Neighbor Totoro?",
+   "correct_answer": "Studio Ghibli",
+   "accepted_answers": [
+    "Studio Ghibli",
+    "Ghibli"
+   ],
+   "wrong_answers": [
+    "Toei",
+    "Pixar",
+    "Madhouse"
+   ]
+  },
+  {
+   "id": "mov007",
+   "category": "movies",
+   "difficulty": "medium",
+   "question": "What is the name of the toy cowboy in Toy Story?",
+   "correct_answer": "Woody",
+   "accepted_answers": [
+    "Woody",
+    "Sheriff Woody"
+   ],
+   "wrong_answers": [
+    "Buzz",
+    "Jessie",
+    "Andy"
+   ]
+  },
+  {
+   "id": "mov008",
+   "category": "movies",
+   "difficulty": "medium",
+   "question": "What does Goku transform into when his hair turns gold?",
+   "correct_answer": "Super Saiyan",
+   "accepted_answers": [
+    "Super Saiyan",
+    "saiyan",
+    "ssj"
+   ],
+   "wrong_answers": [
+    "Kaioken",
+    "Ultra Instinct",
+    "Great Ape"
+   ]
+  },
+  {
+   "id": "mov009",
+   "category": "movies",
+   "difficulty": "hard",
+   "question": "In Demon Slayer, what is the name of Tanjiro's sister?",
+   "correct_answer": "Nezuko",
+   "accepted_answers": [
+    "Nezuko"
+   ],
+   "wrong_answers": [
+    "Kanao",
+    "Shinobu",
+    "Mitsuri"
+   ]
+  },
+  {
+   "id": "mov010",
+   "category": "movies",
+   "difficulty": "hard",
+   "question": "Which movie features a clownfish searching for his son?",
+   "correct_answer": "Finding Nemo",
+   "accepted_answers": [
+    "Finding Nemo",
+    "Nemo"
+   ],
+   "wrong_answers": [
+    "Shark Tale",
+    "Luca",
+    "Moana"
+   ]
+  },
+  {
+   "id": "mov011",
+   "category": "movies",
+   "difficulty": "hard",
+   "question": "In Attack on Titan, what is Eren's last name?",
+   "correct_answer": "Yeager",
+   "accepted_answers": [
+    "Yeager",
+    "Jaeger",
+    "Yaeger"
+   ],
+   "wrong_answers": [
+    "Ackerman",
+    "Arlert",
+    "Reiss"
+   ]
+  },
+  {
+   "id": "mov012",
+   "category": "movies",
+   "difficulty": "hard",
+   "question": "Which Studio Ghibli film features a moving castle?",
+   "correct_answer": "Howl's Moving Castle",
+   "accepted_answers": [
+    "Howl's Moving Castle",
+    "Howls Moving Castle",
+    "Howl"
+   ],
+   "wrong_answers": [
+    "Castle in the Sky",
+    "Spirited Away",
+    "Kiki's Delivery Service"
+   ]
+  },
+  {
+   "id": "mov013",
+   "category": "movies",
+   "difficulty": "hard",
+   "question": "What is the name of the fictional African country in Black Panther?",
+   "correct_answer": "Wakanda",
+   "accepted_answers": [
+    "Wakanda"
+   ],
+   "wrong_answers": [
+    "Zamunda",
+    "Genovia",
+    "Sokovia"
+   ]
+  },
+  {
+   "id": "mov014",
+   "category": "movies",
+   "difficulty": "medium",
+   "question": "What is the name of Ash's first Pokemon partner in the anime?",
+   "correct_answer": "Pikachu",
+   "accepted_answers": [
+    "Pikachu"
+   ],
+   "wrong_answers": [
+    "Bulbasaur",
+    "Charmander",
+    "Squirtle"
+   ]
+  },
+  {
+   "id": "spo000",
+   "category": "sports",
+   "difficulty": "easy",
+   "question": "How many rings are on the Olympic flag?",
+   "correct_answer": "5",
+   "accepted_answers": [
+    "5",
+    "five"
+   ],
+   "wrong_answers": [
+    "4",
+    "6",
+    "7"
+   ]
+  },
+  {
+   "id": "spo001",
+   "category": "sports",
+   "difficulty": "easy",
+   "question": "In basketball, how many points is a shot from behind the arc worth?",
+   "correct_answer": "3",
+   "accepted_answers": [
+    "3",
+    "three"
+   ],
+   "wrong_answers": [
+    "2",
+    "4",
+    "1"
+   ]
+  },
+  {
+   "id": "spo002",
+   "category": "sports",
+   "difficulty": "medium",
+   "question": "Which Filipino boxer won world titles in eight weight divisions?",
+   "correct_answer": "Manny Pacquiao",
+   "accepted_answers": [
+    "Manny Pacquiao",
+    "Pacquiao",
+    "Manny",
+    "Pacman"
+   ],
+   "wrong_answers": [
+    "Nonito Donaire",
+    "Flash Elorde",
+    "Onyok Velasco"
+   ]
+  },
+  {
+   "id": "spo003",
+   "category": "sports",
+   "difficulty": "medium",
+   "question": "How many players are on a basketball team on the court?",
+   "correct_answer": "5",
+   "accepted_answers": [
+    "5",
+    "five"
+   ],
+   "wrong_answers": [
+    "6",
+    "7",
+    "4"
+   ]
+  },
+  {
+   "id": "spo004",
+   "category": "sports",
+   "difficulty": "medium",
+   "question": "In tennis, what is a score of zero called?",
+   "correct_answer": "Love",
+   "accepted_answers": [
+    "Love"
+   ],
+   "wrong_answers": [
+    "Nil",
+    "Zero",
+    "Deuce"
+   ]
+  },
+  {
+   "id": "spo005",
+   "category": "sports",
+   "difficulty": "medium",
+   "question": "What sport uses a shuttlecock?",
+   "correct_answer": "Badminton",
+   "accepted_answers": [
+    "Badminton"
+   ],
+   "wrong_answers": [
+    "Tennis",
+    "Squash",
+    "Volleyball"
+   ]
+  },
+  {
+   "id": "spo006",
+   "category": "sports",
+   "difficulty": "medium",
+   "question": "How often are the Summer Olympics usually held, in years?",
+   "correct_answer": "4",
+   "accepted_answers": [
+    "4",
+    "four",
+    "every 4 years"
+   ],
+   "wrong_answers": [
+    "2",
+    "3",
+    "5"
+   ]
+  },
+  {
+   "id": "spo007",
+   "category": "sports",
+   "difficulty": "hard",
+   "question": "In which country were the first modern Olympic Games held in 1896?",
+   "correct_answer": "Greece",
+   "accepted_answers": [
+    "Greece"
+   ],
+   "wrong_answers": [
+    "France",
+    "England",
+    "Italy"
+   ]
+  },
+  {
+   "id": "spo008",
+   "category": "sports",
+   "difficulty": "hard",
+   "question": "How long is a marathon in kilometers, roughly?",
+   "correct_answer": "42",
+   "accepted_answers": [
+    "42",
+    "42.195",
+    "42 km"
+   ],
+   "wrong_answers": [
+    "40",
+    "26",
+    "50"
+   ]
+  },
+  {
+   "id": "spo009",
+   "category": "sports",
+   "difficulty": "hard",
+   "question": "What is the maximum score in a single frame of ten-pin bowling?",
+   "correct_answer": "30",
+   "accepted_answers": [
+    "30",
+    "thirty"
+   ],
+   "wrong_answers": [
+    "10",
+    "20",
+    "300"
+   ]
+  },
+  {
+   "id": "spo010",
+   "category": "sports",
+   "difficulty": "hard",
+   "question": "In chess, which piece can only move diagonally?",
+   "correct_answer": "Bishop",
+   "accepted_answers": [
+    "Bishop",
+    "the bishop"
+   ],
+   "wrong_answers": [
+    "Rook",
+    "Knight",
+    "Queen"
+   ]
+  },
+  {
+   "id": "spo011",
+   "category": "sports",
+   "difficulty": "hard",
+   "question": "Which country won the first FIFA World Cup in 1930?",
+   "correct_answer": "Uruguay",
+   "accepted_answers": [
+    "Uruguay"
+   ],
+   "wrong_answers": [
+    "Brazil",
+    "Argentina",
+    "Italy"
+   ]
+  },
+  {
+   "id": "spo012",
+   "category": "sports",
+   "difficulty": "medium",
+   "question": "What sport is Michael Jordan famous for?",
+   "correct_answer": "Basketball",
+   "accepted_answers": [
+    "Basketball"
+   ],
+   "wrong_answers": [
+    "Baseball",
+    "Football",
+    "Tennis"
    ]
   }
  ]

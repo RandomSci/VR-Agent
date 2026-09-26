@@ -102,6 +102,12 @@ class WebSocketHandler:
             )
 
         self.room_session.voices.base_source = _base_voice
+        from .room.question_maker import conf_llm_source
+
+        # AI trivia questions use conf.yaml's LLM, only when a viewer starts Trivia.
+        self.room_session.show.question_maker.llm_source = conf_llm_source(
+            lambda: self.default_context_cache
+        )
 
         # Message handlers mapping
         self._message_handlers = self._init_message_handlers()

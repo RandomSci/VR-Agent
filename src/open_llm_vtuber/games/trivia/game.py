@@ -10,6 +10,7 @@ and speaks the requested template lines.
 from __future__ import annotations
 
 import json
+import os
 import random
 from collections import deque
 from pathlib import Path
@@ -29,6 +30,7 @@ from ..base import (
 )
 from ..matching import is_correct, looks_like_answer, normalise
 from ..registry import GameFactory
+from .bank import QuestionBank
 
 DIFFICULTIES = ("easy", "medium", "hard")
 PHASES = ("intro", "question", "turn", "reveal", "between", "finished")
@@ -82,6 +84,19 @@ def load_questions(path: Path) -> list[dict[str, Any]]:
 def load(config: dict[str, Any], game_dir: Path) -> GameFactory:
     questions = load_questions(game_dir / "questions.json")
     categories = tuple(sorted({q["category"] for q in questions}))
+    ai = (
+        config.get("ai_questions")
+        if isinstance(config.get("ai_questions"), dict)
+        else {}
+    )
+    cache_dir = Path(
+        str(config.get("cache_dir") or os.environ.get("VR_AGENT_CACHE_DIR") or "cache")
+    )
+    bank = QuestionBank(
+        questions,
+        cache_dir=cache_dir,
+        max_ai_questions=int(_num(ai, "max_saved", 1500, 0, 20000)),
+    )
     info = GameInfo(
         id=str(config.get("id") or "trivia"),
         display_name=str(config.get("display_name") or "Trivia Battle"),
@@ -101,9 +116,11 @@ def load(config: dict[str, Any], game_dir: Path) -> GameFactory:
     def create(
         rng: Optional[random.Random] = None, options: Optional[dict] = None
     ) -> "TriviaBattle":
-        return TriviaBattle(info, config, questions, rng=rng, options=options)
+        return TriviaBattle(info, config, bank, rng=rng, options=options)
 
-    return GameFactory(info=info, create=create, config=dict(config))
+    factory = GameFactory(info=info, create=create, config=dict(config))
+    factory.bank = bank  # type: ignore[attr-defined]  # the room's question maker adds to it
+    return factory
 
 
 class TriviaBattle(Game):
@@ -116,7 +133,11 @@ class TriviaBattle(Game):
         options: Optional[dict] = None,
     ):
         self.info = info
-        self.questions = questions
+        self.bank = (
+            questions
+            if isinstance(questions, QuestionBank)
+            else QuestionBank(list(questions), cache_dir=None)
+        )
         self.rng = rng or random.Random()
         options = options or {}
         c = config
@@ -307,6 +328,10 @@ class TriviaBattle(Game):
     # ------------------------------------------------------------------
     # rounds
     # ------------------------------------------------------------------
+    @property
+    def questions(self) -> list[dict[str, Any]]:
+        return self.bank.all()  # includes AI questions added while running
+
     def _pick_question(self) -> dict[str, Any]:
         def pool(use_category: bool, use_difficulty: bool) -> list[dict[str, Any]]:
             return [
@@ -337,8 +362,12 @@ class TriviaBattle(Game):
         else:
             self.used.clear()  # every question was asked; start over
             candidates = list(self.questions)
-        question = self.rng.choice(candidates)
+            if not candidates:
+                raise ValueError("no trivia questions")
+        # Never asked in any stream first, else the one asked longest ago.
+        question = self.bank.pick(candidates, self.rng)
         self.used.add(question["id"])
+        self.bank.mark_asked(question["id"])
         return question
 
     def _start_round(self, now: float) -> StepResult:
