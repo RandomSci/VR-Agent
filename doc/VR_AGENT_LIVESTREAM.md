@@ -99,3 +99,25 @@ page is recycled every 6 hours to keep memory flat.
 - Optional `max_tokens` under `openai_llm` caps reply length (90 is a good livestream value).
 - The chat to voice time for every reply is logged (`VR Agent latency`) and summarised at
   `/vr-agent/status`.
+
+## Be right back screen
+
+Two layers, use either or both.
+
+**Pause from the server (server keeps running).** Run
+`curl -X POST http://127.0.0.1:12393/vr-agent/pause -d '{"paused": true}'` and the livestream page
+fades to `frontend/vr-agent/brb.jpg`, the comment card and badge hide, and she stops replying.
+`{"paused": false}` brings her back. A POST with no body toggles.
+
+**Automatic while the server is down (restarts, code changes).** The page can't show anything when
+the server is off, so OBS switches scenes instead.
+1. OBS, Tools, WebSocket Server Settings, enable it and note the password.
+2. Add a scene named `BRB` with an Image source pointing at `frontend/vr-agent/brb.jpg`.
+3. In a second terminal run
+   `uv run python scripts/obs_brb_watchdog.py --live-scene "Scene" --brb-scene "BRB" --browser-source "Browser" --password YOUR_PASSWORD`
+   using your real live scene and Browser source names.
+
+The watchdog checks `/vr-agent/health` every 2 seconds. Server down for two checks, or paused, means
+BRB. When the server is back it refreshes the Browser source and switches to the live scene as soon as
+the livestream page reconnects. It only switches between those two scenes, so other scenes you pick
+yourself are left alone.

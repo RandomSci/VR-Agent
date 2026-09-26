@@ -59,6 +59,7 @@
     lastIdle: [],
     lastLargeIdleAt: Date.now(), // no big spell in the first minutes after start
     cardId: null,
+    paused: false,
   };
 
   // -------------------------------------------------------------------------
@@ -114,6 +115,16 @@
     ui.cardMessage = el("div", "vra-card-message", ui.card);
 
     ui.caption = el("div", "vra-caption", ui.root);
+
+    // Be-right-back screen (livestream mode). Uses vr-agent/brb.jpg; the
+    // text underneath shows if the image is missing.
+    ui.brb = el("div", "vra-brb", ui.root);
+    const brbText = el("div", "vra-brb-text", ui.brb);
+    brbText.textContent = "Be right back";
+    const brbImg = el("img", "", ui.brb);
+    brbImg.alt = "";
+    brbImg.src = "./vr-agent/brb.jpg";
+    brbImg.addEventListener("error", () => brbImg.remove());
     renderPhase();
   }
 
@@ -331,8 +342,20 @@
   // -------------------------------------------------------------------------
   let idleTimer = null;
 
+  function setPaused(paused) {
+    state.paused = !!paused;
+    document.documentElement.classList.toggle("vra-paused", state.paused);
+    if (state.paused) {
+      hideCard();
+      clearTimeout(idleTimer);
+    } else {
+      scheduleIdle(4000);
+    }
+  }
+
   function idleAllowed() {
     return (
+      !state.paused &&
       FLAGS.idle &&
       state.settings.idle_motions_enabled &&
       (LIVE || state.settings.idle_in_dev_mode) &&
@@ -405,7 +428,13 @@
   // -------------------------------------------------------------------------
   // Messages from the backend
   // -------------------------------------------------------------------------
-  const VR_TYPES = new Set(["vr-agent-config", "vr-agent-state", "vr-agent-action", "youtube-live-selected-message"]);
+  const VR_TYPES = new Set([
+    "vr-agent-config",
+    "vr-agent-state",
+    "vr-agent-action",
+    "vr-agent-pause",
+    "youtube-live-selected-message",
+  ]);
 
   function onServerMessage(payload) {
     if (!payload || typeof payload !== "object") return;
@@ -419,6 +448,7 @@
         }
         state.capabilities = payload.capabilities || null;
         if (payload.phase) state.phase = payload.phase;
+        setPaused(payload.paused);
         if (ui.title) ui.title.textContent = safeText(state.settings.overlay_title, 40) || "VR AGENT";
         renderPhase();
         scheduleIdle();
@@ -428,6 +458,9 @@
           state.phase = payload.phase;
           renderPhase();
         }
+        break;
+      case "vr-agent-pause":
+        setPaused(payload.paused);
         break;
       case "vr-agent-action":
         if (typeof payload.action === "string") {

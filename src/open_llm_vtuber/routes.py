@@ -24,6 +24,7 @@ def init_client_ws_route(ws_handler: WebSocketHandler) -> APIRouter:
     """
 
     router = APIRouter()
+
     @router.websocket("/client-ws")
     async def websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for client connections"""
@@ -103,15 +104,51 @@ def init_webtool_routes(
         from .vr_agent import runtime
 
         youtube_live_service = get_youtube_live_service()
-        caps = ws_handler.get_capabilities(default_context_cache) if ws_handler else None
+        caps = (
+            ws_handler.get_capabilities(default_context_cache) if ws_handler else None
+        )
         return JSONResponse(
             {
                 "state": runtime.snapshot(),
                 "latency": runtime.latency.summary(),
-                "connected_clients": len(ws_handler.client_connections) if ws_handler else 0,
-                "livestream_clients": len(ws_handler.live_client_uids) if ws_handler else 0,
+                "connected_clients": len(ws_handler.client_connections)
+                if ws_handler
+                else 0,
+                "livestream_clients": len(ws_handler.live_client_uids)
+                if ws_handler
+                else 0,
                 "capabilities": caps.describe() if caps else None,
-                "youtube": youtube_live_service.status() if youtube_live_service else None,
+                "youtube": youtube_live_service.status()
+                if youtube_live_service
+                else None,
+            }
+        )
+
+    @router.post("/vr-agent/pause")
+    async def vr_agent_pause(request: Request):
+        """Be-right-back mode. Body {"paused": true|false}; no body toggles."""
+        from .vr_agent import runtime
+
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        paused = payload.get("paused") if isinstance(payload, dict) else None
+        runtime.set_paused(not runtime.paused if paused is None else bool(paused))
+        return JSONResponse({"paused": runtime.paused})
+
+    @router.get("/vr-agent/health")
+    async def vr_agent_health():
+        """Tiny liveness check for the OBS be-right-back watchdog."""
+        from .vr_agent import runtime
+
+        return JSONResponse(
+            {
+                "ok": True,
+                "paused": runtime.paused,
+                "livestream_clients": len(ws_handler.live_client_uids)
+                if ws_handler
+                else 0,
             }
         )
 
@@ -133,7 +170,8 @@ def init_webtool_routes(
         if not caps or not caps.get(name):
             available = sorted(caps.actions) if caps else []
             return JSONResponse(
-                {"error": f"unknown action '{name}'", "available": available}, status_code=400
+                {"error": f"unknown action '{name}'", "available": available},
+                status_code=400,
             )
         await websocket.send_text(
             json.dumps({"type": "vr-agent-action", "action": name, "sync": "now"})

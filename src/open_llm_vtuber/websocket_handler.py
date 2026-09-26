@@ -341,6 +341,7 @@ class WebSocketHandler:
             },
             "capabilities": caps.to_frontend() if caps else None,
             "phase": runtime.public_phase(),
+            "paused": runtime.paused,
         }
         await websocket.send_text(json.dumps(payload))
 

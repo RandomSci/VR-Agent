@@ -58,6 +58,8 @@ class VRAgentRuntime:
         self._broadcaster: Optional[Broadcaster] = None
         self._last_public: Optional[str] = None
         self.latency = LatencyTracker()
+        self.paused = False
+        self.paused_since = 0.0
 
     @property
     def state(self) -> VRAgentState:
@@ -92,8 +94,28 @@ class VRAgentRuntime:
     def public_payload(self) -> str:
         return json.dumps({"type": "vr-agent-state", "phase": self.public_phase()})
 
+    def set_paused(self, paused: bool) -> None:
+        """Be-right-back mode: the stream shows the BRB screen, no replies."""
+        paused = bool(paused)
+        if paused == self.paused:
+            return
+        self.paused = paused
+        self.paused_since = time.time() if paused else 0.0
+        logger.info(f"VR Agent {'paused (be right back)' if paused else 'resumed'}.")
+        if not self._broadcaster:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._safe_broadcast(self.pause_payload()))
+
+    def pause_payload(self) -> str:
+        return json.dumps({"type": "vr-agent-pause", "paused": self.paused})
+
     def snapshot(self) -> dict:
         return {
+            "paused": self.paused,
             "state": self._state.value,
             "since": self._since,
             "seconds_in_state": round(time.time() - self._since, 1),

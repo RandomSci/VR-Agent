@@ -636,6 +636,8 @@ class YouTubeLiveChatService:
         while self._running:
             try:
                 await self._wait_for_work(1.0)
+                if runtime.paused:
+                    continue  # be-right-back mode: chat is kept, no replies
                 buffer_size = len(self.buffer.messages)
                 if not self.connection_provider.has_connected_clients():
                     self._debug_response_loop(
