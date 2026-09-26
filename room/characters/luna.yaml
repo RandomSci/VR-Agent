@@ -11,16 +11,11 @@ persona: |
   often with a small understated joke.
 
 voice:
-  # ElevenLabs. api_key, model and voice settings come from conf.yaml's elevenlabs_tts
-  # block. Only voices already in your ElevenLabs account ("My Voices" or premade) work
-  # through the API; library voices you have not added fail, which is why Luna fell
-  # back to the Edge voice before. The first choice that is not the conf.yaml voice
-  # (Mika's) is used:
-  #   XJ2fW4ybq7HouelYYGcL  Cherry Twinkle, adorable cartoon girl (in your account)
-  #   cgSgspJ2msm6clMCkdW9  Jessica, playful and cute (ElevenLabs premade)
+  # ElevenLabs voice chosen by Selwyn. api_key, model and voice settings come from
+  # conf.yaml's elevenlabs_tts block.
   tts_model: elevenlabs_tts
   settings:
-    voice_ids: [XJ2fW4ybq7HouelYYGcL, cgSgspJ2msm6clMCkdW9]
+    voice_id: EVy5l1wEi54nXdQwAJJf
   # Used only if ElevenLabs fails, so Luna never goes silent.
   fallback:
     tts_model: edge_tts

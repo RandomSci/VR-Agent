@@ -19,7 +19,7 @@ def test_bundled_room_loads_mika_and_luna():
     assert mika.primary and not luna.primary
     assert mika.model == "mao_pro" and luna.model == "hiyori"
     assert mika.voice.tts_model is None  # inherits conf.yaml TTS
-    assert luna.voice.tts_model == "elevenlabs_tts" and luna.voice.settings["voice_ids"]
+    assert luna.voice.tts_model == "elevenlabs_tts" and luna.voice.settings["voice_id"]
     assert luna.voice.fallback.tts_model == "edge_tts"
     assert mika.mouth == "ParamA" and luna.mouth == "ParamMouthOpenY"
     # Every reaction and emotion points at a real registry action.
