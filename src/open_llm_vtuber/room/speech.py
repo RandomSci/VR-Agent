@@ -220,6 +220,16 @@ class CharacterVoices:
                 logger.info(
                     f"VR Room: {character_id} uses voice {pick}; the first choice is already taken"
                 )
+        if (
+            spec.tts_model == "elevenlabs_tts"
+            and not str(settings.get("api_key") or "").strip()
+        ):
+            # Without a key every line would fail first and then fall back,
+            # which adds a delay before each sentence. Use the fallback directly.
+            raise ValueError(
+                "elevenlabs_tts has no api_key: fill api_key in conf.yaml under "
+                "character_config.tts_config.elevenlabs_tts"
+            )
         engine = self.factory(spec.tts_model, **settings)
         if engine is not None:
             try:
@@ -228,11 +238,64 @@ class CharacterVoices:
                 pass
         return engine
 
+    @staticmethod
+    def _engine_facts(engine: Any) -> dict[str, Any]:
+        """What an engine really speaks with. Never includes keys."""
+        if engine is None:
+            return {"engine": None}
+        inner = engine.primary if isinstance(engine, FallbackTTS) else engine
+        module = type(inner).__module__.rsplit(".", 1)[-1]
+        facts: dict[str, Any] = {"engine": module}
+        for attr in (
+            "voice",
+            "voice_id",
+            "model_id",
+            "output_format",
+            "stability",
+            "similarity_boost",
+            "style",
+            "use_speaker_boost",
+        ):
+            value = getattr(inner, attr, None)
+            if value is not None and not callable(value):
+                facts[attr] = value
+        if isinstance(engine, FallbackTTS):
+            facts["fallback"] = CharacterVoices._engine_facts(engine.fallback)
+            facts["fallback_lines"] = engine.fallbacks_used
+            facts["primary_resting"] = engine._primary_resting()
+            if engine.last_error:
+                facts["last_error"] = engine.last_error
+        return facts
+
+    def report(self) -> dict[str, Any]:
+        """Per character: which engine, voice and settings actually speak."""
+        out: dict[str, Any] = {}
+        for cid in self.session.state.characters:
+            profile = self.session.room.get(cid)
+            engine = self.engine(cid)
+            facts = self._engine_facts(engine)
+            facts["source"] = (
+                "conf.yaml"
+                if profile and not profile.voice.tts_model
+                else "character yaml"
+            )
+            if self.errors.get(cid):
+                facts["error"] = self.errors[cid]
+            out[cid] = facts
+        return out
+
+    def log_report(self) -> None:
+        for cid, facts in self.report().items():
+            main = {k: v for k, v in facts.items() if k not in ("fallback",)}
+            logger.info(f"VR Room voice for {cid}: {main}")
+
     def describe(self) -> dict[str, Any]:
+        report = self.report()
         return {
             cid: {
-                "ready": self.engine(cid) is not None,
+                "ready": report[cid].get("engine") is not None,
                 "error": self.errors.get(cid),
+                **report[cid],
             }
             for cid in self.session.state.characters
         }

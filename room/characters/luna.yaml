@@ -11,11 +11,11 @@ persona: |
   often with a small understated joke.
 
 voice:
-  # ElevenLabs voice chosen by Selwyn. api_key, model and voice settings come from
+  # ElevenLabs voice "Chelsea", chosen by Selwyn. api_key, model and voice settings come from
   # conf.yaml's elevenlabs_tts block.
   tts_model: elevenlabs_tts
   settings:
-    voice_id: EVy5l1wEi54nXdQwAJJf
+    voice_id: ExVVn0SQueMnWIWTbm7F   # Chelsea
   # Used only if ElevenLabs fails, so Luna never goes silent.
   fallback:
     tts_model: edge_tts

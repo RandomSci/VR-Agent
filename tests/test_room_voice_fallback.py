@@ -39,7 +39,7 @@ def test_luna_yaml_uses_elevenlabs_with_an_edge_fallback():
     room = load_room(ROOT / "room", ROOT)
     luna = room.get("luna")
     assert luna.voice.tts_model == "elevenlabs_tts"
-    assert luna.voice.settings["voice_id"] == "EVy5l1wEi54nXdQwAJJf"
+    assert luna.voice.settings["voice_id"] == "ExVVn0SQueMnWIWTbm7F"
     assert luna.voice.fallback.tts_model == "edge_tts"
     assert luna.voice.fallback.settings["voice"] == "en-US-AnaNeural"
 
@@ -91,7 +91,7 @@ def test_luna_inherits_the_elevenlabs_key_and_model_but_keeps_her_voice(tmp_path
     assert isinstance(engine, FallbackTTS)
     assert built["elevenlabs_tts"].kwargs["api_key"] == "sk-test"
     assert built["elevenlabs_tts"].kwargs["model_id"] == "eleven_flash_v2_5"
-    assert built["elevenlabs_tts"].kwargs["voice_id"] == "EVy5l1wEi54nXdQwAJJf"
+    assert built["elevenlabs_tts"].kwargs["voice_id"] == "ExVVn0SQueMnWIWTbm7F"
     assert engine._vr_usage_source == "room:luna"
 
 
@@ -149,3 +149,32 @@ def test_a_primary_voice_that_keeps_failing_rests(tmp_path):
     now[0] += FallbackTTS.REST_SECONDS + 1
     asyncio.run(engine.async_generate_audio("hi"))
     assert primary.calls == FallbackTTS.FAILURES_BEFORE_REST + 1
+
+
+def test_elevenlabs_without_an_api_key_goes_straight_to_the_fallback(tmp_path):
+    voices, built = _voices(tmp_path)
+    empty = SimpleNamespace(model_dump=lambda: {"api_key": "", "model_id": "x"})
+    voices.base_source = lambda: (
+        SimpleNamespace(tts_model="edge_tts", elevenlabs_tts=empty),
+        object(),
+    )
+    engine = voices.engine("luna")
+    assert engine is built["edge_tts"]  # no failing ElevenLabs call before each line
+    assert "elevenlabs_tts" not in built
+    assert "api_key" in voices.errors.get("luna", "")
+
+
+def test_voice_report_shows_engine_voice_and_settings_without_keys(tmp_path):
+    voices, built = _voices(tmp_path)
+    built_engine = voices.engine("luna")
+    built_engine.primary.voice_id = "ExVVn0SQueMnWIWTbm7F"
+    built_engine.primary.model_id = "eleven_flash_v2_5"
+    built_engine.primary.api_key = "sk-secret"
+    report = voices.report()
+    luna = report["luna"]
+    assert luna["source"] == "character yaml"
+    assert luna["voice_id"] == "ExVVn0SQueMnWIWTbm7F"
+    assert luna["model_id"] == "eleven_flash_v2_5"
+    assert "fallback" in luna and luna["fallback_lines"] == 0
+    assert "sk-secret" not in str(report)
+    assert report["mika"]["source"] == "conf.yaml"

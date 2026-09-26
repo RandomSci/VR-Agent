@@ -526,6 +526,11 @@ class WebSocketHandler:
             if self.room_session.active:
                 self.room_client_uids.add(client_uid)
                 await self.room_session.register(client_uid, websocket.send_text)
+                try:
+                    # Which engine and voice each character really uses (no keys).
+                    self.room_session.voices.log_report()
+                except Exception as exc:  # pragma: no cover - diagnostics only
+                    logger.debug(f"VR Room: voice report failed: {exc}")
             else:
                 # The room page falls back to the classic livestream page.
                 await websocket.send_text(
