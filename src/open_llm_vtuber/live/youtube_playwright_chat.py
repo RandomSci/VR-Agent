@@ -152,6 +152,7 @@ class YouTubePlaywrightChatSource:
         self._page = None
         self._running = False
         self._stable_since = 0.0
+        self._last_waiting_log = 0.0
 
     # ------------------------------------------------------------------ api
     def ready(self) -> tuple[bool, str]:
@@ -182,6 +183,12 @@ class YouTubePlaywrightChatSource:
                             VRAgentState.WAITING_FOR_STREAM,
                             "no active livestream found",
                         )
+                        if time.time() - self._last_waiting_log > 300:
+                            self._last_waiting_log = time.time()
+                            logger.info(
+                                "Waiting for your YouTube livestream to start. "
+                                f"Checking every {self.config.discovery_retry_seconds}s."
+                            )
                         await asyncio.sleep(self.config.discovery_retry_seconds)
                         continue
                     await self._attach_chat(video_id)
