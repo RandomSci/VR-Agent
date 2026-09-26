@@ -31,6 +31,7 @@ class YouTubeLiveConfig(I18nMixin):
     video_id: Optional[str] = Field(None, alias="video_id")
     prefer_live_chat_mode: bool = Field(True, alias="prefer_live_chat_mode")
     ignore_owner_messages: bool = Field(False, alias="ignore_owner_messages")
+    answer_backlog_on_start: int = Field(5, alias="answer_backlog_on_start")
     live_check_interval_seconds: int = Field(120, alias="live_check_interval_seconds")
     playwright_headless: bool = Field(True, alias="playwright_headless")
     playwright_user_data_dir: str = Field("", alias="playwright_user_data_dir")
@@ -47,7 +48,7 @@ class YouTubeLiveConfig(I18nMixin):
     same_user_cooldown_seconds: int = Field(90, alias="same_user_cooldown_seconds")
     idle_banter_enabled: bool = Field(False, alias="idle_banter_enabled")
     idle_banter_delay_seconds: int = Field(180, alias="idle_banter_delay_seconds")
-    discovery_retry_seconds: int = Field(30, alias="discovery_retry_seconds")
+    discovery_retry_seconds: int = Field(10, alias="discovery_retry_seconds")
     selector_max_messages: int = Field(12, alias="selector_max_messages")
     selector_model: Optional[str] = Field(None, alias="selector_model")
 

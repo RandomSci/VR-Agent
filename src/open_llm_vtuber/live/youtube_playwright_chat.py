@@ -171,6 +171,7 @@ class YouTubePlaywrightChatSource:
         self._running = False
         self._stable_since = 0.0
         self._last_waiting_log = 0.0
+        self._last_attached_video: Optional[str] = None
 
     # ------------------------------------------------------------------ api
     def ready(self) -> tuple[bool, str]:
@@ -437,10 +438,19 @@ class YouTubePlaywrightChatSource:
         if self.config.prefer_live_chat_mode:
             await self._select_live_chat_mode(page)
 
+        # New stream: answer the newest few messages already in chat. Same
+        # stream after a reconnect: skip them, they were already seen.
+        backlog = (
+            int(self.config.answer_backlog_on_start)
+            if video_id != self._last_attached_video
+            else 0
+        )
+        await page.evaluate("n => { window.__vrAgentBacklog = n; }", backlog)
         heartbeat = await page.evaluate(OBSERVER_JS)
         if not heartbeat or not heartbeat.get("attached"):
             raise RuntimeError("chat observer could not attach to the message list")
         self.health.video_id = video_id
+        self._last_attached_video = video_id
         self.health.chat_attached = True
         self.health.selector = heartbeat.get("selector")
         self.health.attached_at = time.time()
@@ -449,7 +459,7 @@ class YouTubePlaywrightChatSource:
         self.health.note(f"attached to {video_id} via {self.health.selector}")
         logger.info(
             f"YouTube live chat attached (video_id={video_id}, mode={self.health.chat_mode}, "
-            f"selector={self.health.selector}, backlog skipped={heartbeat.get('seen', 0)})."
+            f"selector={self.health.selector}, recent answered={backlog}, older skipped={max(0, heartbeat.get('seen', 0))})."
         )
         runtime.set(VRAgentState.IDLE, "chat attached")
 
