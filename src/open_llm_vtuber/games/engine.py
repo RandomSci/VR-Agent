@@ -68,6 +68,7 @@ class GameEngine:
         self.last_game_ended_at = 0.0
         self.games_started = 0
         self.switch_suggested = False
+        self.last_played: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # registry
@@ -85,6 +86,16 @@ class GameEngine:
     # ------------------------------------------------------------------
     # lifecycle
     # ------------------------------------------------------------------
+    def pick_game(self):
+        """'Let's play a game': the least recently played game, ties at random.
+        Local and deterministic given the random source; no LLM decides."""
+        games = self.registry.enabled()
+        if not games:
+            return None
+        oldest = min(self.last_played.get(g.info.id, 0.0) for g in games)
+        pool = [g for g in games if self.last_played.get(g.info.id, 0.0) == oldest]
+        return self.rng.choice(pool)
+
     def start_game(
         self,
         game_id: Optional[str],
@@ -93,7 +104,7 @@ class GameEngine:
         options: Optional[dict[str, Any]] = None,
     ) -> Outcome:
         now = self.clock() if now is None else now
-        factory = self.registry.get(game_id) if game_id else self.registry.default()
+        factory = self.registry.get(game_id) if game_id else self.pick_game()
         if not factory:
             return Outcome(False, "unsupported_game", {"name": game_id or "that game"})
         if self.active and not self.active.finished:
@@ -105,6 +116,7 @@ class GameEngine:
         game = factory.create(rng=self.rng, options=options or {})
         result = game.start(players, now)
         self.active = game
+        self.last_played[factory.info.id] = now
         self.games_started += 1
         self.switch_suggested = False
         if not self.session_started_at or (
@@ -215,7 +227,16 @@ class GameEngine:
                         "summary": self.registry.summary_sentence(),
                     },
                 )
-            return self.start_game(command.game_id, players, now)
+            options = {
+                k: v
+                for k, v in (
+                    ("mode", command.mode),
+                    ("opponent", command.opponent),
+                    ("first", command.first),
+                )
+                if v
+            }
+            return self.start_game(command.game_id, players, now, options=options)
         if isinstance(command, StopGame):
             return self.stop_game(now, "viewer")
         if isinstance(command, ChangeGame):

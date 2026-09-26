@@ -434,3 +434,270 @@ html[data-vr-room].vra-paused #vr-room-world {
     animation: none !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Turn banner (viewer-first games): CHAT'S TURN, then MIKA & LUNA'S TURN
+   --------------------------------------------------------------------------- */
+.vrb-turn {
+  align-self: center;
+  padding: 4px 18px;
+  border-radius: 999px;
+  background: rgba(158, 203, 255, 0.22);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.vrb-turn[hidden] {
+  display: none;
+}
+
+.vrb-turn.vrb-turn-chat {
+  background: rgba(255, 209, 102, 0.3);
+  color: #ffe7a8;
+  animation: vrb-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes vrb-pulse {
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 209, 102, 0.12);
+  }
+}
+
+.vrb-feed-row.vrb-late {
+  background: rgba(255, 120, 120, 0.2);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.vrb-feed-row.vrb-late .vrb-mark {
+  color: #ffb3b3;
+  font-weight: 800;
+}
+
+.vrb-feed-row.vrb-vote .vrb-mark {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.8em;
+}
+
+/* ---------------------------------------------------------------------------
+   Tic-Tac-Toe ("grid" renderer). Cells stay square at every board size.
+   --------------------------------------------------------------------------- */
+.vrg-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+}
+
+.vrg-grid {
+  --vrg-size: clamp(180px, 34vh, 290px);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 8px;
+  width: var(--vrg-size);
+  height: var(--vrg-size);
+  aspect-ratio: 1 / 1;
+  flex: none;
+}
+
+.vrg-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.1);
+  transition: background 200ms ease, box-shadow 200ms ease;
+}
+
+.vrg-num {
+  position: absolute;
+  top: 5px;
+  left: 9px;
+  font-size: 15px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.vrg-filled .vrg-num {
+  opacity: 0;
+}
+
+.vrg-voting .vrg-cell:not(.vrg-filled) .vrg-num {
+  color: #ffe7a8;
+  font-size: 18px;
+}
+
+.vrg-mark {
+  font-size: calc(var(--vrg-size) / 4.2);
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.vrg-new .vrg-mark {
+  animation: vrg-drop 320ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+@keyframes vrg-drop {
+  from {
+    transform: scale(0.2) rotate(-20deg);
+    opacity: 0;
+  }
+}
+
+.vrg-votes {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  min-width: 26px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #ffd166;
+  color: #2a1a00;
+  font-size: 16px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.vrg-votes[hidden] {
+  display: none;
+}
+
+.vrg-voted {
+  background: rgba(255, 209, 102, 0.16);
+}
+
+.vrg-line {
+  background: rgba(64, 214, 140, 0.34);
+  box-shadow: inset 0 0 0 3px rgba(120, 255, 190, 0.8), 0 0 24px rgba(64, 214, 140, 0.45);
+}
+
+.vrg-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 90px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  opacity: 0.6;
+  transition: opacity 200ms ease, background 200ms ease;
+}
+
+.vrg-side.vrg-turn {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.vrg-side-mark {
+  font-size: 48px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.vrg-side-name {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+/* ---------------------------------------------------------------------------
+   Rock Paper Scissors ("rps" renderer)
+   --------------------------------------------------------------------------- */
+.vrr-arena {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 34px;
+}
+
+.vrr-hand-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 150px;
+  padding: 12px 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.06);
+  transition: background 250ms ease, box-shadow 250ms ease;
+}
+
+.vrr-hand-box.vrr-win {
+  background: rgba(64, 214, 140, 0.28);
+  box-shadow: 0 0 26px rgba(64, 214, 140, 0.4);
+}
+
+.vrr-hand {
+  font-size: 96px;
+  line-height: 1.05;
+}
+
+.vrr-hand.vrr-hidden {
+  opacity: 0.45;
+  animation: vrr-shake 0.5s ease-in-out infinite;
+}
+
+.vrr-hand.vrr-pop {
+  animation: vrg-drop 360ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+@keyframes vrr-shake {
+  50% {
+    transform: translateY(-8px) rotate(-6deg);
+  }
+}
+
+.vrr-name {
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.vrr-vs {
+  font-size: 34px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.vrr-votes {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.vrr-votes[hidden] {
+  display: none;
+}
+
+.vrr-vote {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: rgba(255, 209, 102, 0.16);
+  font-size: 20px;
+}
+
+.vrr-vote-name {
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.vrr-vote-count {
+  min-width: 22px;
+  font-weight: 900;
+  color: #ffe7a8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vrb-turn.vrb-turn-chat,
+  .vrg-new .vrg-mark,
+  .vrr-hand.vrr-hidden,
+  .vrr-hand.vrr-pop {
+    animation: none !important;
+  }
+}

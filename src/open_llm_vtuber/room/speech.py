@@ -184,6 +184,7 @@ class CharacterVoices:
             self.errors[character_id] = str(exc)[:200]
             logger.error(f"VR Room: voice for {character_id} unavailable: {exc}")
             engine = None
+        fallback_only = False
         fallback_spec = getattr(profile.voice, "fallback", None)
         if fallback_spec is not None and fallback_spec.tts_model:
             try:
@@ -196,13 +197,15 @@ class CharacterVoices:
             if engine is None and backup is not None:
                 logger.warning(f"VR Room: {character_id} is using the fallback voice")
                 engine = backup
+                fallback_only = True
             elif engine is not None and backup is not None:
                 engine = FallbackTTS(engine, backup, character_id)
                 engine._vr_usage_source = f"room:{character_id}"
         if engine is not None:
             # Created once and reused; a failed creation is retried next time.
             self._engines[character_id] = engine
-            self.errors.pop(character_id, None)
+            if not fallback_only:
+                self.errors.pop(character_id, None)
         return engine
 
     def _build(self, spec: Any, character_id: str) -> Any:

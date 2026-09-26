@@ -79,7 +79,12 @@ _LIST_RE = re.compile(
 _STOP_RE = re.compile(
     r"^"
     + _LEAD
-    + r"(?:pls |please )?(?:stop|end|quit|exit|cancel|finish)\s+(?:the\s+|this\s+)?(?:game|trivia|quiz|playing)\b|\bno more (?:trivia|games?|quiz)\b",
+    + r"(?:pls |please )?(?:stop|end|quit|exit|cancel|finish)\s+(?:the\s+|this\s+)?(?:game|trivia|quiz|playing|tic tac toe|rock paper scissors)\b|\bno more (?:trivia|games?|quiz)\b",
+    re.I,
+)
+# "girls, play ...", "both of you", "mika vs luna", "play each other"
+_VERSUS_RE = re.compile(
+    r"\b(?:girls|both of you|you two|you both|each other|against each other|one another|vs\.?|versus)\b",
     re.I,
 )
 _NEXT_RE = re.compile(
@@ -135,7 +140,7 @@ _CATEGORY_ALIASES = {
 
 
 _RULES_RE = re.compile(
-    r"\bhow (?:does|do|would|will) (?:it|this|that|the game|trivia|you play(?: it)?|we play(?: it)?|i play(?: it)?|that game|this game|\w+ (?:battle|game)) (?:work|go)\b"
+    r"\bhow (?:does|do|would|will) (?:it|this|that|the game|trivia|you play(?: it)?|we play(?: it)?|i play(?: it)?|that game|this game|[\w -]{2,24} (?:battle|game)) (?:work|go)\b"
     r"|\bhow (?:do|does|can) (?:i|we|you|chat|one) (?:play|join|answer|win)\b|\bhow to play\b"
     r"|\bwhat are the rules\b|\b(?:the |its |it's )?rules\?|\bexplain (?:the )?(?:game|rules|it)\b|\bhow does it work\b",
     re.I,
@@ -167,6 +172,59 @@ def _mentioned_game(text: str, registry: GameRegistry) -> Optional[str]:
 def mentioned_game(text: str, registry: GameRegistry) -> Optional[str]:
     """Installed game named anywhere in ``text`` (for offers), or None."""
     return _mentioned_game(text, registry)
+
+
+def _players_named(text: str, players: Optional[dict[str, str]]) -> list[str]:
+    """Character ids named in ``text``, in order of appearance."""
+    if not players:
+        return []
+    found: list[tuple[int, str]] = []
+    lowered = text.lower()
+    for name, player_id in players.items():
+        match = re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", lowered)
+        if match and player_id not in [p for _, p in found]:
+            found.append((match.start(), player_id))
+    return [p for _, p in sorted(found)]
+
+
+def _start_options(
+    text: str, players: Optional[dict[str, str]]
+) -> dict[str, Optional[str]]:
+    """Who plays: the girls against each other, or chat against one of them."""
+    named = _players_named(text, players)
+    lowered = text.lower()
+    challenge = re.search(
+        r"\b(?:challenge|vs\.?|versus|against|play with|play against)\b", lowered
+    )
+    if len(named) >= 2 or _VERSUS_RE.search(lowered):
+        return {
+            "mode": "characters",
+            "first": named[0] if named else None,
+            "opponent": None,
+        }
+    if len(named) == 1:
+        # "Luna, play tic tac toe with us" / "chat vs Mika": chat plays that character.
+        return {"mode": "chat", "opponent": named[0], "first": None}
+    if challenge and "chat" in lowered:
+        return {"mode": "chat", "opponent": None, "first": None}
+    return {"mode": None, "opponent": None, "first": None}
+
+
+def _with_options(command: StartGame, text: str, players) -> StartGame:
+    options = _start_options(text, players)
+    return StartGame(
+        game_id=command.game_id,
+        requested_name=command.requested_name,
+        mode=options["mode"],
+        opponent=options["opponent"],
+        first=options["first"],
+    )
+
+
+_CHALLENGE_RE = re.compile(
+    r"(?P<a>\w+)\s*,?\s*(?:please |pls )?(?:challenge|challenges|play|plays|vs\.?|versus|against)\s+(?P<b>\w+)\s+(?:to|in|at|on)\s+(?:a\s+|some\s+|the\s+)?(?P<name>[\w' -]{2,30}?)\s*(?:game|match|battle)?\s*[!.?]*$",
+    re.I,
+)
 
 
 def _words(text: str) -> int:
@@ -224,12 +282,25 @@ def parse_command(
 
     if not game_active:
         named = _mentioned_game(lowered, registry)
-        if _RULES_RE.search(lowered) and (named or offered):
+        rules = _RULES_RE.search(lowered) or (
+            named
+            and re.search(r"\bhow\b.{0,40}\b(?:work|works|play|played)\b", lowered)
+        )
+        if rules and (named or offered):
             return HowToPlay(named or offered)
+        challenge = _CHALLENGE_RE.search(lowered)
+        if challenge and players:
+            a = players.get(challenge.group("a").lower())
+            b = players.get(challenge.group("b").lower())
+            game_id, other = _resolve_game(challenge.group("name"), registry)
+            if a and b and a != b and (game_id or other):
+                return StartGame(
+                    game_id=game_id, requested_name=other, mode="characters", first=a
+                )
         if offered and _ACCEPT_RE.match(lowered):
-            return StartGame(game_id=offered)
+            return _with_options(StartGame(game_id=offered), lowered, players)
         if _BARE_START_RE.match(lowered):
-            return StartGame(game_id=offered)
+            return _with_options(StartGame(game_id=offered), lowered, players)
     if _words(raw) > MAX_COMMAND_WORDS:
         return None
 
@@ -283,18 +354,27 @@ def parse_command(
     if start:
         name = start.group("name").strip()
         if name in ("a game", "game", "games", "a", "some"):
-            return StartGame()
+            return _with_options(StartGame(), lowered, players)
         game_id, other = _resolve_game(name, registry)
         if game_id or other:
-            return StartGame(game_id=game_id, requested_name=other)
+            return _with_options(
+                StartGame(game_id=game_id, requested_name=other), lowered, players
+            )
         if re.fullmatch(r"(?:a |some )?(?:game|games)", name):
-            return StartGame()
+            return _with_options(StartGame(), lowered, players)
+    named_game = _mentioned_game(lowered, registry)
+    if named_game and re.search(
+        r"\b(?:play|start|begin|let'?s|lets|wanna|want to)\b", lowered
+    ):
+        # "Girls, play tic tac toe with each other", "chat vs Luna in rps, let's go"
+        return _with_options(StartGame(game_id=named_game), lowered, players)
+    if start:
         return None
     if re.search(r"\b(?:start|play|begin)\s+(?:a|some)?\s*game\b", lowered):
-        return StartGame()
+        return _with_options(StartGame(), lowered, players)
 
     bare = _BARE_GAME_RE.match(lowered)
-    if bare and _words(lowered) <= 3:
+    if bare and _words(lowered) <= 4:
         game_id, _other = _resolve_game(bare.group("name"), registry)
         if game_id:
             return StartGame(game_id=game_id)

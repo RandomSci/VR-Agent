@@ -13,6 +13,24 @@ from .profiles import CharacterProfile
 
 _DEFAULT_LINES = {
     "intro": ("Trivia Battle! Let's go!", "Game time!"),
+    "tictactoe_intro": ("Tic-Tac-Toe! Chat, you're X!", "Tic-Tac-Toe time!"),
+    "tictactoe_round_win": ("Three in a row!", "That round is mine!"),
+    "tictactoe_round_lose": (
+        "No way, chat got three in a row!",
+        "Okay, chat takes that one.",
+    ),
+    "tictactoe_draw": ("A draw!", "Nobody wins that one."),
+    "rps_intro": ("Rock Paper Scissors! Ready, chat?", "Jack en poy time!"),
+    "rps_round_win": ("{hand} wins!", "Hehe, got you!"),
+    "rps_round_lose": ("Chat got me!", "Ugh, chat wins that round."),
+    "rps_tie": ("A tie! Again!", "Same hand!"),
+    "too_slow": (
+        "Too slow, chat!",
+        "Chat, you have to be faster than that!",
+        "Time's up, chat!",
+    ),
+    "chat_wins": ("Chat wins! Okay, you're good.", "Chat beat us! Well played."),
+    "game_draw": ("It's a tie overall!", "A draw! Rematch?"),
     "answer": ("{answer}!", "Is it {answer}?"),
     "correct": ("Yes!",),
     "wrong": ("Oh no.",),
@@ -38,6 +56,19 @@ def game_line(
     answer = str(values.get("answer", ""))[:60]
     if "{answer}" in template and not answer:
         return None
+    for key, value in values.items():
+        if key == "answer" or not isinstance(key, str) or not key.isidentifier():
+            continue
+        placeholder = "{" + key + "}"
+        if placeholder in template:
+            shown = str(value)[:40]
+            if not shown:
+                return None
+            template = template.replace(placeholder, shown)
+            if template.startswith(shown):
+                template = shown[:1].upper() + template[1:]
+    if "{" in template and "}" in template and "{answer}" not in template:
+        return None  # a placeholder we could not fill
     if not template.startswith("{answer}") and answer.startswith(("The ", "A ", "An ")):
         answer = (
             answer[0].lower() + answer[1:]
@@ -62,7 +93,7 @@ def command_reply(
     if key == "games_list":
         if values.get("count") == 1:
             return f"{summary} Want to play? Just say yes!"
-        return f"{summary} Which one? Say the name to start!" if summary else None
+        return f"{summary} Which one? Just say its name!" if summary else None
     if key == "how_to_play":
         rules = str(values.get("rules") or "").strip()
         return f"{rules} Ready? Say let's start!".strip()
@@ -75,7 +106,7 @@ def command_reply(
     if key == "already_playing":
         return f"We're already playing {game}!"
     if key == "no_game":
-        return "We're not playing a game right now. Say 'play trivia' to start one!"
+        return "We're not playing a game right now. Say let's play a game to start one!"
     if key == "game_stopped":
         scores = values.get("scores") or {}
         if values.get("reason") == "switch":

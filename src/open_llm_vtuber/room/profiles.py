@@ -535,8 +535,10 @@ def parse_profile(
         kept = []
         for line in lines or []:
             line = str(line).strip()
-            # Only the {answer} placeholder is allowed in templates.
-            if 1 <= len(line) <= 140 and not re.search(r"\{(?!answer\})", line):
+            # Only known placeholders are allowed in templates.
+            if 1 <= len(line) <= 140 and not re.search(
+                r"\{(?!(?:answer|opponent|hand|user)\})", line
+            ):
                 kept.append(line)
         if kept:
             game_lines[key] = tuple(kept[:10])

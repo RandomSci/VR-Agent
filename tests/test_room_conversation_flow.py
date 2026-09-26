@@ -161,10 +161,11 @@ def test_real_stream_chat_starts_trivia_without_the_llm():
     session = make_session()
     session.state.characters  # both available by default
     assert _observe(session, "what games can you play?")
-    assert session.show.current_offer() == "trivia"
+    assert session.show.current_offer() is None  # three games: nothing to say yes to
     assert _observe(session, "Trivia game? How does it work? I'm interested")
+    assert session.show.current_offer() == "trivia"
     spoken = [line.text for line in session.show.lines]
-    assert any("Chat gets a few seconds" in t and "let's start" in t for t in spoken)
+    assert any("chat's turn first" in t and "let's start" in t for t in spoken)
     assert not session.show.engine.playing
     assert _observe(session, "Sure")
     assert session.show.engine.playing

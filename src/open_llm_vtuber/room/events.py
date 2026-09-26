@@ -45,6 +45,8 @@ SCORE_CHANGED = "SCORE_CHANGED"
 ROUND_FINISHED = "ROUND_FINISHED"
 GAME_FINISHED = "GAME_FINISHED"  # data: winner, loser (ids or None)
 GAME_STOPPED = "GAME_STOPPED"
+MOVE_MADE = "MOVE_MADE"  # data: player, move
+VIEWER_TIMEOUT = "VIEWER_TIMEOUT"  # data: game, round
 
 ALL_EVENTS = frozenset(
     v

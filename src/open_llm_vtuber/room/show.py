@@ -40,8 +40,10 @@ SFX_FOR_EVENT = {
     ev.SCORE_CHANGED: "score",
     ev.GAME_FINISHED: "game_win",
     ev.GAME_STOPPED: "game_stop",
+    ev.MOVE_MADE: "place",
+    ev.VIEWER_TIMEOUT: "timeout",
 }
-SFX_NAMES = tuple(sorted(set(SFX_FOR_EVENT.values()) | {"round_win"}))
+SFX_NAMES = tuple(sorted(set(SFX_FOR_EVENT.values()) | {"round_win", "draw"}))
 
 
 @dataclass
@@ -86,6 +88,7 @@ class ShowRunner:
         self._pending_camera: list[dict[str, Any]] = []
         self.offered_game: Optional[str] = None
         self.offered_until = 0.0
+        self.chat_ingestion: Deque[dict[str, Any]] = deque(maxlen=100)
 
     # ------------------------------------------------------------------
     # game offers: a game that was just mentioned can be started with "sure"
@@ -169,12 +172,48 @@ class ShowRunner:
             )
             return True, ops
         if playing:
+            game = self.engine.active
+            shown = float(getattr(game, "question_shown_at", 0.0) or 0.0)
             consumed, result = self.engine.handle_viewer_message(
                 message.display_name, text, now
             )
             if consumed:
+                self._record_ingestion(message, shown, now)
                 return True, self.apply(result)
         return False, []
+
+    def _record_ingestion(self, message: LiveMessage, shown: float, now: float) -> None:
+        """How long a game answer took to reach the engine, stage by stage."""
+        received = time.time()
+        sample: dict[str, Any] = {"user": message.display_name[:30]}
+        if message.timestamp and message.dom_at:
+            sample["youtube_to_page_s"] = round(message.dom_at - message.timestamp, 3)
+        if message.dom_at and message.detected_at:
+            sample["page_to_reader_s"] = round(message.detected_at - message.dom_at, 3)
+        if message.detected_at:
+            sample["reader_to_engine_s"] = round(received - message.detected_at, 3)
+        if shown:
+            # engine clock: question shown -> answer received
+            sample["question_to_engine_s"] = round(now - shown, 3)
+        self.chat_ingestion.append(sample)
+        logger.info(f"VR Room game answer timing: {sample}")
+
+    def ingestion_summary(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"samples": len(self.chat_ingestion)}
+        for key in (
+            "youtube_to_page_s",
+            "page_to_reader_s",
+            "reader_to_engine_s",
+            "question_to_engine_s",
+        ):
+            values = sorted(s[key] for s in self.chat_ingestion if key in s)
+            if values:
+                out[key] = {
+                    "min": values[0],
+                    "median": values[len(values) // 2],
+                    "max": values[-1],
+                }
+        return out
 
     def _reply(self, outcome: Outcome, message: LiveMessage) -> None:
         text = command_reply(outcome.reply, outcome.values, self.display_names())
@@ -202,6 +241,13 @@ class ShowRunner:
                 and event.data.get("player") == "viewers"
             ):
                 sound = "round_win"
+            if (
+                event.name == ev.ROUND_FINISHED
+                and event.data.get("winner") is None
+                and self.engine.active is not None
+                and self.engine.active.info.id != "trivia"
+            ):
+                sound = "draw"
             if sound:
                 sounds.append(sound)
         # One effect at a time: the most important sound of this step wins.
@@ -210,9 +256,12 @@ class ShowRunner:
                 "game_win",
                 "game_start",
                 "game_stop",
+                "timeout",
                 "round_win",
                 "correct",
+                "draw",
                 "wrong",
+                "place",
                 "question",
                 "score",
             ]
@@ -373,7 +422,7 @@ class ShowRunner:
         if others:
             text = f"Chat, want to switch to {others[0]}?"
         else:
-            text = "We only have Trivia Battle right now. Keep going, or say stop the game for a break!"
+            text = f"{self.registry.summary_sentence()} Keep going, or say stop the game for a break!"
         self.enqueue(first, text, blocking=False, optional=False)
         return []
 
@@ -386,4 +435,5 @@ class ShowRunner:
             "registry": self.registry.describe(),
             "queued_lines": len(self.lines),
             "lines_shown_silently": self.lines_shown_silently,
+            "chat_timing": self.ingestion_summary(),
         }

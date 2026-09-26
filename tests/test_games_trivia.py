@@ -73,16 +73,22 @@ def run(
 # registry
 # ---------------------------------------------------------------------------
 def test_registry_lists_only_installed_games(registry):
-    assert [g.id for g in (f.info for f in registry.enabled())] == ["trivia"]
-    assert registry.count() == 1
+    assert [g.id for g in (f.info for f in registry.enabled())] == [
+        "rps",
+        "tictactoe",
+        "trivia",
+    ]
+    assert registry.count() == 3
     assert registry.find("trivia battle").info.id == "trivia"
     assert registry.find("quiz").info.id == "trivia"
     assert registry.find("chess") is None
     assert (
         registry.summary_sentence()
-        == "We can play Trivia Battle right now. It's our only game so far."
+        == "We can play Rock Paper Scissors, Tic-Tac-Toe or Trivia Battle."
     )
-    assert registry.count_sentence() == "We currently have 1 game: Trivia Battle."
+    assert registry.count_sentence() == (
+        "We currently have 3 games: Rock Paper Scissors, Tic-Tac-Toe, Trivia Battle."
+    )
     info = registry.get("trivia").info
     assert {"space", "science", "geography"} <= set(info.categories)
 
@@ -99,7 +105,7 @@ def test_registry_lists_only_installed_games(registry):
         ("trivia time!", base.StartGame("trivia")),
         ("can you play a quiz", base.StartGame("trivia")),
         ("play chess", base.StartGame(None, "chess")),
-        ("lets play tic tac toe", base.StartGame(None, "tic tac toe")),
+        ("lets play tic tac toe", base.StartGame("tictactoe")),
         ("what games can you play?", base.ListGames()),
         ("how many games do you have", base.ListGames()),
         ("stop the game", base.StopGame()),
@@ -257,7 +263,7 @@ def test_character_answer_waits_for_line_and_timeout_safety(registry):
     engine = GameEngine(registry, clock=clock, rng=random.Random(11))
     engine.start_game("trivia", PLAYERS)
     engine.notify_viewer_activity()
-    events, lines = run(engine, clock, 3.5 + 9.5 + 3.0, speech_done=False)
+    events, lines = run(engine, clock, 3.5 + 12.5 + 3.0, speech_done=False)
     game = engine.active
     assert any(line.kind == "answer" and line.blocking for line in lines)
     assert game.awaiting_line in ("mika", "luna")
@@ -289,7 +295,7 @@ def test_commands_change_game_settings(registry):
     assert (
         engine.handle_command(base.ListGames(), PLAYERS)
         .values["summary"]
-        .startswith("We can play Trivia Battle")
+        .startswith("We can play Rock Paper Scissors")
     )
     unsupported = engine.handle_command(base.StartGame(None, "chess"), PLAYERS)
     assert not unsupported.accepted and unsupported.reply == "unsupported_game"
@@ -314,7 +320,8 @@ def test_commands_change_game_settings(registry):
     assert engine.active.question["category"] == "science"
     assert engine.active.question["difficulty"] == "hard"
     change = engine.handle_command(base.ChangeGame(), PLAYERS)
-    assert not change.accepted and change.reply == "no_other_games"
+    assert change.accepted and change.reply == "game_started"
+    assert engine.active.info.id != "trivia"  # switched to another installed game
     stop = engine.handle_command(base.StopGame(), PLAYERS)
     assert stop.accepted and base.GAME_STOPPED in names(stop.result)
     assert not engine.playing

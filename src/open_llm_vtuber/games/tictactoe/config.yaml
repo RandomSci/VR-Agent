@@ -1,0 +1,25 @@
+# Tic-Tac-Toe. Moves, votes and winners are decided by code, never by an LLM.
+id: tictactoe
+display_name: Tic-Tac-Toe
+description: Chat plays X against one of the girls, or the girls play each other.
+aliases: [tic tac toe, tictactoe, tic-tac-toe, ttt, x and o, xo, noughts and crosses, tic tac toe game]
+enabled: true
+players: 2
+min_players: 1
+modes: [chat, characters]
+viewer_participation: true
+how_to_play: >-
+  Chat is X and plays against one of us. When it's chat's turn, type a number from 1
+  to 9 to vote for a square, counting left to right from the top. The most voted
+  square gets played. Three in a row wins the round, and first to two rounds wins!
+
+first_to: 2
+max_rounds: 3
+intro_seconds: 3
+vote_seconds: 12                 # chat's turn
+close_after_quiet_seconds: 3.5   # close the vote early once votes stop coming in
+character_think_seconds: 1.6
+reveal_seconds: 3.5
+between_rounds_seconds: 2.5
+finish_display_seconds: 8
+viewer_feed_size: 4

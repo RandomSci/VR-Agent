@@ -121,8 +121,19 @@ def browser():
         b.close()
 
 
+_OPEN_PAGES: list = []
+
+
 def open_room(browser, server: Server):
+    # Close pages from earlier tests: each runs two Live2D models and music,
+    # and piling them up slows the headless browser until pages time out.
+    while _OPEN_PAGES:
+        try:
+            _OPEN_PAGES.pop().close()
+        except Exception:
+            pass
     page = browser.new_page(viewport={"width": 960, "height": 540})
+    _OPEN_PAGES.append(page)
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(server.base + "/vr-agent/room.html")
@@ -440,5 +451,87 @@ def test_background_music_loops_ducks_switches_for_games_and_survives_resize(bro
         )
         # Music itself never calls an API. (TTS here is only the game lines
         # spoken because a viewer just chatted.)
+        assert usage.snapshot()["llm_requests"] == 0
+        assert not errors
+
+
+def _shot(page, name):
+    shot = os.environ.get("VR_SCREENSHOT_DIR")
+    if shot:
+        page.screenshot(path=str(Path(shot) / name))
+
+
+def test_tic_tac_toe_and_rock_paper_scissors_render_and_play(browser):
+    """Chat plays Luna at Tic-Tac-Toe (votes show on the cells, X lands), then
+    Rock Paper Scissors against Mika (hands hidden until the reveal)."""
+    from open_llm_vtuber.vr_agent.usage import usage
+
+    usage.reset()
+    with Server() as server:
+        page, errors = open_room(browser, server)
+        page.set_viewport_size({"width": 1280, "height": 720})
+
+        def chat(user, text):
+            return httpx.post(
+                server.base + "/harness/chat", json={"user": user, "text": text}
+            ).json()
+
+        assert chat("@selwyn", "Luna, play tic tac toe with us")["consumed"]
+        page.wait_for_selector(".vrb-board:not([hidden]) .vrg-grid", timeout=5000)
+        assert page.inner_text(".vrb-title") == "TIC-TAC-TOE"
+        game = server.app.state.session.show.engine.active
+        page.wait_for_function(
+            "document.querySelector('.vrb-turn') && "
+            "document.querySelector('.vrb-turn').textContent === \"CHAT'S TURN\"",
+            timeout=8000,
+        )
+        # The grid is square.
+        box = page.eval_on_selector(
+            ".vrg-grid",
+            "e => [e.getBoundingClientRect().width, e.getBoundingClientRect().height]",
+        )
+        assert abs(box[0] - box[1]) < 2, box
+        assert chat("@selwyn", "5")["consumed"]
+        assert chat("@ana", "5")["consumed"]
+        page.wait_for_function(
+            "document.querySelectorAll('.vrg-cell')[4].querySelector('.vrg-votes').textContent === '2'",
+            timeout=3000,
+        )
+        _shot(page, "tictactoe-vote.png")
+        page.wait_for_function(
+            "document.querySelectorAll('.vrg-cell')[4].querySelector('.vrg-mark').textContent === 'X'",
+            timeout=8000,
+        )
+        page.wait_for_function(
+            "[...document.querySelectorAll('.vrg-mark')].filter(m => m.textContent === 'O').length === 1",
+            timeout=8000,
+        )
+        assert game.cells[4] == "X"
+        page.wait_for_timeout(500)
+        _shot(page, "tictactoe-board.png")
+
+        chat("@selwyn", "stop the game")
+        page.wait_for_selector(".vrb-board", state="hidden", timeout=5000)
+
+        assert chat("@selwyn", "Mika, play rock paper scissors with us")["consumed"]
+        page.wait_for_selector(".vrb-board:not([hidden]) .vrr-arena", timeout=5000)
+        assert page.inner_text(".vrb-title") == "ROCK PAPER SCISSORS"
+        page.wait_for_function(
+            "document.querySelector('.vrr-votes') && !document.querySelector('.vrr-votes').hidden",
+            timeout=8000,
+        )
+        assert chat("@selwyn", "rock")["consumed"]
+        assert chat("@ana", "paper")["consumed"]
+        assert chat("@ben", "rock")["consumed"]
+        page.wait_for_timeout(300)
+        _shot(page, "rps-vote.png")
+        page.wait_for_function(
+            "[...document.querySelectorAll('.vrr-hand')].every(h => !h.classList.contains('vrr-hidden'))",
+            timeout=8000,
+        )
+        rps = server.app.state.session.show.engine.active
+        assert rps.throws["viewers"] == "rock"
+        page.wait_for_timeout(500)
+        _shot(page, "rps-reveal.png")
         assert usage.snapshot()["llm_requests"] == 0
         assert not errors

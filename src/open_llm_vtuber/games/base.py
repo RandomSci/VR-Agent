@@ -35,6 +35,8 @@ SCORE_CHANGED = "SCORE_CHANGED"
 ROUND_FINISHED = "ROUND_FINISHED"
 GAME_FINISHED = "GAME_FINISHED"
 GAME_STOPPED = "GAME_STOPPED"
+MOVE_MADE = "MOVE_MADE"  # a mark placed or a hand thrown (data: player, move)
+VIEWER_TIMEOUT = "VIEWER_TIMEOUT"  # chat did not answer or vote in time
 
 VIEWERS = "viewers"  # the shared player id for chat
 
@@ -76,12 +78,22 @@ class GameInfo:
     difficulties: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
     how_to_play: str = ""
+    renderer: str = ""  # which Game Board renderer draws it (trivia, grid, rps)
+    min_players: int = 1  # characters needed
+    modes: tuple[str, ...] = (
+        "chat",
+    )  # chat: chat plays along; characters: girls vs each other
 
     def describe(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "display_name": self.display_name,
             "how_to_play": self.how_to_play,
+            "renderer": self.renderer,
+            "min_players": self.min_players,
+            "max_players": self.players,
+            "modes": list(self.modes),
+            "aliases": list(self.aliases),
             "players": self.players,
             "viewer_participation": self.viewer_participation,
             "enabled": self.enabled,
@@ -114,8 +126,11 @@ class StepResult:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class StartGame:
-    game_id: Optional[str] = None  # None means the default game
+    game_id: Optional[str] = None  # None means the least recently played game
     requested_name: Optional[str] = None  # recognised but not installed, e.g. "chess"
+    mode: Optional[str] = None  # "characters" (the girls play each other) or "chat"
+    opponent: Optional[str] = None  # the character chat plays against
+    first: Optional[str] = None  # who starts ("Mika challenge Luna" -> mika)
 
 
 @dataclass(frozen=True)

@@ -93,6 +93,9 @@ def load(config: dict[str, Any], game_dir: Path) -> GameFactory:
         difficulties=DIFFICULTIES,
         aliases=tuple(str(a) for a in config.get("aliases") or []),
         how_to_play=" ".join(str(config.get("how_to_play") or "").split())[:400],
+        renderer="trivia",
+        min_players=1,
+        modes=("chat", "characters"),
     )
 
     def create(
@@ -119,7 +122,19 @@ class TriviaBattle(Game):
         c = config
         self.rounds_total = int(_num(c, "rounds_per_game", 5, 1, 20))
         self.intro_s = _num(c, "intro_seconds", 3, 0.5, 20)
-        self.viewer_window_s = _num(c, "viewer_window_seconds", 9, 2, 60)
+        # Chat's exclusive turn. YouTube chat takes a few seconds to travel
+        # (typing, YouTube, the page, Playwright), so this must stay generous.
+        self.viewer_window_s = _num(
+            c,
+            "viewer_answer_window_seconds",
+            _num(c, "viewer_window_seconds", 12, 2, 60),
+            2,
+            60,
+        )
+        self.config_keep_window = bool(c.get("wrong_answers_keep_window", True))
+        self.question_shown_at = 0.0
+        self.chat_played = False
+        self.chat_timing: Deque[dict[str, Any]] = deque(maxlen=50)
         self.think_s = _num(c, "character_think_seconds", 2.5, 0.5, 20)
         self.line_timeout_s = _num(c, "line_timeout_seconds", 12, 2, 60)
         self.reveal_s = _num(c, "reveal_seconds", 4.5, 1, 30)
@@ -267,6 +282,13 @@ class TriviaBattle(Game):
         if self.phase == "intro":
             result.extend(self._start_round(now))
         elif self.phase == "question":
+            # Chat's turn is over without a right answer: Mika and Luna's turn.
+            if self.info.viewer_participation:
+                result.event(
+                    base.VIEWER_TIMEOUT, game=self.info.id, round=self.round_no
+                )
+                if self.chat_played and not self.viewer_attempts and self.order:
+                    result.line(self.order[0], "too_slow")
             self.turn_index = 0
             result.extend(self._begin_turn(now))
         elif self.phase == "turn":
@@ -340,6 +362,7 @@ class TriviaBattle(Game):
         self.turn_index = 0
         window = self.viewer_window_s if self.info.viewer_participation else 0.5
         self._set_phase("question", now, window)
+        self.question_shown_at = now
         result.event(base.ROUND_STARTED, round=self.round_no, rounds=self.rounds_total)
         result.event(
             base.QUESTION_SHOWN,
@@ -476,18 +499,34 @@ class TriviaBattle(Game):
         if not looks_like_answer(text, self.max_answer_words):
             return False, result
         question = self.question
-        if self.phase in ("reveal", "between", "finished") or self._paused:
-            # Late answers to the question just revealed are swallowed quietly.
-            recent = self.question if self.phase == "reveal" else self.last_question
+        late_phase = self.phase in ("reveal", "between", "finished") or (
+            self.phase == "turn" and self.info.viewer_participation
+        )
+        if late_phase or self._paused:
+            # Chat's turn is over: late answers never change a closed round.
+            # A late right answer is swallowed and shown as "Too late!".
+            recent = (
+                self.question
+                if self.phase in ("reveal", "turn")
+                else self.last_question
+            )
             if recent and is_correct(
                 text,
                 recent["accepted_answers"],
                 recent["wrong_answers"],
                 self.typo_tolerance,
             ):
+                self.viewer_feed.append(
+                    {
+                        "user": username.strip()[:40] or "viewer",
+                        "text": text.strip()[:40],
+                        "correct": False,
+                        "mark": "late",
+                    }
+                )
                 return True, result
             return False, result
-        if self.phase not in ("question", "turn") or not question:
+        if self.phase != "question" or not question:
             return False, result
 
         name = username.strip()[:40] or "viewer"
@@ -495,6 +534,7 @@ class TriviaBattle(Game):
         if attempts >= 2:
             return True, result  # anti-spam: two guesses per question
         self.viewer_attempts[name] = attempts + 1
+        self.chat_played = True
         if len(self.viewer_attempts) > 500:
             self.viewer_attempts.clear()
 
@@ -504,6 +544,13 @@ class TriviaBattle(Game):
             question["wrong_answers"],
             self.typo_tolerance,
         )
+        self.chat_timing.append(
+            {
+                "round": self.round_no,
+                "received_after_question_s": round(now - self.question_shown_at, 3),
+                "correct": correct,
+            }
+        )
         self.viewer_feed.append(
             {"user": name, "text": text.strip()[:40], "correct": correct}
         )
@@ -511,6 +558,8 @@ class TriviaBattle(Game):
             base.VIEWER_ANSWERED, username=name, correct=correct, round=self.round_no
         )
         if not correct:
+            if not self.config_keep_window:
+                self.phase_ends = min(self.phase_ends, now)  # chat's turn ends
             return True, result
 
         self.first_viewer = name
@@ -609,6 +658,16 @@ class TriviaBattle(Game):
             return f"{self._name(self.winner)} wins!"
         return "It's a tie!"
 
+    def _turn_label(self) -> str:
+        if self._paused or self._finished:
+            return ""
+        if self.phase == "question" and self.info.viewer_participation:
+            return "CHAT'S TURN"
+        if self.phase == "turn":
+            names = [self._name(p) for p in self.order[self.turn_index :]]
+            return " & ".join(n.upper() for n in names if n) + "'S TURN"
+        return ""
+
     def view(self, now: float) -> dict[str, Any]:
         question = self.question if self.phase not in ("intro",) else None
         timed = self.phase in ("question", "turn") and not self.awaiting_line
@@ -642,6 +701,7 @@ class TriviaBattle(Game):
             "finished": self._finished,
             "winner": self.winner,
             "highlight": highlight,
+            "turn_label": self._turn_label(),
             "timer": {
                 "remaining_ms": int(remaining * 1000),
                 "total_ms": int(self.phase_total * 1000),
@@ -690,4 +750,6 @@ class TriviaBattle(Game):
             "finished": self._finished,
             "done": self._done,
             "rounds_played": self.rounds_played,
+            "viewer_window_s": self.viewer_window_s,
+            "chat_timing": list(self.chat_timing),
         }

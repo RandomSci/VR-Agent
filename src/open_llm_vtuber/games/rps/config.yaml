@@ -1,0 +1,25 @@
+# Rock Paper Scissors. Hands, votes and winners are decided by code, never by an LLM.
+id: rps
+display_name: Rock Paper Scissors
+description: Chat throws rock, paper or scissors against one of the girls, or the girls face off.
+aliases: [rock paper scissors, rock paper scissor, rps, jack en poy, jackenpoy, jak en poy, bato bato pik, rock paper scissors game]
+enabled: true
+players: 2
+min_players: 1
+modes: [chat, characters]
+viewer_participation: true
+how_to_play: >-
+  Chat plays against one of us. Each round, type rock, paper or scissors (emoji and
+  bato, papel, gunting work too). Chat's most voted hand is thrown against ours, which
+  is picked before you vote, so no peeking. First to three rounds wins!
+
+first_to: 3
+max_rounds: 7
+intro_seconds: 3
+vote_seconds: 10                 # chat's throw
+close_after_quiet_seconds: 3.0   # close early once votes stop coming in
+character_countdown_seconds: 2.4 # girls vs girls
+reveal_seconds: 3.5
+between_rounds_seconds: 2
+finish_display_seconds: 8
+viewer_feed_size: 4

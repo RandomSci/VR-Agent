@@ -25,6 +25,8 @@ class LiveMessage:
     kind: str = "text"  # "text" or "paid"
     amount: str = ""
     author_type: str = ""  # "", "member", "moderator", "owner"
+    dom_at: float = 0.0  # when the message appeared in the YouTube page (epoch s)
+    detected_at: float = 0.0  # when our chat reader picked it up (epoch s)
 
     @property
     def display_name(self) -> str:
@@ -51,6 +53,8 @@ class LiveMessage:
             kind=str(getattr(message, "kind", "text")),
             amount=str(getattr(message, "amount", "")),
             author_type=str(getattr(message, "author_type", "")),
+            dom_at=float(getattr(message, "dom_at", 0.0) or 0.0),
+            detected_at=float(getattr(message, "detected_at", 0.0) or 0.0),
         )
 
 
