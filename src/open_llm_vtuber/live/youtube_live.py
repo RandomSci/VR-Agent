@@ -696,20 +696,12 @@ class YouTubeLiveChatService:
                 await asyncio.sleep(1.0)
 
     async def _maybe_idle_banter(self) -> None:
-        if not self.config.idle_banter_enabled:
-            return
-        if time.time() - self._last_message_seen_at < self.config.idle_banter_delay_seconds:
-            return
-        if not self.connection_provider.is_idle():
-            return
-        prompt = YouTubeChatMessage(
-            message_id=f"idle-{int(time.time())}",
-            author_channel_id="system-idle",
-            author_display_name="Chat",
-            text="The live chat is quiet. Say a short, playful comment to keep the stream alive.",
-            timestamp=datetime.now(timezone.utc),
-        )
-        completed = await self.connection_provider.process_youtube_live_message(prompt)
-        if completed:
-            self._last_message_seen_at = time.time()
-            self._last_response_completed_at = time.time()
+        # Zero-activity rule: with no viewer messages the stream makes no LLM
+        # or TTS requests at all, so the old quiet-chat banter never runs.
+        if self.config.idle_banter_enabled and not getattr(self, "_banter_warned", False):
+            self._banter_warned = True
+            logger.warning(
+                "idle_banter_enabled is ignored: VR Agent never calls the LLM or TTS "
+                "without viewer activity."
+            )
+        return

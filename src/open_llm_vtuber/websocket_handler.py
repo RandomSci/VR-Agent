@@ -35,6 +35,9 @@ from .vr_agent.capabilities import CharacterCapabilities
 from .vr_agent.intent import NO_INTENT
 from .vr_agent.prompting import build_livestream_prompt
 from .vr_agent.text_safety import clean_viewer_text
+from .vr_agent.usage import usage
+from .room.profiles import RoomConfig, load_room
+from .room.session import RoomSession
 
 
 class MessageType(Enum):
@@ -81,6 +84,14 @@ class WebSocketHandler:
         self.live_client_uids: set[str] = set()
         self._capabilities_cache: Dict[str, CharacterCapabilities] = {}
         runtime.set_broadcaster(self.broadcast_to_all)
+        # VR Room (multi-character page). Any problem here leaves the classic
+        # single-character livestream untouched.
+        self.room_client_uids: set[str] = set()
+        try:
+            self.room_session = RoomSession(load_room())
+        except Exception as exc:
+            logger.error(f"VR Room disabled: {exc}")
+            self.room_session = RoomSession(RoomConfig())
 
         # Message handlers mapping
         self._message_handlers = self._init_message_handlers()
@@ -108,6 +119,7 @@ class WebSocketHandler:
             "request-init-config": self._handle_init_config_request,
             "heartbeat": self._handle_heartbeat,
             "vr-agent-hello": self._handle_vr_agent_hello,
+            "vr-room-client-status": self._handle_vr_room_client_status,
         }
 
     async def handle_new_connection(
@@ -286,8 +298,19 @@ class WebSocketHandler:
         A page opened with ?mode=live (the OBS source) wins over a developer
         page, so opening the normal UI for debugging never steals the audio.
         """
-        ordered = [uid for uid in self.client_connections if uid in self.live_client_uids]
-        ordered += [uid for uid in self.client_connections if uid not in self.live_client_uids]
+        room_uids = (
+            [uid for uid in self.client_connections if uid in self.room_client_uids]
+            if self.room_session.active
+            else []
+        )
+        ordered = room_uids + [
+            uid for uid in self.client_connections if uid in self.live_client_uids
+        ]
+        ordered += [
+            uid
+            for uid in self.client_connections
+            if uid not in self.live_client_uids and uid not in room_uids
+        ]
         for client_uid in ordered:
             context = self.client_contexts.get(client_uid)
             if context:
@@ -349,11 +372,38 @@ class WebSocketHandler:
         self, websocket: WebSocket, client_uid: str, data: WSMessage
     ) -> None:
         mode = data.get("mode")
+        if mode == "room":
+            self.live_client_uids.discard(client_uid)
+            if self.room_session.active:
+                self.room_client_uids.add(client_uid)
+                await self.room_session.register(client_uid, websocket.send_text)
+            else:
+                # The room page falls back to the classic livestream page.
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "vr-room-config",
+                            "room": {"enabled": False},
+                            "problems": self.room_session.room.problems[:5],
+                        }
+                    )
+                )
+            return
+        self.room_client_uids.discard(client_uid)
+        self.room_session.unregister(client_uid)
         if mode == "live":
             self.live_client_uids.add(client_uid)
             logger.info(f"Client {client_uid} registered as the livestream presentation page.")
         else:
             self.live_client_uids.discard(client_uid)
+
+    async def _handle_vr_room_client_status(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        if client_uid in self.room_client_uids:
+            self.room_session.on_client_status(
+                client_uid, data.get("loaded"), data.get("failed")
+            )
 
     async def broadcast_to_all(self, payload: str) -> None:
         for websocket in list(self.client_connections.values()):
@@ -415,6 +465,8 @@ class WebSocketHandler:
             "history_limit": max(0, int(settings.max_history_messages)),
         }
 
+        if not is_system:
+            usage.record_viewer_interaction()
         timing = runtime.latency.start(message.message_id, received_at or time.time())
         timing.action = intent.action.name if intent.action else None
         runtime.set(VRAgentState.MESSAGE_RECEIVED, message.message_id)
@@ -566,6 +618,8 @@ class WebSocketHandler:
 
         # Clean up other client data
         self.live_client_uids.discard(client_uid)
+        self.room_client_uids.discard(client_uid)
+        self.room_session.unregister(client_uid)
         self.client_connections.pop(client_uid, None)
         self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
@@ -586,6 +640,8 @@ class WebSocketHandler:
     async def _cleanup_failed_connection(self, client_uid: str) -> None:
         """Clean up failed connection data"""
         self.live_client_uids.discard(client_uid)
+        self.room_client_uids.discard(client_uid)
+        self.room_session.unregister(client_uid)
         self.client_connections.pop(client_uid, None)
         self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)

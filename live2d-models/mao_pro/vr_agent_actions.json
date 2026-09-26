@@ -120,7 +120,10 @@
     "dance": "shy_sway",
     "wink": "smile",
     "thumbs_up": "nod",
-    "peace": "shy_sway"
+    "peace": "shy_sway",
+    "cheer": "nod",
+    "tilt": "shy_sway",
+    "suspicious": "pout"
   },
   "idle": {
     "large_motion_actions": ["magic_heart", "summon_rabbit"],

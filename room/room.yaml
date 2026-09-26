@@ -1,0 +1,51 @@
+# VR Agent Room: several characters in one livestream scene.
+# Open http://127.0.0.1:12393/vr-agent/room.html in OBS (1920x1080).
+# If this file is invalid or no character loads, the room page falls back to /?mode=live.
+enabled: true
+title: 'VR AGENT'
+background: 'ceiling-window-room-night.jpeg'   # a file from backgrounds/, served at /bg/
+
+# Order matters: the first listed character stands on the left.
+cast:
+  - mika
+  - luna
+
+# Shared context every character receives. Keep it short; it is sent with each reply.
+relationship: |
+  Mika and Luna are close friends who livestream together as AI virtual characters in a small
+  virtual room. They have a playful rivalry and tease each other lightly, but never genuinely insult
+  each other, and they cooperate when answering viewers. Both know they are AI characters on a live
+  YouTube stream and both know exactly what the other can and cannot do on screen.
+
+director:
+  max_turns: 3                 # hard cap of spoken turns per viewer message (never above 4)
+  follow_up_chance: 0.25       # chance the other character adds one short line
+  silent_reaction_chance: 0.9  # chance the other character reacts without speaking (free)
+  fairness_window: 6
+  failure_threshold: 3         # LLM or TTS failures in a row before a character cools down
+  cooldown_seconds: 300
+  context_lines: 8             # recent room lines sent with each reply
+  # No setting exists for talking while chat is quiet: zero viewer activity means
+  # zero LLM requests and zero TTS requests. Idle life is local animation only.
+
+camera:
+  enabled: true
+  auto_focus: true
+  auto_cooldown_seconds: 25
+  zoom_request_cooldown_seconds: 15
+  zoom_hold_seconds: 6
+  transition_seconds: 1.4
+
+ambient:                       # local only, no LLM or TTS
+  idle_min_seconds: 12
+  idle_max_seconds: 22
+  glance_min_seconds: 25
+  glance_max_seconds: 70
+  expression_chance: 0.15
+
+# Objects that exist in the room. Positions are fractions of the 16:9 stage.
+objects:
+  game_board: {x: 0.5, y: 0.6, width: 0.38, height: 0.46}
+
+sfx:
+  volume: 0.35                 # 0 to 1, also &sfx=0-100 in the room URL

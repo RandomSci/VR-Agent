@@ -510,7 +510,7 @@ live_config:
     response_cooldown_seconds: 1
     max_buffer_messages: 100
     same_user_cooldown_seconds: 90
-    idle_banter_enabled: false
+    idle_banter_enabled: false  # ignored: VR Agent never calls the LLM or TTS without viewer activity
     idle_banter_delay_seconds: 180
     discovery_retry_seconds: 10
     selector_max_messages: 12

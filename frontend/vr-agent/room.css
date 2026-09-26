@@ -1,0 +1,103 @@
+/*
+ * VR Agent Room page. Reuses the badge, card, caption and BRB styles from
+ * vr-agent.css (html[data-vr-mode="live"]) and adds the multi-character stage.
+ */
+
+html[data-vr-room],
+html[data-vr-room] body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: #05070f;
+  overflow: hidden;
+}
+
+#vr-room-backdrop {
+  position: fixed;
+  inset: -40px;
+  z-index: 0;
+  background-color: #05070f;
+  background-image: radial-gradient(ellipse at 50% 30%, #1d2750 0%, #05070f 70%);
+  background-size: cover;
+  background-position: center;
+  filter: blur(18px) brightness(0.7);
+}
+
+#vr-room-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+/* World-space DOM layer (game board and other room objects). Its transform is
+   kept in sync with the camera, so objects zoom and pan with the characters. */
+#vr-room-world {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  width: 1920px;
+  height: 1080px;
+  transform-origin: 0 0;
+  pointer-events: none;
+  font-family: var(--vra-font);
+  color: var(--vra-text);
+}
+
+/* Speaker name above subtitles */
+.vra-caption .vrr-speaker {
+  display: block;
+  margin-bottom: calc(var(--vra-unit) * 0.2);
+  font-size: calc(var(--vra-unit) * 0.9);
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+html[data-vr-room] .vra-caption {
+  bottom: calc(var(--vra-unit) * 2.2);
+  max-width: min(40vw, 820px);
+}
+
+/* Who the viewer comment is going to */
+.vrr-to {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: calc(var(--vra-unit) * 0.8);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.vrr-to[hidden] {
+  display: none;
+}
+
+/* Browsers outside OBS block autoplay until a click. */
+.vrr-audio-hint {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483001;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(14, 18, 34, 0.86);
+  color: #fff;
+  font: 600 14px var(--vra-font);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.vrr-audio-hint[hidden] {
+  display: none;
+}
+
+html[data-vr-room].vra-paused #vr-room-world {
+  visibility: hidden;
+}

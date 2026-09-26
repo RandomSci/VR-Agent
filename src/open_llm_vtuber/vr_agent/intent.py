@@ -50,6 +50,10 @@ _INTENT_PATTERNS: dict[str, str] = {
     "peace": r"peace sign",
     "jump": r"jump\w*|talon|tumalon",
     "spin": r"spin\w*|turn around|ikot|umikot",
+    "cheer": r"cheer\w*|celebrate|yay|hooray",
+    "suspicious": r"(?:look|be|act) (?:suspicious|skeptical|unimpressed)|side ?eye|suspicious face",
+    "tilt": r"tilt your head|head tilt|tilt",
+    "shrug": r"shrug\w*",
 }
 _COMPILED = {
     intent: re.compile(rf"(?<![a-z])(?:{pattern})(?![a-z])", re.IGNORECASE)
@@ -173,4 +177,8 @@ def intent_verb(intent: str) -> str:
         "cute": "act cute",
         "pose": "do a pose",
         "sleep": "go to sleep",
+        "cheer": "cheer",
+        "suspicious": "look suspicious",
+        "tilt": "tilt your head",
+        "shrug": "shrug",
     }.get(intent, intent.replace("_", " "))

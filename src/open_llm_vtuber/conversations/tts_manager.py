@@ -165,6 +165,9 @@ class TTSTaskManager:
 
     async def _generate_audio(self, tts_engine: TTSInterface, text: str) -> str:
         """Generate audio file from text"""
+        from ..vr_agent.usage import usage
+
+        usage.record_tts(getattr(tts_engine, "_vr_usage_source", None) or "tts_manager")
         logger.debug(f"🏃Generating audio for '''{text}'''...")
         return await tts_engine.async_generate_audio(
             text=text,

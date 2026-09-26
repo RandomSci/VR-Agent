@@ -111,9 +111,14 @@ class BasicMemoryAgent(AgentInterface):
 
         logger.info("BasicMemoryAgent initialized.")
 
+    # The usage meter counts this agent's requests at the LLM call itself.
+    _counts_llm_requests = True
+
     def _set_llm(self, llm: StatelessLLMInterface):
         """Set the LLM for chat completion."""
-        self._llm = llm
+        from ...vr_agent.usage import count_llm_calls
+
+        self._llm = count_llm_calls(llm, source="agent")
         self.chat = self._chat_function_factory()
 
     def set_system(self, system: str):

@@ -102,6 +102,7 @@ def init_webtool_routes(
     async def vr_agent_status():
         """Developer monitoring: state, latency, capabilities, chat reader health."""
         from .vr_agent import runtime
+        from .vr_agent.usage import usage
 
         youtube_live_service = get_youtube_live_service()
         caps = (
@@ -121,6 +122,8 @@ def init_webtool_routes(
                 "youtube": youtube_live_service.status()
                 if youtube_live_service
                 else None,
+                "room": ws_handler.room_session.status() if ws_handler else None,
+                "usage": usage.snapshot(),
             }
         )
 
@@ -146,7 +149,9 @@ def init_webtool_routes(
             {
                 "ok": True,
                 "paused": runtime.paused,
+                # Classic live pages and room pages both count as the stream page.
                 "livestream_clients": len(ws_handler.live_client_uids)
+                + len(ws_handler.room_client_uids)
                 if ws_handler
                 else 0,
             }
@@ -177,6 +182,53 @@ def init_webtool_routes(
             json.dumps({"type": "vr-agent-action", "action": name, "sync": "now"})
         )
         return JSONResponse({"sent": name, "client": client_uid})
+
+    @router.get("/vr-agent/room/status")
+    async def vr_room_status():
+        """Developer monitoring for the multi-character room."""
+        if not ws_handler:
+            return JSONResponse({"error": "unavailable"}, status_code=503)
+        return JSONResponse(ws_handler.room_session.status())
+
+    @router.post("/vr-agent/room/attention")
+    async def vr_room_attention(request: Request):
+        """Developer tool. Body {"character": "mika", "target": "CHARACTER:luna", "hold_seconds": 4}."""
+        if not ws_handler or not ws_handler.room_session.has_clients():
+            return JSONResponse({"error": "no room page connected"}, status_code=409)
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        try:
+            op = ws_handler.room_session.attention_op(
+                str(payload.get("character", "")),
+                str(payload.get("target", "")),
+                source="developer",
+                hold_seconds=float(payload.get("hold_seconds", 4)),
+            )
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        if not op:
+            return JSONResponse({"error": "unknown character or target"}, status_code=400)
+        await ws_handler.room_session.push([op])
+        return JSONResponse({"sent": op})
+
+    @router.post("/vr-agent/room/test-action")
+    async def vr_room_test_action(request: Request):
+        """Developer tool. Body {"character": "luna", "action": "cheer"}."""
+        if not ws_handler or not ws_handler.room_session.has_clients():
+            return JSONResponse({"error": "no room page connected"}, status_code=409)
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        op = ws_handler.room_session.action_op(
+            str(payload.get("character", "")), str(payload.get("action", ""))
+        )
+        if not op:
+            return JSONResponse({"error": "unknown character or action"}, status_code=400)
+        await ws_handler.room_session.push([op])
+        return JSONResponse({"sent": op})
 
     @router.post("/youtube-live/mock-message")
     async def youtube_live_mock_message(request: Request):
@@ -334,6 +386,9 @@ def init_webtool_routes(
                     for sentence in sentences:
                         sentence = sentence + "."  # Add back the period
                         file_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid4())[:8]}"
+                        from .vr_agent.usage import usage
+
+                        usage.record_tts("tts_web_tool")
                         audio_path = (
                             await default_context_cache.tts_engine.async_generate_audio(
                                 text=sentence, file_name_no_ext=file_name
