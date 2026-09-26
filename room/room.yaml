@@ -58,6 +58,16 @@ world:
 sfx:
   volume: 0.35                 # 0 to 1, also &sfx=0-100 in the room URL
 
+# Background music (frontend/vr-agent/audio, made once with ElevenLabs Music, so
+# playing it costs nothing). The room track loops quietly; the game track takes
+# over while a game is on the board. Music ducks while a character speaks.
+music:
+  enabled: true
+  volume: 0.14                 # room track, 0 to 1 (also &bgm=0-100 in the room URL, 0 = off)
+  game_volume: 0.17            # game track
+  duck_to: 0.35                # music level while someone speaks, as a fraction
+  crossfade_seconds: 1.6
+
 # Zero activity means zero spending. Characters only speak (TTS) while a viewer has
 # chatted within this window; otherwise game lines show as captions. The LLM is only
 # ever called for replies to viewer messages.

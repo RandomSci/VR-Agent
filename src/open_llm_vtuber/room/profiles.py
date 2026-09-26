@@ -171,7 +171,12 @@ class VoiceSpec:
     def describe(self) -> str:
         if not self.tts_model:
             return "conf.yaml TTS"
-        voice = self.settings.get("voice") or self.settings.get("voice_id") or ""
+        ids = self.settings.get("voice_ids")
+        voice = (
+            self.settings.get("voice")
+            or self.settings.get("voice_id")
+            or (ids[0] if isinstance(ids, list) and ids else "")
+        )
         return f"{self.tts_model} {voice}".strip()
 
 
@@ -358,6 +363,15 @@ class RoomConfig:
     objects: dict[str, dict[str, float]] = field(default_factory=dict)
     action_objects: dict[str, dict[str, Any]] = field(default_factory=dict)
     sfx_volume: float = 0.35
+    music: dict[str, Any] = field(
+        default_factory=lambda: {
+            "enabled": True,
+            "volume": 0.14,
+            "game_volume": 0.17,
+            "duck_to": 0.35,
+            "crossfade_seconds": 1.6,
+        }
+    )
     speech_window_seconds: float = 120.0
     game_pause_after_seconds: float = 90.0
     game_end_after_seconds: float = 180.0
@@ -390,6 +404,7 @@ class RoomConfig:
             "ambient": self.ambient.to_frontend(),
             "objects": self.objects,
             "sfx_volume": self.sfx_volume,
+            "music": dict(self.music),
         }
 
     def describe(self) -> dict[str, Any]:
@@ -613,6 +628,14 @@ def load_room(
         }
     sfx = spec.get("sfx") if isinstance(spec.get("sfx"), dict) else {}
     room.sfx_volume = _clamp(sfx.get("volume"), 0, 1, 0.35)
+    music = spec.get("music") if isinstance(spec.get("music"), dict) else {}
+    room.music = {
+        "enabled": bool(music.get("enabled", True)),
+        "volume": _clamp(music.get("volume"), 0, 1, 0.14),
+        "game_volume": _clamp(music.get("game_volume"), 0, 1, 0.17),
+        "duck_to": _clamp(music.get("duck_to"), 0, 1, 0.35),
+        "crossfade_seconds": _clamp(music.get("crossfade_seconds"), 0.2, 6, 1.6),
+    }
     cost = spec.get("cost") if isinstance(spec.get("cost"), dict) else {}
     room.speech_window_seconds = _clamp(cost.get("speech_window_seconds"), 10, 900, 120)
     games = spec.get("games") if isinstance(spec.get("games"), dict) else {}

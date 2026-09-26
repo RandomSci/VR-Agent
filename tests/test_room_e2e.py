@@ -380,3 +380,65 @@ def test_trivia_starts_from_a_natural_conversation(browser, tmp_path):
             page.screenshot(path=str(Path(shot) / "trivia-board.png"))
         assert usage.snapshot()["llm_requests"] == 0
         assert not errors
+
+
+def test_background_music_loops_ducks_switches_for_games_and_survives_resize(browser):
+    """Room music plays quietly from the saved ElevenLabs tracks (no API
+    request), ducks while a character speaks, switches to the game track while
+    the board is up, and keeps playing through a viewport change."""
+    from open_llm_vtuber.vr_agent.usage import usage
+
+    usage.reset()
+    with Server() as server:
+        page, errors = open_room(browser, server)
+        page.wait_for_function(
+            "(() => { const m = vrRoom.state().music; return m && m.context === 'running'"
+            " && m.loaded.includes('room') && m.gains.room > 0.135; })()",
+            timeout=20000,
+        )
+        music = page.evaluate("vrRoom.state().music")
+        assert music["track"] == "room" and not music["failed"]
+        full = music["gains"]["room"]
+        assert abs(full - 0.14) < 0.02  # room.yaml music.volume
+
+        # A character speaks: the music ducks, then comes back.
+        server.post("/harness/send", tone_payload("luna"))
+        page.wait_for_function(
+            "vrRoom.state().music.ducked && vrRoom.state().music.gains.room < 0.07",
+            timeout=5000,
+        )
+        server.post("/harness/send", {"type": "backend-synth-complete"})
+        page.wait_for_function(
+            "!vrRoom.state().music.ducked && vrRoom.state().music.gains.room > 0.12",
+            timeout=8000,
+        )
+
+        # A game starts: the game track takes over, the room track fades out.
+        httpx.post(
+            server.base + "/harness/chat", json={"user": "@ana", "text": "play trivia"}
+        )
+        page.wait_for_function(
+            "vrRoom.state().music.track === 'game' && (vrRoom.state().music.gains.game || 0) > 0.1",
+            timeout=10000,
+        )
+        # Rotate to portrait and back: the same game track keeps playing.
+        page.set_viewport_size({"width": 540, "height": 960})
+        page.wait_for_timeout(400)
+        page.set_viewport_size({"width": 960, "height": 540})
+        page.wait_for_timeout(400)
+        after = page.evaluate("vrRoom.state().music")
+        assert after["track"] == "game" and after["gains"]["game"] > 0.1
+        assert after["context"] == "running"
+
+        httpx.post(
+            server.base + "/harness/chat",
+            json={"user": "@ana", "text": "stop the game"},
+        )
+        page.wait_for_function(
+            "vrRoom.state().music.track === 'room' && vrRoom.state().music.gains.room > 0.1",
+            timeout=10000,
+        )
+        # Music itself never calls an API. (TTS here is only the game lines
+        # spoken because a viewer just chatted.)
+        assert usage.snapshot()["llm_requests"] == 0
+        assert not errors

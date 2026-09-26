@@ -39,9 +39,9 @@ def test_luna_yaml_uses_elevenlabs_with_an_edge_fallback():
     room = load_room(ROOT / "room", ROOT)
     luna = room.get("luna")
     assert luna.voice.tts_model == "elevenlabs_tts"
-    assert luna.voice.settings["voice_id"] == "vGQNBgLaiM3EdZtxIiuY"
+    assert luna.voice.settings["voice_ids"][0] == "XJ2fW4ybq7HouelYYGcL"
     assert luna.voice.fallback.tts_model == "edge_tts"
-    assert luna.voice.fallback.settings["voice"] == "en-GB-SoniaNeural"
+    assert luna.voice.fallback.settings["voice"] == "en-US-AnaNeural"
 
 
 def test_fallback_is_not_nested():
@@ -91,7 +91,8 @@ def test_luna_inherits_the_elevenlabs_key_and_model_but_keeps_her_voice(tmp_path
     assert isinstance(engine, FallbackTTS)
     assert built["elevenlabs_tts"].kwargs["api_key"] == "sk-test"
     assert built["elevenlabs_tts"].kwargs["model_id"] == "eleven_flash_v2_5"
-    assert built["elevenlabs_tts"].kwargs["voice_id"] == "vGQNBgLaiM3EdZtxIiuY"
+    assert built["elevenlabs_tts"].kwargs["voice_id"] == "XJ2fW4ybq7HouelYYGcL"
+    assert "voice_ids" not in built["elevenlabs_tts"].kwargs
     assert engine._vr_usage_source == "room:luna"
 
 
@@ -115,3 +116,30 @@ def test_edge_is_used_alone_when_elevenlabs_cannot_be_created(tmp_path):
     voices, built = _voices(tmp_path, primary_raises_on_create=True)
     engine = voices.engine("luna")
     assert engine is built["edge_tts"]
+
+
+def test_luna_skips_a_voice_that_mika_already_uses(tmp_path):
+    voices, built = _voices(tmp_path)
+    block = SimpleNamespace(
+        model_dump=lambda: {"api_key": "sk-test", "voice_id": "XJ2fW4ybq7HouelYYGcL"}
+    )
+    voices.base_source = lambda: (
+        SimpleNamespace(tts_model="elevenlabs_tts", elevenlabs_tts=block),
+        object(),
+    )
+    voices.engine("luna")
+    assert built["elevenlabs_tts"].kwargs["voice_id"] == "cgSgspJ2msm6clMCkdW9"
+
+
+def test_a_primary_voice_that_keeps_failing_rests(tmp_path):
+    now = [0.0]
+    primary = FakeEngine("elevenlabs_tts", tmp_path, "raise")
+    backup = FakeEngine("edge_tts", tmp_path)
+    engine = FallbackTTS(primary, backup, "luna", clock=lambda: now[0])
+    for _ in range(5):
+        asyncio.run(engine.async_generate_audio("hi"))
+    assert primary.calls == FallbackTTS.FAILURES_BEFORE_REST
+    assert backup.calls == 5 and "quota" in engine.last_error
+    now[0] += FallbackTTS.REST_SECONDS + 1
+    asyncio.run(engine.async_generate_audio("hi"))
+    assert primary.calls == FallbackTTS.FAILURES_BEFORE_REST + 1

@@ -37,11 +37,37 @@ def _default_factory(engine_type: str, **kwargs: Any) -> Any:
 class FallbackTTS:
     """Speaks with ``primary``; if it raises or returns no file, uses ``fallback``."""
 
-    def __init__(self, primary: Any, fallback: Any, label: str = ""):
+    FAILURES_BEFORE_REST = 3
+    REST_SECONDS = 600.0
+
+    def __init__(self, primary: Any, fallback: Any, label: str = "", clock=time.time):
         self.primary = primary
         self.fallback = fallback
         self.label = label
+        self.clock = clock
         self.fallbacks_used = 0
+        self.failures_in_a_row = 0
+        self.rest_until = 0.0
+        self.last_error = ""
+
+    def _primary_resting(self) -> bool:
+        return self.clock() < self.rest_until
+
+    def _failed(self, reason: str) -> None:
+        self.failures_in_a_row += 1
+        self.last_error = reason[:200]
+        logger.warning(
+            f"VR Room: primary voice for {self.label} failed ({reason[:120]}); using the fallback voice"
+        )
+        if self.failures_in_a_row >= self.FAILURES_BEFORE_REST:
+            # A broken voice (bad voice_id, no credits) should not cost a
+            # wasted request and extra delay on every single line.
+            self.rest_until = self.clock() + self.REST_SECONDS
+            self.failures_in_a_row = 0
+            logger.error(
+                f"VR Room: {self.label}'s primary voice keeps failing; fallback only for "
+                f"{int(self.REST_SECONDS / 60)} minutes"
+            )
 
     @staticmethod
     def _ok(path: Any) -> bool:
@@ -55,23 +81,28 @@ class FallbackTTS:
             return False
 
     async def async_generate_audio(self, text: str, file_name_no_ext=None) -> Any:
-        try:
-            path = await self.primary.async_generate_audio(text, file_name_no_ext)
-            if self._ok(path):
-                return path
-            logger.warning(f"VR Room: primary voice for {self.label} returned no audio")
-        except Exception as exc:
-            logger.warning(f"VR Room: primary voice for {self.label} failed: {exc}")
+        if not self._primary_resting():
+            try:
+                path = await self.primary.async_generate_audio(text, file_name_no_ext)
+                if self._ok(path):
+                    self.failures_in_a_row = 0
+                    return path
+                self._failed("no audio returned")
+            except Exception as exc:
+                self._failed(str(exc))
         self.fallbacks_used += 1
         return await self.fallback.async_generate_audio(text, file_name_no_ext)
 
     def generate_audio(self, text: str, file_name_no_ext=None) -> Any:
-        try:
-            path = self.primary.generate_audio(text, file_name_no_ext)
-            if self._ok(path):
-                return path
-        except Exception as exc:
-            logger.warning(f"VR Room: primary voice for {self.label} failed: {exc}")
+        if not self._primary_resting():
+            try:
+                path = self.primary.generate_audio(text, file_name_no_ext)
+                if self._ok(path):
+                    self.failures_in_a_row = 0
+                    return path
+                self._failed("no audio returned")
+            except Exception as exc:
+                self._failed(str(exc))
         self.fallbacks_used += 1
         return self.fallback.generate_audio(text, file_name_no_ext)
 
@@ -175,7 +206,20 @@ class CharacterVoices:
         return engine
 
     def _build(self, spec: Any, character_id: str) -> Any:
-        settings = {**self._base_settings(spec.tts_model), **spec.settings}
+        base = self._base_settings(spec.tts_model)
+        settings = {**base, **spec.settings}
+        choices = settings.pop("voice_ids", None)
+        if isinstance(choices, list) and choices:
+            # First voice that is not the one conf.yaml (the other character) uses.
+            taken = str(base.get("voice_id") or base.get("voice") or "")
+            pick = next(
+                (str(v) for v in choices if str(v) and str(v) != taken), str(choices[0])
+            )
+            settings["voice_id"] = pick
+            if pick != str(choices[0]):
+                logger.info(
+                    f"VR Room: {character_id} uses voice {pick}; the first choice is already taken"
+                )
         engine = self.factory(spec.tts_model, **settings)
         if engine is not None:
             try:

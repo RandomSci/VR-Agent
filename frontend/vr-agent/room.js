@@ -26,6 +26,7 @@
     idle: params.get("idle") !== "0",
     fallback: params.get("nofallback") !== "1",
     sfx: params.has("sfx") ? Math.max(0, Math.min(100, Number(params.get("sfx")) || 0)) / 100 : null,
+    bgm: params.has("bgm") ? Math.max(0, Math.min(100, Number(params.get("bgm")) || 0)) / 100 : null,
   };
   const log = (...args) => console.log("[VR Room]", ...args);
   const now = () => performance.now();
@@ -182,6 +183,7 @@
 
   function setPaused(paused) {
     room.paused = !!paused;
+    if (music) music.setPaused(room.paused);
     document.documentElement.classList.toggle("vra-paused", room.paused);
     if (room.paused) hideCard();
   }
@@ -745,6 +747,7 @@
     speech.current = current;
 
     const begin = () => {
+      if (music) music.setSpeaking(true);
       if (character) {
         character.speaking = true;
         applyExpressions(character, item);
@@ -762,6 +765,7 @@
       }
       room.lastSpeechEndAt = now();
       speech.current = null;
+      if (music && !speech.queue.length) music.setSpeaking(false);
       playNext();
     };
 
@@ -887,6 +891,10 @@
     }
     const signature = JSON.stringify((spec.characters || []).map((c) => [c.id, c.model_url]));
     room.config = spec;
+    if (music) {
+      music.refresh();
+      music.start();
+    }
     room.objects = {};
     for (const [id, box] of Object.entries(spec.objects || {})) {
       if (/^[a-z][a-z0-9_]{0,23}$/.test(id) && box && typeof box === "object") {
@@ -959,6 +967,20 @@
   // Game Board and sound effects (room-board.js). Optional: the room still works without them.
   let board = null;
   let sfx = null;
+  let music = null;
+  function createMusic() {
+    const A = window.VRRoomAudio;
+    if (!A) return;
+    try {
+      music = A.createAudioDirector({
+        settings: () => (room.config || {}).music || {},
+        override: () => FLAGS.bgm,
+      });
+    } catch (err) {
+      log("music unavailable", err);
+      music = null;
+    }
+  }
   function createBoardAndSfx() {
     const B = window.VRRoomBoard;
     const world = document.getElementById("vr-room-world");
@@ -984,7 +1006,9 @@
 
   const opHandlers = {
     board(op) {
-      if (board) board.render(op.view && typeof op.view === "object" ? op.view : null);
+      const view = op.view && typeof op.view === "object" ? op.view : null;
+      if (board) board.render(view);
+      if (music) music.setGame(!!view);
     },
     sfx(op) {
       if (sfx && typeof op.name === "string" && sfx.names.includes(op.name) && !room.paused) sfx.play(op.name);
@@ -1178,6 +1202,7 @@
     }
     createStage();
     createBoardAndSfx();
+    createMusic();
     connect();
     log("room page started", FLAGS);
   }
@@ -1201,6 +1226,7 @@
       camera: { x: camera.x, y: camera.y, zoom: camera.zoom, shot: camera.shot },
       objects: room.objects,
       queue: speech.queue.length,
+      music: music ? music.state() : null,
     }),
     look: (id, target, ms) => {
       const c = room.characters.get(id);
