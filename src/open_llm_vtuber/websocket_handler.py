@@ -92,13 +92,16 @@ class WebSocketHandler:
         except Exception as exc:
             logger.error(f"VR Room disabled: {exc}")
             self.room_session = RoomSession(RoomConfig())
-        try:
-            self.room_session.configure_voices(
-                default_context_cache.character_config.tts_config,
-                default_context_cache.tts_engine,
+        # conf.yaml's TTS is loaded after this handler exists, so voices that
+        # inherit it look it up when they speak, not now.
+        def _base_voice(ctx=default_context_cache):
+            character = getattr(ctx, "character_config", None)
+            return (
+                getattr(character, "tts_config", None) if character else None,
+                getattr(ctx, "tts_engine", None),
             )
-        except Exception as exc:  # pragma: no cover - partial test contexts
-            logger.debug(f"VR Room: default voice unavailable: {exc}")
+
+        self.room_session.voices.base_source = _base_voice
 
         # Message handlers mapping
         self._message_handlers = self._init_message_handlers()

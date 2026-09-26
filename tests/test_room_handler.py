@@ -154,3 +154,23 @@ def test_game_commands_are_consumed_without_llm(room_handler):
 def test_without_a_room_page_nothing_is_consumed(room_handler):
     handler, sock, prompts = room_handler
     assert handler.observe_live_message(message("play trivia")) is False
+
+
+def test_inherited_voice_uses_the_engine_loaded_after_startup(monkeypatch):
+    """Regression: the server builds the handler before conf.yaml's TTS exists.
+
+    Mika's voice inherits conf.yaml TTS; it must be looked up when she speaks,
+    not captured (as None) at startup.
+    """
+    monkeypatch.chdir(ROOT)
+    context = SimpleNamespace(character_config=None, tts_engine=None)
+    handler = handler_mod.WebSocketHandler(context)
+    voices = handler.room_session.voices
+    assert voices.engine("mika") is None  # not loaded yet, and not cached as None
+    engine = object()
+    context.character_config = SimpleNamespace(tts_config=None)
+    context.tts_engine = engine
+    assert voices.engine("mika") is engine
+    replacement = object()  # a config switch replaces the engine
+    context.tts_engine = replacement
+    assert voices.engine("mika") is replacement

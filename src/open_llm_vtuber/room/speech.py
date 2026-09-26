@@ -48,9 +48,11 @@ class CharacterVoices:
         self.factory = factory
         self._engines: dict[str, Any] = {}
         self.errors: dict[str, str] = {}
+        # Optional callable returning (conf.yaml tts_config, tts_engine) at call time.
+        self.base_source = None
 
     def _base_settings(self, model: str) -> dict[str, Any]:
-        config = self.base_config
+        config, _ = self._base()
         if not config or getattr(config, "tts_model", None) != model:
             return {}
         try:
@@ -58,22 +60,46 @@ class CharacterVoices:
         except Exception:
             return {}
 
+    def _base(self) -> tuple[Any, Any]:
+        """conf.yaml's TTS config and engine, read when needed.
+
+        The server creates the room before it loads conf.yaml, so the engine
+        must be looked up at speaking time, not captured at startup.
+        """
+        source = getattr(self, "base_source", None)
+        if source is not None:
+            try:
+                config, engine = source()
+                return config, engine
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(f"VR Room: base TTS lookup failed: {exc}")
+        return self.base_config, self.base_engine
+
     def engine(self, character_id: str) -> Any:
-        if character_id in self._engines:
-            return self._engines[character_id]
         profile = self.session.room.get(character_id)
         if not profile:
             return None
+        if not profile.voice.tts_model:
+            # "inherit": always the current conf.yaml engine (follows config switches).
+            _, engine = self._base()
+            if engine is None:
+                if character_id not in self.errors:
+                    logger.error(
+                        f"VR Room: {character_id} inherits conf.yaml TTS but it is not loaded yet"
+                    )
+                self.errors[character_id] = "conf.yaml TTS not loaded"
+                return None
+            self.errors.pop(character_id, None)
+            return engine
+        if self._engines.get(character_id) is not None:
+            return self._engines[character_id]
         engine = None
         try:
-            if not profile.voice.tts_model:
-                engine = self.base_engine
-            else:
-                settings = {
-                    **self._base_settings(profile.voice.tts_model),
-                    **profile.voice.settings,
-                }
-                engine = self.factory(profile.voice.tts_model, **settings)
+            settings = {
+                **self._base_settings(profile.voice.tts_model),
+                **profile.voice.settings,
+            }
+            engine = self.factory(profile.voice.tts_model, **settings)
             if engine is not None:
                 try:
                     engine._vr_usage_source = f"room:{character_id}"
@@ -83,13 +109,16 @@ class CharacterVoices:
             self.errors[character_id] = str(exc)[:200]
             logger.error(f"VR Room: voice for {character_id} unavailable: {exc}")
             engine = None
-        self._engines[character_id] = engine
+        if engine is not None:
+            # Created once and reused; a failed creation is retried next time.
+            self._engines[character_id] = engine
+            self.errors.pop(character_id, None)
         return engine
 
     def describe(self) -> dict[str, Any]:
         return {
             cid: {
-                "ready": cid in self._engines and self._engines[cid] is not None,
+                "ready": self.engine(cid) is not None,
                 "error": self.errors.get(cid),
             }
             for cid in self.session.state.characters
