@@ -218,7 +218,12 @@ class ConversationDirector:
             if plan.turns
             else []
         )
-        ops = session.emit(ev.INTERACTION_STARTED, interaction=plan.id)
+        ops = session.emit(
+            ev.INTERACTION_STARTED,
+            interaction=plan.id,
+            mode=plan.decision.mode,
+            speakers=[t.speaker for t in plan.turns],
+        )
         ops += session.emit(ev.VIEWER_ADDRESSED, targets=targets)
         ops += self._opening_reactions(plan)
         await session.push(ops)

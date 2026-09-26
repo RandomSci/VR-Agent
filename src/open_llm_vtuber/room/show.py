@@ -81,6 +81,7 @@ class ShowRunner:
         self._last_board: Optional[dict[str, Any]] = None
         self.lines_shown_silently = 0
         self.sleep = asyncio.sleep  # injectable for simulated-time tests
+        self._pending_camera: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # players and names
@@ -190,7 +191,10 @@ class ShowRunner:
             return None
         if view is None and self._last_board is None:
             return None
+        cleared = view is None and self._last_board is not None
         self._last_board = view
+        if cleared:
+            self._pending_camera = self.session.camera.game_cleared()
         return {"op": "board", "view": view}
 
     def _queue_game_line(self, line: LineRequest) -> None:
@@ -294,12 +298,16 @@ class ShowRunner:
     # clock
     # ------------------------------------------------------------------
     def tick(self) -> list[dict[str, Any]]:
+        ops = [op for op in self._pending_camera if op]
+        self._pending_camera = []
         if not self.engine.playing and self._last_board is None:
-            return []
-        ops = self.apply(self.engine.tick(self.clock()))
+            return ops
+        ops += self.apply(self.engine.tick(self.clock()))
         board = self.board_op()
         if board:
             ops.append(board)
+        ops += [op for op in self._pending_camera if op]
+        self._pending_camera = []
         ops += self._maybe_bored()
         return ops
 

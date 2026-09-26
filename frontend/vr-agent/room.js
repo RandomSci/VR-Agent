@@ -325,7 +325,8 @@
       case "board": {
         const box = room.objects.game_board;
         if (!box) return null;
-        return { x: STAGE_W / 2, y: box.y * STAGE_H - STAGE_H * 0.02, zoom: 1.08 };
+        // Slight push-in that keeps both characters' heads and the whole board in frame.
+        return { x: STAGE_W / 2, y: Math.min(box.y * STAGE_H, STAGE_H * 0.55), zoom: 1.06 };
       }
       case "wide":
       default:
@@ -334,7 +335,7 @@
   }
 
   let cameraReturnTimer = null;
-  function setShot(shot, ref, holdMs) {
+  function setShot(shot, ref, holdMs, returnTo) {
     try {
       if (room.config && room.config.camera && room.config.camera.enabled === false) return;
       const target = shotTarget(shot, ref);
@@ -342,7 +343,8 @@
       camera.shot = shot;
       moveCamera(target);
       clearTimeout(cameraReturnTimer);
-      if (holdMs > 0) cameraReturnTimer = setTimeout(() => setShot("wide", null, 0), holdMs);
+      const back = ["wide", "board", "two_shot"].includes(returnTo) ? returnTo : "wide";
+      if (holdMs > 0) cameraReturnTimer = setTimeout(() => setShot(back, null, 0), holdMs);
     } catch (err) {
       log("camera error, back to wide", err);
       camera.to = null;
@@ -999,7 +1001,7 @@
     camera(op) {
       const shots = ["wide", "two_shot", "closeup", "focus", "board"];
       if (!shots.includes(op.shot)) return;
-      setShot(op.shot, typeof op.target === "string" ? op.target : null, clamp(Number(op.hold_ms) || 0, 0, 30000));
+      setShot(op.shot, typeof op.target === "string" ? op.target : null, clamp(Number(op.hold_ms) || 0, 0, 30000), op.return_to);
     },
     object(op) {
       const id = String(op.id || "");

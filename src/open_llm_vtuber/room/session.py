@@ -71,6 +71,9 @@ class RoomSession:
         self.world = WorldDirector(self, clock=clock)
         self.attention = AttentionDirector(self, rng=self.rng)
         self.actions = ActionDirector(self, rng=self.rng, clock=clock)
+        from .camera import CameraDirector
+
+        self.camera = CameraDirector(self, clock=clock)
         # Speech (TTS) and games. Speech is only allowed for viewer-triggered work.
         self.voices = CharacterVoices(self)
         self.speech = SpeakingCoordinator(self, self.voices, clock=clock)
@@ -212,6 +215,13 @@ class RoomSession:
         if message.is_system:
             return False
         self.note_viewer_activity()
+        camera_ops = self._camera_request(message)
+        if camera_ops is not None:
+            from ..vr_agent.usage import usage
+
+            usage.record_viewer_interaction()
+            self._push_soon(camera_ops)
+            return True
         try:
             consumed, ops = self.show.observe(message)
         except Exception as exc:  # a game problem must not break chat
@@ -227,6 +237,20 @@ class RoomSession:
             except RuntimeError:
                 pass
         return consumed
+
+    def _camera_request(self, message: LiveMessage) -> Optional[list[dict[str, Any]]]:
+        """'zoom in on Luna', 'close up', 'zoom out'. Consumed, no LLM."""
+        from .camera import camera_request
+
+        kind = camera_request(message.clean_text)
+        if not kind:
+            return None
+        target = self.addressed_or_primary(message.clean_text)
+        ops = self.camera.request(kind, target)
+        if kind == "in" and target and ops:
+            ops += self.emit(ev.REACTION, character=target, reaction="shy")
+        self.trace("camera_request", kind=kind, character=target, moved=bool(ops))
+        return ops
 
     def addressed_or_primary(self, text: str) -> Optional[str]:
         lowered = f" {str(text).lower()} "
@@ -441,6 +465,7 @@ class RoomSession:
             "voices": self.voices.describe(),
             "show": self.show.status(),
             "director": self.director.status(),
+            "camera": self.camera.status(),
             "traces": list(self.traces)[-60:],
             "room": self.room.describe(),
             "clients": {uid: self._client_models.get(uid, {}) for uid in self._clients},
