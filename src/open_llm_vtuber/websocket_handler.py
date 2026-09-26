@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Callable, TypedDict
 from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
 import json
+import time
 from enum import Enum
 import numpy as np
 from loguru import logger
@@ -29,6 +30,11 @@ from .conversations.conversation_handler import (
 )
 from .conversations.single_conversation import process_single_conversation
 from .live.youtube_live import YouTubeChatMessage
+from .vr_agent import VRAgentState, load_capabilities, resolve_intent, runtime
+from .vr_agent.capabilities import CharacterCapabilities
+from .vr_agent.intent import NO_INTENT
+from .vr_agent.prompting import build_livestream_prompt
+from .vr_agent.text_safety import clean_viewer_text
 
 
 class MessageType(Enum):
@@ -71,6 +77,10 @@ class WebSocketHandler:
         self.current_conversation_tasks: Dict[str, Optional[asyncio.Task]] = {}
         self.default_context_cache = default_context_cache
         self.received_data_buffers: Dict[str, np.ndarray] = {}
+        # Clients that announced themselves as the livestream (OBS) page.
+        self.live_client_uids: set[str] = set()
+        self._capabilities_cache: Dict[str, CharacterCapabilities] = {}
+        runtime.set_broadcaster(self.broadcast_to_all)
 
         # Message handlers mapping
         self._message_handlers = self._init_message_handlers()
@@ -97,6 +107,7 @@ class WebSocketHandler:
             "audio-play-start": self._handle_audio_play_start,
             "request-init-config": self._handle_init_config_request,
             "heartbeat": self._handle_heartbeat,
+            "vr-agent-hello": self._handle_vr_agent_hello,
         }
 
     async def handle_new_connection(
@@ -170,6 +181,8 @@ class WebSocketHandler:
                 }
             )
         )
+
+        await self._send_vr_agent_config(websocket, session_service_context)
 
         # Send initial group status
         await self.send_group_update(websocket, client_uid)
@@ -268,14 +281,91 @@ class WebSocketHandler:
         return all(task is None or task.done() for task in self.current_conversation_tasks.values())
 
     def _get_primary_client(self) -> tuple[str, WebSocket, ServiceContext] | None:
-        for client_uid, websocket in self.client_connections.items():
+        """The client that should speak for the stream.
+
+        A page opened with ?mode=live (the OBS source) wins over a developer
+        page, so opening the normal UI for debugging never steals the audio.
+        """
+        ordered = [uid for uid in self.client_connections if uid in self.live_client_uids]
+        ordered += [uid for uid in self.client_connections if uid not in self.live_client_uids]
+        for client_uid in ordered:
             context = self.client_contexts.get(client_uid)
             if context:
-                return client_uid, websocket, context
+                return client_uid, self.client_connections[client_uid], context
         return None
 
+    # ------------------------------------------------------------------
+    # VR Agent
+    # ------------------------------------------------------------------
+    def get_capabilities(self, context: ServiceContext) -> CharacterCapabilities | None:
+        try:
+            model_info = context.live2d_model.model_info
+        except Exception:
+            return None
+        key = f"{model_info.get('name')}|{model_info.get('url')}"
+        caps = self._capabilities_cache.get(key)
+        if caps is None:
+            try:
+                caps = load_capabilities(model_info)
+            except Exception as exc:
+                logger.error(f"VR Agent: failed to load capabilities: {exc}")
+                return None
+            self._capabilities_cache[key] = caps
+        return caps
+
+    @staticmethod
+    def _vr_agent_settings(context: ServiceContext):
+        try:
+            return context.config.live_config.vr_agent
+        except Exception:
+            from .config_manager.live import VRAgentConfig
+
+            return VRAgentConfig()
+
+    async def _send_vr_agent_config(self, websocket: WebSocket, context: ServiceContext) -> None:
+        settings = self._vr_agent_settings(context)
+        caps = self.get_capabilities(context)
+        payload = {
+            "type": "vr-agent-config",
+            "settings": {
+                "overlay_title": clean_viewer_text(settings.overlay_title, 40),
+                "show_comment_card": settings.show_comment_card,
+                "show_state_indicator": settings.show_state_indicator,
+                "comment_card_max_chars": settings.comment_card_max_chars,
+                "idle_motions_enabled": settings.idle_motions_enabled,
+                "idle_min_seconds": max(3.0, float(settings.idle_min_seconds)),
+                "idle_max_seconds": max(
+                    float(settings.idle_min_seconds) + 1.0, float(settings.idle_max_seconds)
+                ),
+                "idle_in_dev_mode": settings.idle_in_dev_mode,
+            },
+            "capabilities": caps.to_frontend() if caps else None,
+            "phase": runtime.public_phase(),
+        }
+        await websocket.send_text(json.dumps(payload))
+
+    async def _handle_vr_agent_hello(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        mode = data.get("mode")
+        if mode == "live":
+            self.live_client_uids.add(client_uid)
+            logger.info(f"Client {client_uid} registered as the livestream presentation page.")
+        else:
+            self.live_client_uids.discard(client_uid)
+
+    async def broadcast_to_all(self, payload: str) -> None:
+        for websocket in list(self.client_connections.values()):
+            try:
+                await websocket.send_text(payload)
+            except Exception:
+                pass
+
     async def process_youtube_live_message(
-        self, message: YouTubeChatMessage, max_wait_seconds: float | None = None
+        self,
+        message: YouTubeChatMessage,
+        max_wait_seconds: float | None = None,
+        received_at: float | None = None,
     ) -> bool:
         primary_client = self._get_primary_client()
         if not primary_client:
@@ -286,34 +376,96 @@ class WebSocketHandler:
             return False
 
         client_uid, websocket, context = primary_client
+        settings = self._vr_agent_settings(context)
+        caps = self.get_capabilities(context)
+        is_system = message.author_channel_id.startswith("system-")
         viewer_name = message.author_display_name or "a viewer"
-        user_input = (
-            f"A YouTube live viewer named {viewer_name} says: \"{message.text}\"\n"
-            "Reply naturally as the configured character. Keep it stream-friendly and concise. "
-            "Acknowledge the viewer when it feels natural, but do not say the username every time."
+
+        intent = NO_INTENT
+        if settings.viewer_actions_enabled and not is_system:
+            intent = resolve_intent(message.text, caps)
+            if intent.requested:
+                logger.info(
+                    f"VR Agent action request '{intent.requested}' -> "
+                    f"{intent.action.name if intent.action else 'unsupported'}"
+                    f"{' (alternative)' if intent.is_alternative else ''}"
+                )
+
+        user_input = build_livestream_prompt(
+            viewer_name=viewer_name,
+            viewer_text=message.text,
+            capabilities=caps,
+            intent=intent,
+            is_system_prompt=is_system,
         )
         metadata = {
             "source": "youtube_live",
-            "from_name": viewer_name,
+            "from_name": clean_viewer_text(viewer_name, 60) or "Viewer",
             "viewer_display_name": viewer_name,
             "viewer_message": message.text,
             "youtube_message_id": message.message_id,
+            "skip_history": is_system,
         }
 
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "youtube-live-selected-message",
-                    "active": True,
-                    "author": viewer_name,
-                    "message": message.text,
-                }
+        timing = runtime.latency.start(message.message_id, received_at or time.time())
+        timing.action = intent.action.name if intent.action else None
+        runtime.set(VRAgentState.MESSAGE_RECEIVED, message.message_id)
+
+        show_card = settings.show_comment_card and not is_system
+        if show_card:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "youtube-live-selected-message",
+                        "active": True,
+                        "id": message.message_id,
+                        "author": clean_viewer_text(viewer_name, 60) or "Viewer",
+                        "message": clean_viewer_text(
+                            message.text, max(20, settings.comment_card_max_chars)
+                        ),
+                        "paid": message.kind == "paid",
+                        "amount": clean_viewer_text(message.amount, 30),
+                    }
+                )
             )
-        )
+        if intent.action:
+            # Only a registry name leaves the backend; the frontend resolves it
+            # against the capability list it received at connect time.
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "vr-agent-action",
+                        "action": intent.action.name,
+                        "sync": "speech",
+                        "id": message.message_id,
+                    }
+                )
+            )
+
+        first_audio_sent = False
+
+        async def tracked_send(payload: str) -> None:
+            nonlocal first_audio_sent
+            if not first_audio_sent and payload.startswith('{"type": "audio"'):
+                first_audio_sent = True
+                timing.first_audio_at = time.time()
+                runtime.set(
+                    VRAgentState.PERFORMING_ACTION if intent.action else VRAgentState.SPEAKING,
+                    message.message_id,
+                )
+                logger.info(
+                    f"VR Agent latency: chat->voice "
+                    f"{timing.first_audio_at - timing.received_at:.2f}s "
+                    f"(queue {timing.selected_at - timing.received_at:.2f}s, "
+                    f"generate {timing.first_audio_at - timing.selected_at:.2f}s)"
+                )
+            await websocket.send_text(payload)
+
+        runtime.set(VRAgentState.THINKING, message.message_id)
         task = asyncio.create_task(
             process_single_conversation(
                 context=context,
-                websocket_send=websocket.send_text,
+                websocket_send=tracked_send,
                 client_uid=client_uid,
                 user_input=user_input,
                 images=None,
@@ -321,6 +473,25 @@ class WebSocketHandler:
             )
         )
         self.current_conversation_tasks[client_uid] = task
+
+        def on_done(finished: asyncio.Task) -> None:
+            timing.finished_at = time.time()
+            if finished.cancelled():
+                outcome = "interrupted"
+            elif finished.exception():
+                outcome = f"failed: {finished.exception()}"
+            else:
+                outcome = "done"
+            runtime.set(VRAgentState.IDLE, f"response {outcome}")
+            if show_card:
+                asyncio.ensure_future(
+                    self._safe_send(
+                        websocket,
+                        {"type": "youtube-live-selected-message", "active": False, "id": message.message_id},
+                    )
+                )
+
+        task.add_done_callback(on_done)
         try:
             if max_wait_seconds:
                 await asyncio.wait_for(asyncio.shield(task), timeout=max_wait_seconds)
@@ -328,22 +499,24 @@ class WebSocketHandler:
                 await task
             return True
         except asyncio.TimeoutError:
-            logger.warning(
-                f"YouTube Live response still running after {max_wait_seconds:.1f}s; continuing without blocking selection loop."
+            logger.debug(
+                f"YouTube Live response still running after {max_wait_seconds:.1f}s; "
+                "selection loop continues when the character is idle again."
             )
             return True
+        except asyncio.CancelledError:
+            return False
         except Exception as exc:
             logger.error(f"YouTube Live response failed: {exc}")
+            runtime.set(VRAgentState.ERROR_RECOVERABLE, f"response failed: {exc}"[:200])
             return False
-        finally:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "youtube-live-selected-message",
-                        "active": False,
-                    }
-                )
-            )
+
+    @staticmethod
+    async def _safe_send(websocket: WebSocket, payload: dict) -> None:
+        try:
+            await websocket.send_text(json.dumps(payload))
+        except Exception:
+            pass
 
     async def _handle_group_operation(
         self, websocket: WebSocket, client_uid: str, data: dict
@@ -384,6 +557,7 @@ class WebSocketHandler:
         )
 
         # Clean up other client data
+        self.live_client_uids.discard(client_uid)
         self.client_connections.pop(client_uid, None)
         self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
@@ -403,6 +577,7 @@ class WebSocketHandler:
 
     async def _cleanup_failed_connection(self, client_uid: str) -> None:
         """Clean up failed connection data"""
+        self.live_client_uids.discard(client_uid)
         self.client_connections.pop(client_uid, None)
         self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
@@ -632,6 +807,7 @@ class WebSocketHandler:
         if config_file_name:
             context = self.client_contexts[client_uid]
             await context.handle_config_switch(websocket, config_file_name)
+            await self._send_vr_agent_config(websocket, context)
 
     async def _handle_fetch_backgrounds(
         self, websocket: WebSocket, client_uid: str, data: WSMessage
@@ -687,6 +863,7 @@ class WebSocketHandler:
                 }
             )
         )
+        await self._send_vr_agent_config(websocket, context)
 
     async def _handle_heartbeat(
         self, websocket: WebSocket, client_uid: str, data: WSMessage

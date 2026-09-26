@@ -1,5 +1,5 @@
 from pydantic import Field
-from typing import Dict, ClassVar, List, Optional
+from typing import Dict, ClassVar, List, Literal, Optional
 from .i18n import I18nMixin, Description
 
 
@@ -24,9 +24,22 @@ class YouTubeLiveConfig(I18nMixin):
     """Configuration for YouTube Live read-only chat integration."""
 
     youtube_live_enabled: bool = Field(False, alias="youtube_live_enabled")
+    chat_source: Literal["playwright", "api"] = Field("playwright", alias="chat_source")
     api_key: str = Field("", alias="api_key")
     channel_id: str = Field("", alias="channel_id")
+    channel_handle: str = Field("", alias="channel_handle")
     video_id: Optional[str] = Field(None, alias="video_id")
+    prefer_live_chat_mode: bool = Field(True, alias="prefer_live_chat_mode")
+    ignore_owner_messages: bool = Field(False, alias="ignore_owner_messages")
+    live_check_interval_seconds: int = Field(120, alias="live_check_interval_seconds")
+    playwright_headless: bool = Field(True, alias="playwright_headless")
+    playwright_user_data_dir: str = Field("", alias="playwright_user_data_dir")
+    playwright_user_agent: str = Field("", alias="playwright_user_agent")
+    playwright_heartbeat_seconds: float = Field(5.0, alias="playwright_heartbeat_seconds")
+    playwright_chat_load_timeout_seconds: int = Field(30, alias="playwright_chat_load_timeout_seconds")
+    playwright_restart_min_seconds: float = Field(5.0, alias="playwright_restart_min_seconds")
+    playwright_restart_max_seconds: float = Field(120.0, alias="playwright_restart_max_seconds")
+    playwright_page_recycle_hours: float = Field(6.0, alias="playwright_page_recycle_hours")
     prefer_stream_list: bool = Field(True, alias="prefer_stream_list")
     message_buffer_seconds: int = Field(180, alias="message_buffer_seconds")
     response_cooldown_seconds: float = Field(5.0, alias="response_cooldown_seconds")
@@ -54,6 +67,51 @@ class YouTubeLiveConfig(I18nMixin):
             en="Optional livestream video ID; useful for unlisted test streams",
             zh="可选直播视频 ID；适合非公开测试直播",
         ),
+        "chat_source": Description(
+            en="Where chat is read from: 'playwright' (live chat page, no API quota) or 'api' (YouTube Data API)",
+            zh="聊天来源：'playwright'（读取直播聊天页面，无 API 配额）或 'api'（YouTube Data API）",
+        ),
+        "channel_handle": Description(
+            en="Channel handle such as @selwynbuilds, used to find the active stream when channel_id is not set",
+            zh="频道句柄（如 @name），未设置 channel_id 时用于查找直播",
+        ),
+        "prefer_live_chat_mode": Description(
+            en="Switch the chat from 'Top chat' to 'Live chat' once after opening it",
+            zh="打开聊天后切换一次到“所有聊天”模式",
+        ),
+    }
+
+
+class VRAgentConfig(I18nMixin):
+    """Livestream presentation and autonomous character behaviour."""
+
+    overlay_title: str = Field("VR AGENT", alias="overlay_title")
+    show_comment_card: bool = Field(True, alias="show_comment_card")
+    comment_card_max_chars: int = Field(180, alias="comment_card_max_chars")
+    show_state_indicator: bool = Field(True, alias="show_state_indicator")
+    idle_motions_enabled: bool = Field(True, alias="idle_motions_enabled")
+    idle_min_seconds: float = Field(10.0, alias="idle_min_seconds")
+    idle_max_seconds: float = Field(15.0, alias="idle_max_seconds")
+    idle_in_dev_mode: bool = Field(True, alias="idle_in_dev_mode")
+    viewer_actions_enabled: bool = Field(True, alias="viewer_actions_enabled")
+
+    DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
+        "overlay_title": Description(
+            en="Text shown in the small LIVE badge in livestream mode", zh="直播模式角标文字"
+        ),
+        "show_comment_card": Description(
+            en="Show the viewer comment the character is answering", zh="显示角色正在回复的观众评论"
+        ),
+        "idle_min_seconds": Description(
+            en="Minimum seconds between idle motions", zh="待机动作最短间隔（秒）"
+        ),
+        "idle_max_seconds": Description(
+            en="Maximum seconds between idle motions", zh="待机动作最长间隔（秒）"
+        ),
+        "viewer_actions_enabled": Description(
+            en="Let viewers ask for supported gestures such as 'can you nod?'",
+            zh="允许观众请求角色支持的动作",
+        ),
     }
 
 
@@ -66,6 +124,7 @@ class LiveConfig(I18nMixin):
     youtube_live: YouTubeLiveConfig = Field(
         YouTubeLiveConfig(), alias="youtube_live"
     )
+    vr_agent: VRAgentConfig = Field(VRAgentConfig(), alias="vr_agent")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "bilibili_live": Description(
@@ -74,5 +133,9 @@ class LiveConfig(I18nMixin):
         "youtube_live": Description(
             en="Configuration for YouTube Live chat integration",
             zh="YouTube 直播聊天集成配置",
+        ),
+        "vr_agent": Description(
+            en="VR Agent livestream presentation and character behaviour",
+            zh="VR Agent 直播展示与角色行为",
         ),
     }

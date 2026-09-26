@@ -3,13 +3,15 @@ import html
 import json
 import re
 import time
-from collections import Counter, deque
+from collections import Counter, OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable, Deque, Optional
 
 import httpx
 from loguru import logger
+
+from ..vr_agent.state import VRAgentState, runtime
 
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
@@ -43,6 +45,9 @@ class YouTubeChatMessage:
     author_display_name: str
     text: str
     timestamp: datetime
+    kind: str = "text"  # "text" or "paid" (Super Chat)
+    amount: str = ""
+    author_type: str = ""  # "", "member", "moderator", "owner"
 
     @property
     def age_seconds(self) -> float:
@@ -71,6 +76,8 @@ def _message_priority_score(message: YouTubeChatMessage) -> float:
     normalized = _normalize_message(text)
     score = 0.0
 
+    if message.kind == "paid":
+        score += 2.5
     if "?" in text:
         score += 3.0
     if DIRECT_TO_CHARACTER_RE.search(normalized):
@@ -275,6 +282,32 @@ class YouTubeLiveChatClient:
         )
 
 
+class _BoundedSet:
+    """Insertion-ordered set that forgets its oldest entries past a cap.
+
+    Seen and answered ids otherwise grow forever during long unattended runs.
+    """
+
+    def __init__(self, cap: int):
+        self.cap = cap
+        self._items: "OrderedDict[str, None]" = OrderedDict()
+
+    def add(self, item: str) -> None:
+        self._items[item] = None
+        self._items.move_to_end(item)
+        while len(self._items) > self.cap:
+            self._items.popitem(last=False)
+
+    def discard(self, item: str) -> None:
+        self._items.pop(item, None)
+
+    def __contains__(self, item: object) -> bool:
+        return item in self._items
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
 class YouTubeMessageBuffer:
     UNSAFE_RE = re.compile(
         r"\b(kill yourself|suicide|nazi|terrorist|rape|porn|onlyfans|slur)\b",
@@ -291,9 +324,9 @@ class YouTubeMessageBuffer:
         self.message_buffer_seconds = message_buffer_seconds
         self.same_user_cooldown_seconds = same_user_cooldown_seconds
         self.messages: Deque[YouTubeChatMessage] = deque()
-        self.seen_message_ids: set[str] = set()
+        self.seen_message_ids = _BoundedSet(20000)
         self.buffered_message_ids: set[str] = set()
-        self.answered_message_ids: set[str] = set()
+        self.answered_message_ids = _BoundedSet(5000)
         self.last_answered_by_author: dict[str, float] = {}
         self.recent_normalized: Counter[str] = Counter()
         self.startup_cutoff = datetime.now(timezone.utc).timestamp() - STARTUP_BACKLOG_GRACE_SECONDS
@@ -345,6 +378,11 @@ class YouTubeMessageBuffer:
         self.answered_message_ids.add(message.message_id)
         if message.author_channel_id:
             self.last_answered_by_author[message.author_channel_id] = time.time()
+            if len(self.last_answered_by_author) > 2000:
+                cutoff = time.time() - self.same_user_cooldown_seconds
+                self.last_answered_by_author = {
+                    k: v for k, v in self.last_answered_by_author.items() if v >= cutoff
+                }
         self.messages = deque(
             msg for msg in self.messages if msg.message_id != message.message_id
         )
@@ -404,16 +442,31 @@ class YouTubeMessageSelector:
 
 
 class YouTubeLiveChatService:
+    """Ingests YouTube chat, picks worthwhile messages and hands them to the character.
+
+    Chat can come from two sources:
+
+    * ``playwright`` (default): reads the public live chat page in headless
+      Chromium, event-driven, no API quota.
+    * ``api``: the YouTube Data API poller kept for compatibility.
+    """
+
     def __init__(self, config, default_context, connection_provider):
         self.config = config
         self.default_context = default_context
         self.connection_provider = connection_provider
+        self.chat_source = (getattr(config, "chat_source", "playwright") or "playwright").lower()
         self.client = YouTubeLiveChatClient(
             api_key=config.api_key,
             channel_id=config.channel_id,
             video_id=config.video_id,
             prefer_stream_list=config.prefer_stream_list,
         )
+        self.playwright_source = None
+        if self.chat_source == "playwright":
+            from .youtube_playwright_chat import YouTubePlaywrightChatSource
+
+            self.playwright_source = YouTubePlaywrightChatSource(config)
         self.buffer = YouTubeMessageBuffer(
             max_messages=config.max_buffer_messages,
             message_buffer_seconds=config.message_buffer_seconds,
@@ -426,25 +479,38 @@ class YouTubeLiveChatService:
         self._last_response_completed_at = 0.0
         self._last_message_seen_at = time.time()
         self._last_response_debug_at = 0.0
+        self._message_event = asyncio.Event()
+        self._received_at: dict[str, float] = {}
 
     def enabled(self) -> bool:
         return bool(self.config.youtube_live_enabled)
+
+    def _source_ready(self) -> tuple[bool, str]:
+        if self.playwright_source:
+            return self.playwright_source.ready()
+        if self.client.ready():
+            return True, ""
+        return False, "api_key and channel_id or video_id are required for chat_source=api"
 
     async def start(self) -> None:
         if not self.enabled():
             logger.info("YouTube Live mode disabled.")
             return
-        if not self.client.ready():
-            logger.warning(
-                "YouTube Live mode enabled, but api_key/channel_id/video_id configuration is incomplete."
-            )
+        ready, reason = self._source_ready()
+        if not ready:
+            logger.warning(f"YouTube Live mode enabled but not configured: {reason}.")
+            runtime.set(VRAgentState.ERROR_RECOVERABLE, f"not configured: {reason}")
             return
         if self._running:
             return
         self._running = True
-        logger.info("YouTube Live mode started.")
+        runtime.set(VRAgentState.STARTING, f"chat source {self.chat_source}")
+        logger.info(f"YouTube Live mode started (chat_source={self.chat_source}).")
+        ingest = (
+            self._playwright_ingest_loop() if self.playwright_source else self._ingest_loop()
+        )
         self._tasks = [
-            asyncio.create_task(self._ingest_loop(), name="youtube-live-ingest"),
+            asyncio.create_task(ingest, name="youtube-live-ingest"),
             asyncio.create_task(self._response_loop(), name="youtube-live-response"),
         ]
 
@@ -455,6 +521,25 @@ class YouTubeLiveChatService:
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
+        if self.playwright_source:
+            await self.playwright_source.stop()
+
+    def _accept(self, message: YouTubeChatMessage, source_label: str) -> bool:
+        accepted, reason = self.buffer.add(message)
+        if accepted:
+            now = time.time()
+            self._last_message_seen_at = now
+            self._received_at[message.message_id] = now
+            if len(self._received_at) > 500:
+                for key in list(self._received_at)[:250]:
+                    self._received_at.pop(key, None)
+            self._message_event.set()
+            logger.info(
+                f"YouTube {source_label} from {message.author_display_name}: {_truncate(message.text)}"
+            )
+        else:
+            logger.debug(f"YouTube {source_label} filtered ({reason}): {_truncate(message.text, 60)}")
+        return accepted
 
     async def inject_mock_message(
         self, author: str, message: str, author_channel_id: str = "mock-author"
@@ -469,6 +554,8 @@ class YouTubeLiveChatService:
         accepted, reason = self.buffer.add(mock)
         if accepted:
             self._last_message_seen_at = time.time()
+            self._received_at[mock.message_id] = time.time()
+            self._message_event.set()
             logger.info(
                 f"YouTube mock message accepted from {mock.author_display_name}: {_truncate(mock.text)}"
             )
@@ -477,12 +564,20 @@ class YouTubeLiveChatService:
         return {"accepted": accepted, "reason": reason, "message_id": mock.message_id}
 
     def status(self) -> dict[str, Any]:
-        return {
+        status = {
             "enabled": self.enabled(),
             "running": self._running,
-            "live_chat_connected": bool(self._live_chat_id),
+            "chat_source": self.chat_source,
+            "live_chat_connected": bool(self._live_chat_id)
+            if not self.playwright_source
+            else self.playwright_source.health.chat_attached,
             "buffer_size": len(self.buffer.messages),
+            "vr_agent": runtime.snapshot(),
+            "latency": runtime.latency.summary(),
         }
+        if self.playwright_source:
+            status["playwright"] = self.playwright_source.status()
+        return status
 
     def _debug_response_loop(self, message: str, force: bool = False) -> None:
         now = time.time()
@@ -490,35 +585,34 @@ class YouTubeLiveChatService:
             logger.debug(message)
             self._last_response_debug_at = now
 
+    async def _playwright_ingest_loop(self) -> None:
+        async def on_messages(messages: list[YouTubeChatMessage]) -> None:
+            for message in messages:
+                self._accept(message, "message")
+
+        await self.playwright_source.run(on_messages)
+
     async def _ingest_loop(self) -> None:
         while self._running:
             try:
                 if not self._live_chat_id:
                     logger.info("Waiting for active YouTube livestream...")
+                    runtime.set(VRAgentState.WAITING_FOR_STREAM, "api discovery")
                     self._live_chat_id = await self.client.discover_active_live_chat_id()
                     if not self._live_chat_id:
                         await asyncio.sleep(self.config.discovery_retry_seconds)
                         continue
                     logger.info("YouTube liveChatId acquired; chat connection established.")
+                    runtime.set(VRAgentState.IDLE, "api chat connected")
 
                 async for messages in self.client.iter_messages(self._live_chat_id):
                     if not self._running:
                         break
                     for message in messages:
-                        accepted, reason = self.buffer.add(message)
-                        if accepted:
-                            self._last_message_seen_at = time.time()
-                            logger.info(
-                                f"YouTube message received from {message.author_display_name}: {_truncate(message.text)}"
-                            )
-                            logger.debug(
-                                f"YouTube buffer state after ingest: buffer_size={len(self.buffer.messages)}, "
-                                f"seen_ids={len(self.buffer.seen_message_ids)}, answered_ids={len(self.buffer.answered_message_ids)}"
-                            )
-                        else:
-                            logger.debug(f"YouTube message filtered: {reason}")
+                        self._accept(message, "message")
             except YouTubeLiveChatEnded as exc:
                 logger.warning(f"YouTube chat disconnected: {exc}. Reconnecting...")
+                runtime.set(VRAgentState.WAITING_FOR_STREAM, "chat ended")
                 self._live_chat_id = None
                 self.client.next_page_token = None
                 await asyncio.sleep(self.config.discovery_retry_seconds)
@@ -526,18 +620,22 @@ class YouTubeLiveChatService:
                 raise
             except Exception as exc:
                 logger.error(f"YouTube API/chat error: {exc}. Reconnecting...")
+                runtime.set(VRAgentState.RECONNECTING, str(exc)[:200])
                 await asyncio.sleep(min(self.config.discovery_retry_seconds, 30))
+
+    async def _wait_for_work(self, timeout: float) -> None:
+        """Wake immediately on new chat instead of a fixed polling tick."""
+        try:
+            await asyncio.wait_for(self._message_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
+        self._message_event.clear()
 
     async def _response_loop(self) -> None:
         while self._running:
             try:
-                await asyncio.sleep(1.0)
+                await self._wait_for_work(1.0)
                 buffer_size = len(self.buffer.messages)
-                self._debug_response_loop(
-                    f"YouTube response loop tick: running={self._running}, buffer_size={buffer_size}, "
-                    f"connected_clients={self.connection_provider.has_connected_clients()}, "
-                    f"idle={self.connection_provider.is_idle()}"
-                )
                 if not self.connection_provider.has_connected_clients():
                     self._debug_response_loop(
                         f"YouTube response loop waiting: no connected frontend client; buffer_size={buffer_size}",
@@ -545,72 +643,54 @@ class YouTubeLiveChatService:
                     )
                     continue
                 if not self.connection_provider.is_idle():
-                    self._debug_response_loop(
-                        f"YouTube response loop waiting: character is not idle; buffer_size={buffer_size}",
-                        force=buffer_size > 0,
-                    )
                     continue
                 cooldown_remaining = self.config.response_cooldown_seconds - (
                     time.time() - self._last_response_completed_at
                 )
                 if cooldown_remaining > 0:
-                    self._debug_response_loop(
-                        f"YouTube response loop waiting: cooldown_remaining={cooldown_remaining:.2f}s; buffer_size={buffer_size}",
-                        force=buffer_size > 0,
-                    )
+                    if buffer_size:
+                        await asyncio.sleep(min(cooldown_remaining, 1.0))
+                        self._message_event.set()
                     continue
 
                 messages = self.buffer.get_eligible(self.config.selector_max_messages)
-                logger.debug(
-                    f"YouTube response loop eligibility: eligible_count={len(messages)}, buffer_size={len(self.buffer.messages)}, "
-                    f"selector_max_messages={self.config.selector_max_messages}"
-                )
                 if not messages:
-                    if buffer_size > 0:
-                        logger.debug(
-                            "YouTube response loop found buffer messages but no eligible messages after stale/answered filtering."
-                        )
                     await self._maybe_idle_banter()
                     continue
 
                 selection = await self.selector.select(
                     messages, self.buffer.author_recently_answered
                 )
-                logger.debug(
-                    f"YouTube selector result: selected_message_id={selection.selected_message_id}, "
-                    f"confidence={selection.confidence:.2f}, reason={selection.reason}"
-                )
                 if not selection.selected_message_id:
                     continue
                 selected = next(
-                    (
-                        message
-                        for message in messages
-                        if message.message_id == selection.selected_message_id
-                    ),
+                    (m for m in messages if m.message_id == selection.selected_message_id),
                     None,
                 )
                 if not selected:
-                    logger.debug(
-                        f"YouTube response loop selector returned missing message id: {selection.selected_message_id}"
-                    )
                     continue
 
                 logger.info(
-                    f"YouTube message selected: id={selected.message_id}, confidence={selection.confidence:.2f}, reason={selection.reason}"
+                    f"YouTube message selected: id={selected.message_id}, "
+                    f"confidence={selection.confidence:.2f}, reason={selection.reason}"
                 )
-                logger.info("YouTube response started.")
+                received_at = self._received_at.pop(selected.message_id, time.time())
+                # Mark before responding so a slow response cannot answer twice.
+                self.buffer.mark_answered(selected)
                 completed = await self.connection_provider.process_youtube_live_message(
-                    selected, max_wait_seconds=MAX_RESPONSE_WAIT_SECONDS
+                    selected,
+                    max_wait_seconds=MAX_RESPONSE_WAIT_SECONDS,
+                    received_at=received_at,
                 )
+                self._last_response_completed_at = time.time()
                 if completed:
-                    self.buffer.mark_answered(selected)
-                    self._last_response_completed_at = time.time()
                     logger.info("YouTube response accepted by conversation pipeline.")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.error(f"YouTube response loop error: {exc}")
+                runtime.set(VRAgentState.ERROR_RECOVERABLE, f"response loop: {exc}"[:200])
+                await asyncio.sleep(1.0)
 
     async def _maybe_idle_banter(self) -> None:
         if not self.config.idle_banter_enabled:
@@ -619,14 +699,14 @@ class YouTubeLiveChatService:
             return
         if not self.connection_provider.is_idle():
             return
-        mock = YouTubeChatMessage(
+        prompt = YouTubeChatMessage(
             message_id=f"idle-{int(time.time())}",
             author_channel_id="system-idle",
             author_display_name="Chat",
             text="The live chat is quiet. Say a short, playful comment to keep the stream alive.",
             timestamp=datetime.now(timezone.utc),
         )
-        completed = await self.connection_provider.process_youtube_live_message(mock)
+        completed = await self.connection_provider.process_youtube_live_message(prompt)
         if completed:
             self._last_message_seen_at = time.time()
             self._last_response_completed_at = time.time()
