@@ -184,11 +184,15 @@
     if (observer) observer.disconnect();
     listEl = el;
     listSelector = selector;
-    // Backlog present at attach time is history, not new chat.
-    for (const child of el.children) {
-      const id = SUPPORTED[child.tagName] && child.id;
-      if (id) remember(id);
-    }
+    // Backlog present at attach time is history, not new chat. On the very
+    // first attach to a stream the newest few messages are still answered,
+    // so chat typed in the seconds before the reader connected isn't lost.
+    const keep = attachCount === 0 ? Math.max(0, Number(window.__vrAgentBacklog) || 0) : 0;
+    const existing = [...el.children].filter((c) => SUPPORTED[c.tagName] && c.id);
+    existing.forEach((child, i) => {
+      if (i >= existing.length - keep) handleRenderer(child, 0);
+      else remember(child.id);
+    });
     observer = new MutationObserver(onMutations);
     observer.observe(el, { childList: true });
     attachCount += 1;

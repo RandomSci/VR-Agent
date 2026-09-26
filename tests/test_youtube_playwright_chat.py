@@ -299,6 +299,7 @@ def test_supervisor_attaches_delivers_and_recovers_from_a_closed_page(monkeypatc
         prefer_live_chat_mode=True,
         discovery_retry_seconds=1,
         live_check_interval_seconds=0,
+        answer_backlog_on_start=0,
         playwright_headless=True,
         playwright_user_data_dir="",
         playwright_user_agent="",
@@ -378,3 +379,28 @@ def test_browser_does_not_announce_headless_chrome():
 
     ua = run(scenario())
     assert "Headless" not in ua and "Chrome/" in ua
+
+
+def test_first_attach_answers_the_newest_backlog_only():
+    async def scenario():
+        async with pw.async_playwright() as p:
+            browser, page, emitted = await open_fixture(p)
+            await page.evaluate("n => { window.__vrAgentBacklog = n; }", 2)
+            await page.evaluate(OBSERVER_JS)
+            await page.wait_for_timeout(300)
+            ids = await page.evaluate(
+                "() => [...document.querySelectorAll('yt-live-chat-item-list-renderer #items "
+                "yt-live-chat-text-message-renderer')].slice(-2).map(e => e.id)"
+            )
+            assert [m["id"] for m in emitted] == ids
+            # A re-attach (list replaced) must not replay anything.
+            await page.evaluate(
+                "() => { const o = document.querySelector('yt-live-chat-item-list-renderer #items');"
+                " o.replaceWith(o.cloneNode(true)); }"
+            )
+            await page.evaluate(OBSERVER_JS)
+            await page.wait_for_timeout(300)
+            assert len(emitted) == 2
+            await browser.close()
+
+    run(scenario())

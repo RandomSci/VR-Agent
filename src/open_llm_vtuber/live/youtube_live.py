@@ -600,7 +600,8 @@ class YouTubeLiveChatService:
                     runtime.set(VRAgentState.WAITING_FOR_STREAM, "api discovery")
                     self._live_chat_id = await self.client.discover_active_live_chat_id()
                     if not self._live_chat_id:
-                        await asyncio.sleep(self.config.discovery_retry_seconds)
+                        # API search costs 100 quota units per call; never poll it fast.
+                        await asyncio.sleep(max(30, self.config.discovery_retry_seconds))
                         continue
                     logger.info("YouTube liveChatId acquired; chat connection established.")
                     runtime.set(VRAgentState.IDLE, "api chat connected")
@@ -615,7 +616,7 @@ class YouTubeLiveChatService:
                 runtime.set(VRAgentState.WAITING_FOR_STREAM, "chat ended")
                 self._live_chat_id = None
                 self.client.next_page_token = None
-                await asyncio.sleep(self.config.discovery_retry_seconds)
+                await asyncio.sleep(max(30, self.config.discovery_retry_seconds))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

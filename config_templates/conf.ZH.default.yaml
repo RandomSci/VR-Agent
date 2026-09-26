@@ -512,12 +512,13 @@ live_config:
     same_user_cooldown_seconds: 90
     idle_banter_enabled: false
     idle_banter_delay_seconds: 180
-    discovery_retry_seconds: 30
+    discovery_retry_seconds: 10
     selector_max_messages: 12
     selector_model: null
     # Playwright chat reader
     prefer_live_chat_mode: true        # switch Top chat -> Live chat once after opening
     ignore_owner_messages: false       # skip messages typed by the channel owner
+    answer_backlog_on_start: 5         # newest chat messages to still answer when a stream is first found
     live_check_interval_seconds: 120   # when chat is quiet, check if the channel started a new stream
     playwright_headless: true
     playwright_user_data_dir: ''       # e.g. '.vr_agent/youtube-profile' to keep cookies between runs
