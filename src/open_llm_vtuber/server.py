@@ -101,6 +101,7 @@ class WebSocketServer:
             init_webtool_routes(
                 default_context_cache=self.default_context_cache,
                 youtube_live_service_getter=lambda: self.youtube_live_service,
+                ws_handler=self.ws_handler,
             ),
         )
 
@@ -167,8 +168,12 @@ class WebSocketServer:
 
         @self.app.on_event("startup")
         async def start_youtube_live_service():
-            if self.youtube_live_service:
+            from .vr_agent import VRAgentState, runtime
+
+            if self.youtube_live_service and self.youtube_live_service.enabled():
                 await self.youtube_live_service.start()
+            else:
+                runtime.set(VRAgentState.IDLE, "youtube live disabled")
 
         @self.app.on_event("shutdown")
         async def stop_youtube_live_service():

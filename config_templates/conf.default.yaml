@@ -498,8 +498,14 @@ character_config:
 live_config:
   youtube_live:
     youtube_live_enabled: false
+    # 'playwright' reads the public live chat page in headless Chromium (no API quota).
+    # 'api' uses the YouTube Data API poller (needs api_key, uses quota).
+    # Playwright setup once: uv run playwright install chromium
+    chat_source: 'playwright'
     api_key: '${YOUTUBE_API_KEY}'
     channel_id: '${YOUTUBE_CHANNEL_ID}'
+    # Alternative to channel_id for finding the active stream, e.g. '@selwynbuilds'
+    channel_handle: ''
     # Optional: set this for unlisted test streams when channel search cannot find them.
     video_id: null
     prefer_stream_list: true
@@ -512,6 +518,30 @@ live_config:
     discovery_retry_seconds: 30
     selector_max_messages: 12
     selector_model: null
+    # Playwright chat reader
+    prefer_live_chat_mode: true        # switch Top chat -> Live chat once after opening
+    ignore_owner_messages: false       # skip messages typed by the channel owner
+    live_check_interval_seconds: 120   # when chat is quiet, check if the channel started a new stream
+    playwright_headless: true
+    playwright_user_data_dir: ''       # e.g. '.vr_agent/youtube-profile' to keep cookies between runs
+    playwright_user_agent: ''
+    playwright_heartbeat_seconds: 5
+    playwright_chat_load_timeout_seconds: 30
+    playwright_restart_min_seconds: 5
+    playwright_restart_max_seconds: 120
+    playwright_page_recycle_hours: 6
+
+  # VR Agent livestream presentation. Open http://127.0.0.1:12393/?mode=live in OBS.
+  vr_agent:
+    overlay_title: 'VR AGENT'
+    show_comment_card: true
+    comment_card_max_chars: 180
+    show_state_indicator: true
+    idle_motions_enabled: true
+    idle_min_seconds: 10
+    idle_max_seconds: 15
+    idle_in_dev_mode: true
+    viewer_actions_enabled: true
 
   bilibili_live:
     # List of BiliBili live room IDs to monitor

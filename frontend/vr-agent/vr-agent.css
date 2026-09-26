@@ -1,0 +1,352 @@
+/*
+ * VR Agent presentation layer.
+ *
+ * Normal / development mode: only the viewer comment card is added on top of
+ * the untouched Open-LLM-VTuber interface.
+ *
+ * Livestream mode (?mode=live): the application UI is hidden and the Live2D
+ * stage is shown full screen over the current room background, with a small
+ * LIVE badge, a quiet state line and the selected viewer comment. Designed for
+ * a 16:9 OBS browser source; sizes scale with the viewport.
+ */
+
+:root {
+  --vra-font: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vra-glass: rgba(14, 18, 34, 0.62);
+  --vra-glass-strong: rgba(14, 18, 34, 0.78);
+  --vra-edge: rgba(255, 255, 255, 0.16);
+  --vra-text: rgba(255, 255, 255, 0.96);
+  --vra-muted: rgba(255, 255, 255, 0.68);
+  --vra-accent: #ffc7e8;
+  --vra-live: #ff3b5c;
+  --vra-paid: #ffd166;
+  --vra-unit: clamp(10px, 0.78vw, 22px);
+}
+
+/* ---------- livestream mode: hide the application, keep the stage ---------- */
+
+html[data-vr-mode="live"],
+html[data-vr-mode="live"] body {
+  background: #05070f !important;
+  overflow: hidden !important;
+}
+
+html[data-vr-mode="live"] #root > *:not([data-vr-stage]),
+html[data-vr-mode="live"] body > [id^="toast-group"],
+html[data-vr-mode="live"] body > [data-scope="toast"] {
+  display: none !important;
+}
+
+html[data-vr-mode="live"] [data-vr-stage] {
+  position: fixed !important;
+  inset: 0 !important;
+  left: 0 !important;
+  top: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  margin: 0 !important;
+  transform: none !important;
+  z-index: 1 !important;
+  pointer-events: none !important;
+}
+
+html[data-vr-mode="live"] [data-vr-stage] #live2d-internal-wrapper,
+html[data-vr-mode="live"] [data-vr-stage] canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#vr-agent-backdrop {
+  display: none;
+}
+
+html[data-vr-mode="live"] #vr-agent-backdrop {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-color: #05070f;
+  background-image: radial-gradient(ellipse at 50% 30%, #1d2750 0%, #05070f 70%);
+  background-size: cover;
+  background-position: center;
+  pointer-events: none;
+}
+
+/* ---------- overlay root ---------- */
+
+#vr-agent-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  font-family: var(--vra-font);
+  color: var(--vra-text);
+}
+
+/* ---------- LIVE badge + state line (livestream mode only) ---------- */
+
+.vra-status {
+  display: none;
+}
+
+html[data-vr-mode="live"] .vra-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--vra-unit) * 0.5);
+  position: absolute;
+  top: calc(var(--vra-unit) * 2.2);
+  left: calc(var(--vra-unit) * 2.2);
+}
+
+.vra-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--vra-unit) * 0.65);
+  padding: calc(var(--vra-unit) * 0.5) calc(var(--vra-unit) * 1.1) calc(var(--vra-unit) * 0.5)
+    calc(var(--vra-unit) * 0.8);
+  border: 1px solid var(--vra-edge);
+  border-radius: 999px;
+  background: var(--vra-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  font-size: calc(var(--vra-unit) * 1.05);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.vra-dot {
+  width: calc(var(--vra-unit) * 0.7);
+  height: calc(var(--vra-unit) * 0.7);
+  border-radius: 50%;
+  background: var(--vra-live);
+  box-shadow: 0 0 0 0 rgba(255, 59, 92, 0.6);
+  animation: vra-pulse 2.4s ease-out infinite;
+}
+
+.vra-live {
+  color: #fff;
+}
+
+.vra-sep {
+  width: 1px;
+  height: calc(var(--vra-unit) * 1);
+  background: var(--vra-edge);
+}
+
+.vra-title {
+  color: var(--vra-muted);
+  max-width: 28vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vra-state {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--vra-unit) * 0.45);
+  padding: calc(var(--vra-unit) * 0.3) calc(var(--vra-unit) * 0.9);
+  border-radius: 999px;
+  background: rgba(14, 18, 34, 0.42);
+  color: var(--vra-muted);
+  font-size: calc(var(--vra-unit) * 0.95);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: opacity 240ms ease;
+}
+
+.vra-state[hidden] {
+  display: none;
+}
+
+.vra-state-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.vra-state-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+}
+
+.vra-state[data-phase="thinking"] .vra-state-dots i,
+.vra-state[data-phase="responding"] .vra-state-dots i {
+  animation: vra-blink 1.2s infinite ease-in-out;
+}
+
+.vra-state[data-phase="thinking"] .vra-state-dots i:nth-child(2),
+.vra-state[data-phase="responding"] .vra-state-dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.vra-state[data-phase="thinking"] .vra-state-dots i:nth-child(3),
+.vra-state[data-phase="responding"] .vra-state-dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.vra-state[data-phase="responding"] {
+  color: var(--vra-accent);
+}
+
+/* ---------- selected viewer comment card ---------- */
+
+.vra-card {
+  position: absolute;
+  left: 32px;
+  bottom: 32px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 220px;
+  max-width: min(560px, calc(100vw - 64px));
+  padding: 16px 20px 18px;
+  border: 1px solid var(--vra-edge);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(255, 156, 214, 0.22), transparent 42%),
+    linear-gradient(135deg, var(--vra-glass-strong), rgba(58, 30, 78, 0.7));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  opacity: 0;
+  transform: translateY(14px) scale(0.98);
+  transition: opacity 220ms ease, transform 260ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.vra-card.vra-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+html[data-vr-mode="live"] .vra-card {
+  left: calc(var(--vra-unit) * 2.2);
+  bottom: calc(var(--vra-unit) * 2.6);
+  min-width: calc(var(--vra-unit) * 16);
+  max-width: min(34vw, calc(100vw - var(--vra-unit) * 4.4));
+  padding: calc(var(--vra-unit) * 1.05) calc(var(--vra-unit) * 1.35) calc(var(--vra-unit) * 1.2);
+  border-radius: calc(var(--vra-unit) * 1.3);
+}
+
+.vra-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+
+.vra-card-author {
+  overflow: hidden;
+  color: var(--vra-accent);
+  font-size: 15px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vra-card-amount {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--vra-paid);
+  color: #2b1d00;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.vra-card-amount[hidden] {
+  display: none;
+}
+
+.vra-card-message {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  color: var(--vra-text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.38;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+html[data-vr-mode="live"] .vra-card-author {
+  font-size: calc(var(--vra-unit) * 1.05);
+}
+
+html[data-vr-mode="live"] .vra-card-amount {
+  font-size: calc(var(--vra-unit) * 0.85);
+}
+
+html[data-vr-mode="live"] .vra-card-message {
+  font-size: calc(var(--vra-unit) * 1.3);
+}
+
+.vra-card.vra-paid {
+  border-color: rgba(255, 209, 102, 0.55);
+}
+
+/* ---------- optional captions (livestream mode, &subtitles=1) ---------- */
+
+.vra-caption {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--vra-unit) * 2.6);
+  max-width: min(46vw, 900px);
+  padding: calc(var(--vra-unit) * 0.6) calc(var(--vra-unit) * 1.2);
+  border-radius: calc(var(--vra-unit) * 0.9);
+  background: rgba(8, 10, 20, 0.62);
+  color: #fff;
+  font-size: calc(var(--vra-unit) * 1.3);
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 200ms ease;
+}
+
+.vra-caption.vra-visible {
+  opacity: 1;
+}
+
+@keyframes vra-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 59, 92, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 calc(var(--vra-unit) * 0.7) rgba(255, 59, 92, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 59, 92, 0);
+  }
+}
+
+@keyframes vra-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vra-dot,
+  .vra-state-dots i {
+    animation: none !important;
+  }
+  .vra-card {
+    transition: opacity 120ms linear;
+  }
+}

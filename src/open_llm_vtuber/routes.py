@@ -69,7 +69,9 @@ def init_proxy_route(server_url: str) -> APIRouter:
 
 
 def init_webtool_routes(
-    default_context_cache: ServiceContext, youtube_live_service_getter=None
+    default_context_cache: ServiceContext,
+    youtube_live_service_getter=None,
+    ws_handler: WebSocketHandler | None = None,
 ) -> APIRouter:
     """
     Create and return API routes for handling web tool interactions.
@@ -94,6 +96,49 @@ def init_webtool_routes(
         if not youtube_live_service:
             return JSONResponse({"enabled": False, "running": False})
         return JSONResponse(youtube_live_service.status())
+
+    @router.get("/vr-agent/status")
+    async def vr_agent_status():
+        """Developer monitoring: state, latency, capabilities, chat reader health."""
+        from .vr_agent import runtime
+
+        youtube_live_service = get_youtube_live_service()
+        caps = ws_handler.get_capabilities(default_context_cache) if ws_handler else None
+        return JSONResponse(
+            {
+                "state": runtime.snapshot(),
+                "latency": runtime.latency.summary(),
+                "connected_clients": len(ws_handler.client_connections) if ws_handler else 0,
+                "livestream_clients": len(ws_handler.live_client_uids) if ws_handler else 0,
+                "capabilities": caps.describe() if caps else None,
+                "youtube": youtube_live_service.status() if youtube_live_service else None,
+            }
+        )
+
+    @router.post("/vr-agent/test-action")
+    async def vr_agent_test_action(request: Request):
+        """Developer tool: play a registry action on the livestream page."""
+        if not ws_handler:
+            return JSONResponse({"error": "unavailable"}, status_code=503)
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        name = str(payload.get("action", ""))
+        primary = ws_handler._get_primary_client()
+        if not primary:
+            return JSONResponse({"error": "no connected frontend"}, status_code=409)
+        client_uid, websocket, context = primary
+        caps = ws_handler.get_capabilities(context)
+        if not caps or not caps.get(name):
+            available = sorted(caps.actions) if caps else []
+            return JSONResponse(
+                {"error": f"unknown action '{name}'", "available": available}, status_code=400
+            )
+        await websocket.send_text(
+            json.dumps({"type": "vr-agent-action", "action": name, "sync": "now"})
+        )
+        return JSONResponse({"sent": name, "client": client_uid})
 
     @router.post("/youtube-live/mock-message")
     async def youtube_live_mock_message(request: Request):
