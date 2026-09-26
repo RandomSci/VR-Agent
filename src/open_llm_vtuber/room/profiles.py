@@ -349,6 +349,7 @@ class RoomConfig:
     camera: CameraSettings = field(default_factory=CameraSettings)
     ambient: AmbientSettings = field(default_factory=AmbientSettings)
     objects: dict[str, dict[str, float]] = field(default_factory=dict)
+    action_objects: dict[str, dict[str, Any]] = field(default_factory=dict)
     sfx_volume: float = 0.35
     problems: list[str] = field(default_factory=list)
 
@@ -582,6 +583,23 @@ def load_room(
             "y": _clamp(box.get("y"), 0, 1, 0.6),
             "width": _clamp(box.get("width"), 0.02, 1, 0.3),
             "height": _clamp(box.get("height"), 0.02, 1, 0.3),
+        }
+    world = spec.get("world") if isinstance(spec.get("world"), dict) else {}
+    for action, rule in (world.get("action_objects") or {}).items():
+        if (
+            not isinstance(action, str)
+            or not REACTION_RE.match(action)
+            or not isinstance(rule, dict)
+            or not OBJECT_RE.match(str(rule.get("object", "")))
+        ):
+            room.problems.append(f"world rule for '{action}' ignored")
+            continue
+        room.action_objects[action] = {
+            "object": str(rule["object"]),
+            "dx": _clamp(rule.get("dx"), -0.5, 0.5, 0.0),
+            "y": _clamp(rule.get("y"), 0, 1, 0.5),
+            "seconds": _clamp(rule.get("seconds"), 1, 30, 4),
+            "after": _clamp(rule.get("after"), 0, 20, 0),
         }
     sfx = spec.get("sfx") if isinstance(spec.get("sfx"), dict) else {}
     room.sfx_volume = _clamp(sfx.get("volume"), 0, 1, 0.35)

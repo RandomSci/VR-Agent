@@ -79,6 +79,21 @@ def create_app(room_dir: Path | None = None) -> FastAPI:
         await session.broadcast(await request.json())
         return JSONResponse({"ok": True})
 
+    @app.post("/harness/play")
+    async def play(request: Request):
+        body = await request.json()
+        ops = session.play(str(body.get("character")), str(body.get("action")))
+        await session.push(ops)
+        return JSONResponse({"ops": [o["op"] for o in ops]})
+
+    @app.post("/harness/emit")
+    async def emit(request: Request):
+        body = await request.json()
+        ops = await session.emit_and_push(
+            str(body.get("name")), **(body.get("data") or {})
+        )
+        return JSONResponse({"ops": [o["op"] for o in ops]})
+
     @app.get("/harness/clients")
     async def clients():
         return JSONResponse(session.status())

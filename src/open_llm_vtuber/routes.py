@@ -222,13 +222,43 @@ def init_webtool_routes(
             payload = await request.json()
         except Exception:
             payload = {}
-        op = ws_handler.room_session.action_op(
+        ops = ws_handler.room_session.play(
             str(payload.get("character", "")), str(payload.get("action", ""))
         )
-        if not op:
+        if not ops:
             return JSONResponse({"error": "unknown character or action"}, status_code=400)
-        await ws_handler.room_session.push([op])
-        return JSONResponse({"sent": op})
+        await ws_handler.room_session.push(ops)
+        return JSONResponse({"sent": [o.get("op") for o in ops]})
+
+    @router.post("/vr-agent/room/event")
+    async def vr_room_event(request: Request):
+        """Developer tool: emit a room event, e.g. {"name": "QUESTION_SHOWN"}.
+
+        Only known event names are accepted and data is limited to short
+        scalars, so this cannot inject arbitrary ops.
+        """
+        from .room.events import ALL_EVENTS
+
+        if not ws_handler:
+            return JSONResponse({"error": "unavailable"}, status_code=503)
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        name = str(payload.get("name", ""))
+        if name not in ALL_EVENTS:
+            return JSONResponse({"error": "unknown event", "known": sorted(ALL_EVENTS)}, status_code=400)
+        data = {}
+        for key, value in (payload.get("data") or {}).items():
+            if isinstance(key, str) and key.isidentifier() and len(key) <= 24:
+                if isinstance(value, (bool, int, float)) or value is None:
+                    data[key] = value
+                elif isinstance(value, str):
+                    data[key] = value[:60]
+                elif isinstance(value, list):
+                    data[key] = [str(v)[:24] for v in value[:6]]
+        ops = await ws_handler.room_session.emit_and_push(name, **data)
+        return JSONResponse({"event": name, "ops": [o.get("op") for o in ops]})
 
     @router.post("/youtube-live/mock-message")
     async def youtube_live_mock_message(request: Request):

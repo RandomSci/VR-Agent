@@ -8,14 +8,21 @@ here from validated data; nothing a viewer typed is forwarded as an op.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import random
 import time
 from typing import Any, Awaitable, Callable, Optional
 
 from loguru import logger
 
+from . import events as ev
+from .actions import ActionDirector
+from .attention import AttentionDirector
+from .events import EventBus
 from .profiles import RoomConfig
 from .state import AttentionTarget, CharacterState, RoomObject, RoomState
+from .world import WorldDirector
 
 Send = Callable[[str], Awaitable[None]]
 
@@ -23,8 +30,14 @@ OP_KINDS = ("attention", "action", "speaking", "object", "camera", "sfx", "board
 
 
 class RoomSession:
-    def __init__(self, room: RoomConfig):
+    TICK_SECONDS = 1.0
+
+    def __init__(
+        self, room: RoomConfig, rng: Optional[random.Random] = None, clock=time.time
+    ):
         self.room = room
+        self.clock = clock
+        self.rng = rng or random.Random()
         self.state = RoomState()
         for profile in room.characters:
             self.state.characters[profile.id] = CharacterState(
@@ -34,6 +47,12 @@ class RoomSession:
             self.state.objects[object_id] = RoomObject(id=object_id, **box)
         self._clients: dict[str, Send] = {}
         self._client_models: dict[str, dict[str, list[str]]] = {}
+        self._loop_task: Optional[asyncio.Task] = None
+        # Directors. All deterministic and local: no LLM, no TTS.
+        self.bus = EventBus()
+        self.world = WorldDirector(self, clock=clock)
+        self.attention = AttentionDirector(self, rng=self.rng)
+        self.actions = ActionDirector(self, rng=self.rng, clock=clock)
 
     # ------------------------------------------------------------------
     # clients
@@ -51,7 +70,73 @@ class RoomSession:
     async def register(self, client_uid: str, send: Send) -> None:
         self._clients[client_uid] = send
         await self._send(client_uid, self.config_payload())
+        self.ensure_loop()
         logger.info(f"VR Room: client {client_uid} registered as a room page.")
+
+    # ------------------------------------------------------------------
+    # events and the local tick
+    # ------------------------------------------------------------------
+    def emit(self, name: str, **data: Any) -> list[dict[str, Any]]:
+        """Emit an event and collect renderer ops, including follow-up events.
+
+        Every action op produces an ACTION_STARTED event (the World Director
+        may spawn an object, which turns heads). Depth is bounded.
+        """
+        ops = self.bus.emit(name, **data)
+        return self._follow_actions(ops, depth=0)
+
+    def _follow_actions(
+        self, ops: list[dict[str, Any]], depth: int
+    ) -> list[dict[str, Any]]:
+        if depth >= 3:
+            return ops
+        extra: list[dict[str, Any]] = []
+        for op in list(ops):
+            if op.get("op") == "action" and not op.get("_followed"):
+                op["_followed"] = True
+                extra += self.bus.emit(
+                    ev.ACTION_STARTED, character=op["character"], action=op["name"]
+                )
+        if extra:
+            ops = ops + self._follow_actions(extra, depth + 1)
+        return ops
+
+    def play(
+        self, character_id: str, action: str, delay_seconds: float = 0.0
+    ) -> list[dict[str, Any]]:
+        op = self.action_op(character_id, action, delay_seconds=delay_seconds)
+        return self._follow_actions([op], depth=0) if op else []
+
+    async def emit_and_push(self, name: str, **data: Any) -> list[dict[str, Any]]:
+        ops = self.emit(name, **data)
+        await self.push(ops)
+        return ops
+
+    def tick(self) -> list[dict[str, Any]]:
+        """Local housekeeping, once a second. Never calls an LLM or TTS."""
+        return self.world.expire()
+
+    def ensure_loop(self) -> None:
+        if self._loop_task and not self._loop_task.done():
+            return
+        try:
+            self._loop_task = asyncio.get_running_loop().create_task(
+                self._run(), name="vr-room-tick"
+            )
+        except RuntimeError:
+            self._loop_task = None
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                await asyncio.sleep(self.TICK_SECONDS)
+                ops = self.tick()
+                if ops:
+                    await self.push(ops)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error(f"VR Room: tick failed: {exc}")
 
     def unregister(self, client_uid: str) -> None:
         self._clients.pop(client_uid, None)
@@ -101,7 +186,11 @@ class RoomSession:
             await self._send(client_uid, payload)
 
     async def push(self, ops: list[dict[str, Any]]) -> None:
-        ops = [op for op in ops if op and op.get("op") in OP_KINDS]
+        ops = [
+            {k: v for k, v in op.items() if not k.startswith("_")}
+            for op in ops
+            if op and op.get("op") in OP_KINDS
+        ]
         if ops:
             await self.broadcast(
                 {"type": "vr-room-update", "ops": ops, "at": time.time()}
@@ -133,7 +222,7 @@ class RoomSession:
         delay_seconds = max(0.0, min(10.0, float(delay_seconds)))
         character.attention = target
         character.attention_source = source
-        character.attention_until = time.time() + delay_seconds + hold_seconds
+        character.attention_until = self.clock() + delay_seconds + hold_seconds
         return {
             "op": "attention",
             "character": character_id,
@@ -174,4 +263,5 @@ class RoomSession:
             "room": self.room.describe(),
             "clients": {uid: self._client_models.get(uid, {}) for uid in self._clients},
             "state": self.state.snapshot(),
+            "events": self.bus.recent(40),
         }

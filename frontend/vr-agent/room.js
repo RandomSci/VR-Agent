@@ -371,7 +371,8 @@
       this.mouthLevel = 0;
       this.speaking = false;
       this.directed = null; // {target, until}
-      this.ambient = { target: "VIEWER", until: 0 };
+      this.nextDirected = null; // {target, start, hold} waiting for its delay
+      this.ambient = { target: "VIEWER", start: 0, until: 0 };
       this.neutralOffset = { x: 0, y: -0.1 };
       this.focus = { x: 0, y: 0 };
       this.motionBusyUntil = 0;
@@ -463,9 +464,14 @@
 
     // ---- attention ---------------------------------------------------------
     currentTarget(t) {
+      if (this.nextDirected && t >= this.nextDirected.start) {
+        const next = this.nextDirected;
+        this.nextDirected = null;
+        this.directed = { target: next.target, until: t + next.hold };
+      }
       if (this.directed && t < this.directed.until) return this.directed.target;
       this.directed = null;
-      if (t < this.ambient.until) return this.ambient.target;
+      if (t >= this.ambient.start && t < this.ambient.until) return this.ambient.target;
       // Default: look at whoever is talking, otherwise at the viewer.
       const speaker = speakingCharacter();
       if (speaker && speaker !== this) return `CHARACTER:${speaker.id}`;
@@ -503,17 +509,23 @@
       }
     }
 
+    // Delays run on the frame clock (not setTimeout) so they stay accurate
+    // even when the page is busy rendering.
     direct(target, holdMs, delayMs) {
       if (!TARGET_RE.test(String(target))) return;
-      const apply = () => {
-        this.directed = { target: String(target), until: now() + clamp(Number(holdMs) || 4000, 300, 60000) };
-      };
-      if (delayMs > 0) setTimeout(apply, clamp(delayMs, 0, 10000));
-      else apply();
+      const hold = clamp(Number(holdMs) || 4000, 300, 60000);
+      const delay = clamp(Number(delayMs) || 0, 0, 10000);
+      if (delay > 0) {
+        this.nextDirected = { target: String(target), start: now() + delay, hold };
+      } else {
+        this.nextDirected = null;
+        this.directed = { target: String(target), until: now() + hold };
+      }
     }
 
-    glance(target, holdMs) {
-      this.ambient = { target, until: now() + holdMs };
+    glance(target, holdMs, delayMs) {
+      const start = now() + (delayMs || 0);
+      this.ambient = { target, start, until: start + holdMs };
     }
 
     // ---- actions -----------------------------------------------------------
@@ -650,17 +662,16 @@
       const hold = rand(1500, 3200);
       a.glance(`CHARACTER:${b.id}`, hold);
       if (!b.directed && !b.busy(t) && Math.random() < 0.5) {
+        // B notices a moment later and glances back, sometimes with a smile.
         const delay = rand(500, 1200);
-        setTimeout(() => {
-          b.glance(`CHARACTER:${a.id}`, rand(1200, 2400));
-          if (Math.random() < settings.expression_chance) {
-            const happy = ((b.spec.reactions || {}).happy || []).find((n) => {
-              const act = b.action(n);
-              return act && act.kind === "expression";
-            });
-            if (happy) b.play(happy, "ambient");
-          }
-        }, delay);
+        b.glance(`CHARACTER:${a.id}`, rand(1200, 2400), delay);
+        if (Math.random() < settings.expression_chance) {
+          const happy = ((b.spec.reactions || {}).happy || []).find((n) => {
+            const act = b.action(n);
+            return act && act.kind === "expression";
+          });
+          if (happy) dueActions.push({ at: t + delay + 300, character: b, name: happy });
+        }
       }
     } else if (roll < 0.8) {
       a.neutralOffset = { x: rand(-0.45, 0.45), y: rand(-0.2, 0.1) };
@@ -831,6 +842,16 @@
   // ---------------------------------------------------------------------------
   // Frame loop
   // ---------------------------------------------------------------------------
+  const dueActions = []; // delayed action ops, run from the frame loop
+  function runDueActions(t) {
+    for (let i = dueActions.length - 1; i >= 0; i--) {
+      if (t >= dueActions[i].at) {
+        const due = dueActions.splice(i, 1)[0];
+        due.character.play(due.name, "requested");
+      }
+    }
+  }
+
   let lastAmbientTick = 0;
   function onFrame() {
     const t = now();
@@ -838,6 +859,7 @@
     updateMouths();
     if (t - lastAmbientTick > 100) {
       lastAmbientTick = t;
+      runDueActions(t);
       for (const c of room.characters.values()) c.updateAttention(t);
       ambientTick(t);
       if (speech.pendingAction && t > speech.pendingAction.deadline) flushPendingAction();
@@ -931,9 +953,9 @@
     action(op) {
       const c = room.characters.get(op.character);
       if (!c || typeof op.name !== "string") return;
-      const run = () => c.play(op.name, "requested");
-      if (op.delay_ms > 0) setTimeout(run, clamp(op.delay_ms, 0, 10000));
-      else run();
+      const delay = clamp(Number(op.delay_ms) || 0, 0, 10000);
+      if (delay > 0) dueActions.push({ at: now() + delay, character: c, name: op.name });
+      else c.play(op.name, "requested");
     },
     camera(op) {
       const shots = ["wide", "two_shot", "closeup", "focus", "board"];

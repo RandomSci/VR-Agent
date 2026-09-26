@@ -47,5 +47,13 @@ ambient:                       # local only, no LLM or TTS
 objects:
   game_board: {x: 0.5, y: 0.6, width: 0.38, height: 0.46}
 
+# Things that appear in the room while an action plays, so characters can look at them.
+# dx is relative to the acting character's x, y is a stage fraction, after is when it shows
+# up during the motion. Positions were measured from rendered frames of mao_pro's motions.
+world:
+  action_objects:
+    summon_rabbit: {object: rabbit, dx: -0.14, y: 0.14, after: 4.0, seconds: 4}
+    magic_heart: {object: heart, dx: -0.12, y: 0.16, after: 1.5, seconds: 4}
+
 sfx:
   volume: 0.35                 # 0 to 1, also &sfx=0-100 in the room URL

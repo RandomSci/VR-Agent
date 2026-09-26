@@ -199,6 +199,16 @@ def test_two_characters_render_look_at_each_other_and_speak(browser):
         page.wait_for_function(
             "vrRoom.state().characters.every(c => c.focus.y < -0.3)", timeout=5000
         )
+        # A summoned rabbit becomes a room object both characters look at
+        # once it appears during the motion.
+        httpx.post(
+            server.base + "/harness/play",
+            json={"character": "mika", "action": "summon_rabbit"},
+        ).raise_for_status()
+        page.wait_for_function(
+            "vrRoom.state().characters.every(c => c.target === 'OBJECT:rabbit')",
+            timeout=15000,
+        )
         # Invalid ops are ignored without errors.
         server.post(
             "/harness/push",
