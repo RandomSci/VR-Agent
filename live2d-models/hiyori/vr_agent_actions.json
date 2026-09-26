@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "model": "hiyori",
+  "_comment": "Semantic names for Hiyori's real motions and the expressions authored for her in runtime/expressions from her own face parameters. Motion names come from rendering each motion headlessly. Entries are validated against Hiyori.model3.json at startup.",
+  "actions": {
+    "smile": {
+      "type": "expression",
+      "expression": "smile",
+      "label": "smile",
+      "description": "a happy closed-eye smile",
+      "intents": ["smile", "happy", "laugh"],
+      "hold_seconds": 4.0
+    },
+    "blush": {
+      "type": "expression",
+      "expression": "blush",
+      "label": "blush",
+      "description": "a soft shy blush",
+      "intents": ["blush", "shy"],
+      "hold_seconds": 4.0
+    },
+    "surprised": {
+      "type": "expression",
+      "expression": "surprised",
+      "label": "surprised face",
+      "description": "wide eyes and a small open mouth",
+      "intents": ["surprised", "excited"],
+      "hold_seconds": 3.0
+    },
+    "pout": {
+      "type": "expression",
+      "expression": "pout",
+      "label": "pout",
+      "description": "a flustered annoyed pout",
+      "intents": ["angry"],
+      "hold_seconds": 3.0
+    },
+    "sad": {
+      "type": "expression",
+      "expression": "sad",
+      "label": "sad face",
+      "description": "worried brows and a small frown",
+      "intents": ["sad"],
+      "hold_seconds": 3.0
+    },
+    "suspicious": {
+      "type": "expression",
+      "expression": "suspicious",
+      "label": "suspicious look",
+      "description": "narrowed, unimpressed eyes",
+      "intents": ["suspicious"],
+      "hold_seconds": 3.0
+    },
+    "cheerful_smile": {
+      "type": "motion",
+      "motion": "motions/Hiyori_m02.motion3.json",
+      "label": "cheerful smile",
+      "description": "a bright closed-eye smile, then a curious look",
+      "intents": [],
+      "idle": true,
+      "idle_weight": 2
+    },
+    "playful_kick": {
+      "type": "motion",
+      "motion": "motions/Hiyori_m03.motion3.json",
+      "label": "playful pose",
+      "description": "arms out with a playful little kick",
+      "intents": ["pose"],
+      "idle": true,
+      "idle_weight": 1
+    },
+    "happy_tilt": {
+      "type": "motion",
+      "motion": "motions/Hiyori_m05.motion3.json",
+      "label": "happy head tilt",
+      "description": "a happy smile and a slow head tilt",
+      "intents": [],
+      "idle": true,
+      "idle_weight": 2
+    },
+    "shy_hands": {
+      "type": "motion",
+      "motion": "motions/Hiyori_m06.motion3.json",
+      "label": "cute pose",
+      "description": "hands held shyly to her chest",
+      "intents": ["cute"],
+      "idle": true,
+      "idle_weight": 1
+    },
+    "open_arms": {
+      "type": "motion",
+      "motion": "motions/Hiyori_m07.motion3.json",
+      "label": "little shrug",
+      "description": "a small shrug with open arms",
+      "intents": ["shrug"],
+      "idle": true,
+      "idle_weight": 1
+    },
+    "cheer": {
+      "type": "motion",
+      "motion": "motions/Hiyori_m08.motion3.json",
+      "label": "cheer",
+      "description": "both fists up in a happy cheer",
+      "intents": ["cheer"],
+      "idle": false
+    },
+    "bounce": {
+      "type": "motion",
+      "motion": "motions/Hiyori_m09.motion3.json",
+      "label": "little bounce",
+      "description": "a quick happy bounce",
+      "intents": [],
+      "idle": true,
+      "idle_weight": 1
+    },
+    "side_eye": {
+      "type": "motion",
+      "motion": "motions/Hiyori_m10.motion3.json",
+      "label": "side eye",
+      "description": "an unimpressed sideways glance",
+      "intents": [],
+      "viewer_requestable": false,
+      "idle": false
+    },
+    "head_tilt": {
+      "type": "motion",
+      "motion": "motions/Hiyori_m04.motion3.json",
+      "label": "head tilt",
+      "description": "a gentle curious head tilt",
+      "intents": ["tilt"],
+      "idle": true,
+      "idle_weight": 2
+    }
+  },
+  "alternatives": {
+    "wave": "cheer",
+    "greet": "head_tilt",
+    "clap": "cheer",
+    "thumbs_up": "cheer",
+    "dance": "playful_kick",
+    "jump": "playful_kick",
+    "bow": "head_tilt",
+    "nod": "head_tilt",
+    "yes": "head_tilt",
+    "wink": "smile",
+    "peace": "shy_hands",
+    "heart": "shy_hands"
+  },
+  "idle": {
+    "large_motion_actions": ["playful_kick"],
+    "large_motion_min_gap_seconds": 90
+  }
+}

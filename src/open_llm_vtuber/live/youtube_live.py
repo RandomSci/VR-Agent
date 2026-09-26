@@ -504,6 +504,9 @@ class YouTubeLiveChatService:
         if self._running:
             return
         self._running = True
+        register = getattr(self.connection_provider, "register_chat_service", None)
+        if register:
+            register(self)
         runtime.set(VRAgentState.STARTING, f"chat source {self.chat_source}")
         logger.info(f"YouTube Live mode started (chat_source={self.chat_source}).")
         ingest = (
@@ -524,8 +527,29 @@ class YouTubeLiveChatService:
         if self.playwright_source:
             await self.playwright_source.stop()
 
+    def _observe(self, message: YouTubeChatMessage) -> bool:
+        """Let the room consume game commands and answers before selection."""
+        observer = getattr(self.connection_provider, "observe_live_message", None)
+        if not observer:
+            return False
+        try:
+            consumed = bool(observer(message))
+        except Exception as exc:
+            logger.error(f"Live message observer failed: {exc}")
+            return False
+        if consumed:
+            self.buffer.mark_answered(message)
+            logger.info(
+                f"YouTube message from {message.author_display_name} handled by the room: "
+                f"{_truncate(message.text, 60)}"
+            )
+        return consumed
+
     def _accept(self, message: YouTubeChatMessage, source_label: str) -> bool:
         accepted, reason = self.buffer.add(message)
+        if accepted and self._observe(message):
+            self._last_message_seen_at = time.time()
+            return True
         if accepted:
             now = time.time()
             self._last_message_seen_at = now
@@ -552,6 +576,9 @@ class YouTubeLiveChatService:
             timestamp=datetime.now(timezone.utc),
         )
         accepted, reason = self.buffer.add(mock)
+        if accepted and self._observe(mock):
+            self._last_message_seen_at = time.time()
+            return {"accepted": True, "reason": "handled_by_room", "message_id": mock.message_id}
         if accepted:
             self._last_message_seen_at = time.time()
             self._received_at[mock.message_id] = time.time()
@@ -696,20 +723,12 @@ class YouTubeLiveChatService:
                 await asyncio.sleep(1.0)
 
     async def _maybe_idle_banter(self) -> None:
-        if not self.config.idle_banter_enabled:
-            return
-        if time.time() - self._last_message_seen_at < self.config.idle_banter_delay_seconds:
-            return
-        if not self.connection_provider.is_idle():
-            return
-        prompt = YouTubeChatMessage(
-            message_id=f"idle-{int(time.time())}",
-            author_channel_id="system-idle",
-            author_display_name="Chat",
-            text="The live chat is quiet. Say a short, playful comment to keep the stream alive.",
-            timestamp=datetime.now(timezone.utc),
-        )
-        completed = await self.connection_provider.process_youtube_live_message(prompt)
-        if completed:
-            self._last_message_seen_at = time.time()
-            self._last_response_completed_at = time.time()
+        # Zero-activity rule: with no viewer messages the stream makes no LLM
+        # or TTS requests at all, so the old quiet-chat banter never runs.
+        if self.config.idle_banter_enabled and not getattr(self, "_banter_warned", False):
+            self._banter_warned = True
+            logger.warning(
+                "idle_banter_enabled is ignored: VR Agent never calls the LLM or TTS "
+                "without viewer activity."
+            )
+        return

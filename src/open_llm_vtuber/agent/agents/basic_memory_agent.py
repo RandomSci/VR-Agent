@@ -111,9 +111,14 @@ class BasicMemoryAgent(AgentInterface):
 
         logger.info("BasicMemoryAgent initialized.")
 
+    # The usage meter counts this agent's requests at the LLM call itself.
+    _counts_llm_requests = True
+
     def _set_llm(self, llm: StatelessLLMInterface):
         """Set the LLM for chat completion."""
-        self._llm = llm
+        from ...vr_agent.usage import count_llm_calls
+
+        self._llm = count_llm_calls(llm, source="agent")
         self.chat = self._chat_function_factory()
 
     def set_system(self, system: str):
@@ -245,7 +250,11 @@ class BasicMemoryAgent(AgentInterface):
         # Livestream turns send only recent history. Unbounded history makes
         # every request slower and more expensive the longer a stream runs.
         history_limit = int(metadata.get("history_limit") or 0)
-        if history_limit > 0:
+        if history_limit < 0:
+            # Room turns carry their own short context in the prompt.
+            self._memory = self._memory[-8:]
+            messages = []
+        elif history_limit > 0:
             if len(self._memory) > history_limit * 4:
                 self._memory = self._memory[-history_limit * 2 :]
             messages = self._memory[-history_limit:]

@@ -26,5 +26,30 @@
                 "": 1
             }
         }
+    },
+    {
+        "name": "hiyori",
+        "description": "Official Live2D sample model Hiyori (Free Material License). Full body, standing.",
+        "url": "/live2d-models/hiyori/runtime/Hiyori.model3.json",
+        "kScale": 0.5,
+        "initialXshift": 0,
+        "initialYshift": 0,
+        "kXOffset": 1150,
+        "idleMotionGroupName": "Idle",
+        "emotionMap": {
+            "neutral": 0,
+            "anger": 4,
+            "disgust": 6,
+            "fear": 3,
+            "joy": 1,
+            "smirk": 2,
+            "sadness": 5,
+            "surprise": 3
+        },
+        "tapMotions": {
+            "HitArea": {
+                "": 1
+            }
+        }
     }
 ]

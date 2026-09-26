@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" data-vr-mode="live" data-vr-room="1">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VR Agent Room</title>
+    <!-- VR Agent Room: several Live2D characters in one livestream scene.
+         Point an OBS Browser source (1920x1080) at /vr-agent/room.html.
+         Flags: &subtitles=0 &card=0 &status=0 &idle=0 &sfx=0-100 &nofallback=1 -->
+    <link rel="stylesheet" href="./vr-agent.css" />
+    <link rel="stylesheet" href="./room.css" />
+  </head>
+  <body>
+    <div id="vr-room-backdrop"></div>
+    <canvas id="vr-room-canvas"></canvas>
+    <div id="vr-room-world" aria-hidden="true"></div>
+    <script src="../libs/live2dcubismcore.min.js"></script>
+    <script src="./vendor/pixi-6.5.10.min.js"></script>
+    <script src="./vendor/pixi-live2d-display-0.4.0-cubism4.min.js"></script>
+    <script src="./room-board.js"></script>
+    <script src="./room.js"></script>
+  </body>
+</html>

@@ -1,0 +1,3 @@
+These short sound effects were synthesised procedurally for VR Agent (sine and
+bell tones generated in code). No samples or third-party recordings are used.
+They are part of this project and follow the repository license.

@@ -351,6 +351,10 @@ async def process_member_response(
 
     try:
         # agent.chat now yields Union[SentenceOutput, Dict[str, Any]]
+        if not getattr(context.agent_engine, "_counts_llm_requests", False):
+            from ..vr_agent.usage import usage
+
+            usage.record_llm(type(context.agent_engine).__name__)
         agent_output_stream = context.agent_engine.chat(batch_input)
 
         async for output_item in agent_output_stream:

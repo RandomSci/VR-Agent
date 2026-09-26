@@ -1,0 +1,27 @@
+# Trivia Battle. Rules, timers and scores are decided by code, never by an LLM.
+id: trivia
+display_name: Trivia Battle
+description: Two characters and the chat race to answer trivia questions.
+aliases: [trivia, trivia battle, quiz, trivia game, quiz game]
+enabled: true
+players: 2
+viewer_participation: true
+
+rounds_per_game: 5
+default_difficulty: medium          # easy, medium, hard, or mixed
+intro_seconds: 3
+viewer_window_seconds: 9            # only chat can answer while the question is fresh
+character_think_seconds: 2.5        # pause before a character answers
+line_timeout_seconds: 12            # safety net if a spoken line never finishes
+reveal_seconds: 4.5
+between_rounds_seconds: 2.5
+finish_display_seconds: 9
+
+# Viewer answers
+max_answer_words: 5                 # longer messages are chat, not answers
+typo_tolerance: 0.86                # similarity needed for answers of 5+ letters
+viewer_feed_size: 4
+
+# Boredom (local counters only)
+bored_after_rounds: 10
+bored_after_minutes: 15

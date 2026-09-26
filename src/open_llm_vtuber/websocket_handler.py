@@ -35,6 +35,9 @@ from .vr_agent.capabilities import CharacterCapabilities
 from .vr_agent.intent import NO_INTENT
 from .vr_agent.prompting import build_livestream_prompt
 from .vr_agent.text_safety import clean_viewer_text
+from .vr_agent.usage import usage
+from .room.profiles import RoomConfig, load_room
+from .room.session import RoomSession
 
 
 class MessageType(Enum):
@@ -81,6 +84,21 @@ class WebSocketHandler:
         self.live_client_uids: set[str] = set()
         self._capabilities_cache: Dict[str, CharacterCapabilities] = {}
         runtime.set_broadcaster(self.broadcast_to_all)
+        # VR Room (multi-character page). Any problem here leaves the classic
+        # single-character livestream untouched.
+        self.room_client_uids: set[str] = set()
+        try:
+            self.room_session = RoomSession(load_room())
+        except Exception as exc:
+            logger.error(f"VR Room disabled: {exc}")
+            self.room_session = RoomSession(RoomConfig())
+        try:
+            self.room_session.configure_voices(
+                default_context_cache.character_config.tts_config,
+                default_context_cache.tts_engine,
+            )
+        except Exception as exc:  # pragma: no cover - partial test contexts
+            logger.debug(f"VR Room: default voice unavailable: {exc}")
 
         # Message handlers mapping
         self._message_handlers = self._init_message_handlers()
@@ -108,6 +126,7 @@ class WebSocketHandler:
             "request-init-config": self._handle_init_config_request,
             "heartbeat": self._handle_heartbeat,
             "vr-agent-hello": self._handle_vr_agent_hello,
+            "vr-room-client-status": self._handle_vr_room_client_status,
         }
 
     async def handle_new_connection(
@@ -278,7 +297,146 @@ class WebSocketHandler:
         return bool(self.client_connections)
 
     def is_idle(self) -> bool:
-        return all(task is None or task.done() for task in self.current_conversation_tasks.values())
+        idle = all(
+            task is None or task.done() for task in self.current_conversation_tasks.values()
+        )
+        if idle and self._room_is_primary():
+            # In the room a reply waits for the current line and a game checkpoint.
+            return self.room_session.conversation_slot_available()
+        return idle
+
+    def _room_is_primary(self) -> bool:
+        primary = self._get_primary_client()
+        return bool(primary and primary[0] in self.room_client_uids)
+
+    def register_chat_service(self, service) -> None:
+        """The chat service registers itself so the room can see waiting messages."""
+        self._chat_service = service
+
+    def pending_viewer_messages(self) -> bool:
+        service = getattr(self, "_chat_service", None)
+        try:
+            return bool(service and service.buffer.get_eligible(1))
+        except Exception:
+            return False
+
+    def _room_director_ready(self, client_uid: str, websocket: WebSocket) -> bool:
+        from .room.runtime import RoomRuntimes
+
+        runtimes = getattr(self, "_room_runtimes", None)
+        if runtimes is None:
+            runtimes = RoomRuntimes(
+                self.room_session, self.default_context_cache, client_uid, websocket.send_text
+            )
+            self._room_runtimes = runtimes
+            self.room_session.director.turn_runner = runtimes.run_turn
+            self.room_session.director.pending_probe = self.pending_viewer_messages
+        else:
+            runtimes.retarget(client_uid, websocket.send_text)
+        return self.room_session.director.ready
+
+    async def _process_room_message(
+        self,
+        message: YouTubeChatMessage,
+        client_uid: str,
+        websocket: WebSocket,
+        max_wait_seconds: float | None,
+        received_at: float | None,
+    ) -> bool | None:
+        """Run a viewer message through the Conversation Director.
+
+        Returns None when the room cannot handle it, so the classic
+        single-character reply runs instead (the ultimate fallback).
+        """
+        from .room.live_message import LiveMessage
+
+        live = LiveMessage.from_youtube(message)
+        if live.is_system or not self._room_director_ready(client_uid, websocket):
+            return None
+        session = self.room_session
+        try:
+            plan = session.director.plan(live)
+        except Exception as exc:
+            logger.error(f"VR Room: director planning failed, using classic reply: {exc}")
+            return None
+        if not plan.turns:
+            return None
+
+        settings = self._vr_agent_settings(self.client_contexts.get(client_uid) or self.default_context_cache)
+        usage.record_viewer_interaction()
+        session.trace(
+            "message_routed",
+            interaction=plan.id,
+            mode=plan.decision.mode,
+            reason=plan.decision.reason,
+            speakers=plan.decision.speakers,
+        )
+        timing = runtime.latency.start(message.message_id, received_at or time.time())
+        plan.timing = timing  # type: ignore[attr-defined]
+        runtime.set(VRAgentState.THINKING, message.message_id)
+        show_card = settings.show_comment_card
+        if show_card:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "youtube-live-selected-message",
+                        "active": True,
+                        "id": message.message_id,
+                        "author": clean_viewer_text(live.display_name, 60) or "Viewer",
+                        "message": clean_viewer_text(live.text, max(20, settings.comment_card_max_chars)),
+                        "paid": message.kind == "paid",
+                        "amount": clean_viewer_text(message.amount, 30),
+                        "to": [t.speaker for t in plan.turns[:2]],
+                    }
+                )
+            )
+        await session.speech.lock.acquire()
+        session.begin_conversation()
+        task = asyncio.create_task(session.director.run(plan))
+        self.current_conversation_tasks[client_uid] = task
+
+        def on_done(finished: asyncio.Task) -> None:
+            timing.finished_at = time.time()
+            if session.speech.lock.locked():
+                session.speech.lock.release()
+            session.end_conversation()
+            if not finished.cancelled() and finished.exception():
+                logger.error(f"VR Room: interaction failed: {finished.exception()}")
+            runtime.set(VRAgentState.IDLE, "room interaction done")
+            if show_card:
+                asyncio.ensure_future(
+                    self._safe_send(
+                        websocket,
+                        {"type": "youtube-live-selected-message", "active": False, "id": message.message_id},
+                    )
+                )
+
+        task.add_done_callback(on_done)
+        try:
+            if max_wait_seconds:
+                await asyncio.wait_for(asyncio.shield(task), timeout=max_wait_seconds)
+            else:
+                await task
+        except asyncio.TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            return False
+        except Exception as exc:
+            logger.error(f"VR Room: interaction error: {exc}")
+        return True
+
+    def observe_live_message(self, message) -> bool:
+        """Every accepted chat message, before selection. True means consumed.
+
+        In the room, game commands and game answers are handled here and never
+        reach the LLM. Without a room page this does nothing.
+        """
+        if not self.room_session.active or not self.room_session.has_clients():
+            return False
+        from .room.live_message import LiveMessage
+
+        live = message if isinstance(message, LiveMessage) else LiveMessage.from_youtube(message)
+        return self.room_session.observe_viewer_message(live)
 
     def _get_primary_client(self) -> tuple[str, WebSocket, ServiceContext] | None:
         """The client that should speak for the stream.
@@ -286,8 +444,19 @@ class WebSocketHandler:
         A page opened with ?mode=live (the OBS source) wins over a developer
         page, so opening the normal UI for debugging never steals the audio.
         """
-        ordered = [uid for uid in self.client_connections if uid in self.live_client_uids]
-        ordered += [uid for uid in self.client_connections if uid not in self.live_client_uids]
+        room_uids = (
+            [uid for uid in self.client_connections if uid in self.room_client_uids]
+            if self.room_session.active
+            else []
+        )
+        ordered = room_uids + [
+            uid for uid in self.client_connections if uid in self.live_client_uids
+        ]
+        ordered += [
+            uid
+            for uid in self.client_connections
+            if uid not in self.live_client_uids and uid not in room_uids
+        ]
         for client_uid in ordered:
             context = self.client_contexts.get(client_uid)
             if context:
@@ -349,11 +518,38 @@ class WebSocketHandler:
         self, websocket: WebSocket, client_uid: str, data: WSMessage
     ) -> None:
         mode = data.get("mode")
+        if mode == "room":
+            self.live_client_uids.discard(client_uid)
+            if self.room_session.active:
+                self.room_client_uids.add(client_uid)
+                await self.room_session.register(client_uid, websocket.send_text)
+            else:
+                # The room page falls back to the classic livestream page.
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "vr-room-config",
+                            "room": {"enabled": False},
+                            "problems": self.room_session.room.problems[:5],
+                        }
+                    )
+                )
+            return
+        self.room_client_uids.discard(client_uid)
+        self.room_session.unregister(client_uid)
         if mode == "live":
             self.live_client_uids.add(client_uid)
             logger.info(f"Client {client_uid} registered as the livestream presentation page.")
         else:
             self.live_client_uids.discard(client_uid)
+
+    async def _handle_vr_room_client_status(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        if client_uid in self.room_client_uids:
+            self.room_session.on_client_status(
+                client_uid, data.get("loaded"), data.get("failed")
+            )
 
     async def broadcast_to_all(self, payload: str) -> None:
         for websocket in list(self.client_connections.values()):
@@ -377,6 +573,12 @@ class WebSocketHandler:
             return False
 
         client_uid, websocket, context = primary_client
+        if client_uid in self.room_client_uids and self.room_session.active:
+            handled = await self._process_room_message(
+                message, client_uid, websocket, max_wait_seconds, received_at
+            )
+            if handled is not None:
+                return handled
         settings = self._vr_agent_settings(context)
         caps = self.get_capabilities(context)
         is_system = message.author_channel_id.startswith("system-")
@@ -415,6 +617,8 @@ class WebSocketHandler:
             "history_limit": max(0, int(settings.max_history_messages)),
         }
 
+        if not is_system:
+            usage.record_viewer_interaction()
         timing = runtime.latency.start(message.message_id, received_at or time.time())
         timing.action = intent.action.name if intent.action else None
         runtime.set(VRAgentState.MESSAGE_RECEIVED, message.message_id)
@@ -469,6 +673,12 @@ class WebSocketHandler:
                 )
             await websocket.send_text(payload)
 
+        room_turn = client_uid in self.room_client_uids
+        if room_turn:
+            # One voice at a time: the reply holds the room's speaking lock and
+            # pauses a running game until it finishes.
+            await self.room_session.speech.lock.acquire()
+            self.room_session.begin_conversation()
         runtime.set(VRAgentState.THINKING, message.message_id)
         task = asyncio.create_task(
             process_single_conversation(
@@ -491,6 +701,10 @@ class WebSocketHandler:
             else:
                 outcome = "done"
             runtime.set(VRAgentState.IDLE, f"response {outcome}")
+            if room_turn:
+                if self.room_session.speech.lock.locked():
+                    self.room_session.speech.lock.release()
+                self.room_session.end_conversation()
             if show_card:
                 asyncio.ensure_future(
                     self._safe_send(
@@ -566,6 +780,8 @@ class WebSocketHandler:
 
         # Clean up other client data
         self.live_client_uids.discard(client_uid)
+        self.room_client_uids.discard(client_uid)
+        self.room_session.unregister(client_uid)
         self.client_connections.pop(client_uid, None)
         self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
@@ -586,6 +802,8 @@ class WebSocketHandler:
     async def _cleanup_failed_connection(self, client_uid: str) -> None:
         """Clean up failed connection data"""
         self.live_client_uids.discard(client_uid)
+        self.room_client_uids.discard(client_uid)
+        self.room_session.unregister(client_uid)
         self.client_connections.pop(client_uid, None)
         self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
