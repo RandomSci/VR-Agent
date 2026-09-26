@@ -496,6 +496,23 @@ character_config:
 
 # Live Streaming Integration
 live_config:
+  youtube_live:
+    youtube_live_enabled: false
+    api_key: '${YOUTUBE_API_KEY}'
+    channel_id: '${YOUTUBE_CHANNEL_ID}'
+    # Optional: set this for unlisted test streams when channel search cannot find them.
+    video_id: null
+    prefer_stream_list: true
+    message_buffer_seconds: 180
+    response_cooldown_seconds: 5
+    max_buffer_messages: 100
+    same_user_cooldown_seconds: 90
+    idle_banter_enabled: false
+    idle_banter_delay_seconds: 180
+    discovery_retry_seconds: 30
+    selector_max_messages: 12
+    selector_model: null
+
   bilibili_live:
     # List of BiliBili live room IDs to monitor
     room_ids: [1991478060]

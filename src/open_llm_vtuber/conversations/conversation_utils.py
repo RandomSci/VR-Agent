@@ -130,8 +130,11 @@ async def handle_audio_output(
     return full_response
 
 
-async def send_conversation_start_signals(websocket_send: WebSocketSend) -> None:
+async def send_conversation_start_signals(
+    websocket_send: WebSocketSend, metadata: Optional[Dict[str, Any]] = None
+) -> None:
     """Send initial conversation signals"""
+    status_text = "Preparing a live reply..." if metadata and metadata.get("source") == "youtube_live" else "Thinking..."
     await websocket_send(
         json.dumps(
             {
@@ -140,7 +143,7 @@ async def send_conversation_start_signals(websocket_send: WebSocketSend) -> None
             }
         )
     )
-    await websocket_send(json.dumps({"type": "full-text", "text": "Thinking..."}))
+    await websocket_send(json.dumps({"type": "full-text", "text": status_text}))
 
 
 async def process_user_input(

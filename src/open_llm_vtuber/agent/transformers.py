@@ -1,5 +1,6 @@
 from typing import AsyncIterator, Tuple, Callable, List, Union, Dict, Any
 from functools import wraps
+import re
 from .output_types import Actions, SentenceOutput, DisplayText
 from ..utils.tts_preprocessor import tts_filter as filter_text
 from ..live2d_model import Live2dModel
@@ -7,6 +8,16 @@ from ..config_manager import TTSPreprocessorConfig
 from ..utils.sentence_divider import SentenceDivider
 from ..utils.sentence_divider import SentenceWithTags, TagState
 from loguru import logger
+
+
+LIVE2D_EXPRESSION_TAG_RE = re.compile(
+    r"\[(neutral|anger|disgust|fear|joy|smirk|sadness|surprise)\]",
+    re.IGNORECASE,
+)
+
+
+def strip_visible_live2d_tags(text: str) -> str:
+    return re.sub(r"\s+", " ", LIVE2D_EXPRESSION_TAG_RE.sub("", text)).strip()
 
 
 def sentence_divider(
@@ -130,7 +141,7 @@ def display_processor():
                     and isinstance(item[0], SentenceWithTags)
                 ):
                     sentence, actions = item
-                    text = sentence.text
+                    text = strip_visible_live2d_tags(sentence.text)
                     # Handle think tag states
                     for tag in sentence.tags:
                         if tag.name == "think":

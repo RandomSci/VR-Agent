@@ -51,7 +51,7 @@ async def process_single_conversation(
 
     try:
         # Send initial signals
-        await send_conversation_start_signals(websocket_send)
+        await send_conversation_start_signals(websocket_send, metadata)
         logger.info(f"New Conversation Chain {session_emoji} started!")
 
         # Process user input
@@ -60,10 +60,16 @@ async def process_single_conversation(
         )
 
         # Create batch input
+        input_name = (
+            metadata.get("from_name")
+            if metadata and metadata.get("from_name")
+            else context.character_config.human_name
+        )
+
         batch_input = create_batch_input(
             input_text=input_text,
             images=images,
-            from_name=context.character_config.human_name,
+            from_name=input_name,
             metadata=metadata,
         )
 
@@ -75,7 +81,7 @@ async def process_single_conversation(
                 history_uid=context.history_uid,
                 role="human",
                 content=input_text,
-                name=context.character_config.human_name,
+                name=input_name,
             )
 
         if skip_history:

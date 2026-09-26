@@ -1,0 +1,178 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Open-LLM-Vtuber</title>
+    <style>
+      #youtube-live-reply-overlay {
+        position: fixed;
+        left: 32px;
+        bottom: 32px;
+        max-width: min(560px, calc(100vw - 64px));
+        padding: 18px 22px;
+        border: 1px solid rgba(255, 255, 255, 0.26);
+        border-radius: 22px;
+        background:
+          radial-gradient(circle at 12% 18%, rgba(255, 156, 214, 0.30), transparent 34%),
+          linear-gradient(135deg, rgba(19, 24, 43, 0.82), rgba(76, 35, 92, 0.70));
+        box-shadow: 0 22px 70px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+        color: white;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        opacity: 0;
+        transform: translateY(14px) scale(0.98);
+        transition: opacity 180ms ease, transform 180ms ease;
+        pointer-events: none;
+        z-index: 999999;
+        backdrop-filter: blur(18px);
+      }
+
+      #youtube-live-reply-overlay.visible {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      #youtube-live-reply-overlay .yt-live-label {
+        color: rgba(255, 255, 255, 0.68);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        margin-bottom: 8px;
+        text-transform: uppercase;
+      }
+
+      #youtube-live-reply-overlay .yt-live-author {
+        color: #ffd8f2;
+        font-size: 15px;
+        font-weight: 800;
+        margin-bottom: 6px;
+      }
+
+      #youtube-live-reply-overlay .yt-live-message {
+        color: rgba(255, 255, 255, 0.94);
+        font-size: 18px;
+        font-weight: 650;
+        line-height: 1.35;
+        text-wrap: balance;
+      }
+    </style>
+    <script>
+      (() => {
+        const nativeWebSocket = window.WebSocket;
+        let currentModelInfo = null;
+        let autoTapTimer = null;
+        const AUTO_TAP_MIN_MS = 10000;
+        const AUTO_TAP_MAX_MS = 15000;
+
+        function ensureOverlay() {
+          let overlay = document.getElementById("youtube-live-reply-overlay");
+          if (overlay) return overlay;
+
+          overlay = document.createElement("div");
+          overlay.id = "youtube-live-reply-overlay";
+          overlay.innerHTML = `
+            <div class="yt-live-label">Now answering live chat</div>
+            <div class="yt-live-author"></div>
+            <div class="yt-live-message"></div>
+          `;
+          document.body.appendChild(overlay);
+          return overlay;
+        }
+
+        function updateOverlay(payload) {
+          if (!payload || payload.type !== "youtube-live-selected-message") return;
+          const overlay = ensureOverlay();
+          if (!payload.active) {
+            overlay.classList.remove("visible");
+            return;
+          }
+          overlay.querySelector(".yt-live-author").textContent = payload.author || "Viewer";
+          overlay.querySelector(".yt-live-message").textContent = payload.message || "";
+          overlay.classList.add("visible");
+        }
+
+        function randomDelay() {
+          return AUTO_TAP_MIN_MS + Math.random() * (AUTO_TAP_MAX_MS - AUTO_TAP_MIN_MS);
+        }
+
+        function weightedChoice(weightMap) {
+          const entries = Object.entries(weightMap || {})
+            .map(([group, weight]) => [group, Number(weight)])
+            .filter(([, weight]) => Number.isFinite(weight) && weight > 0);
+          if (!entries.length) return null;
+
+          const total = entries.reduce((sum, [, weight]) => sum + weight, 0);
+          let cursor = Math.random() * total;
+          for (const [group, weight] of entries) {
+            if (cursor < weight) return group;
+            cursor -= weight;
+          }
+          return entries[entries.length - 1][0];
+        }
+
+        function triggerRandomTapMotion() {
+          const tapMotions = currentModelInfo && currentModelInfo.tapMotions;
+          if (!tapMotions) return;
+
+          const adapter = window.getLAppAdapter && window.getLAppAdapter();
+          const model = adapter && adapter.getModel && adapter.getModel();
+          if (!adapter || !model) return;
+
+          const tapAreas = Object.keys(tapMotions);
+          if (!tapAreas.length) return;
+
+          const tapArea = tapAreas[Math.floor(Math.random() * tapAreas.length)];
+          const motionGroup = weightedChoice(tapMotions[tapArea]);
+          if (motionGroup === null) return;
+
+          const motionCount = adapter.getMotionCount ? adapter.getMotionCount(motionGroup) : 0;
+          if (motionCount > 0 && adapter.startMotion) {
+            const motionIndex = Math.floor(Math.random() * motionCount);
+            adapter.startMotion(motionGroup, motionIndex, 3);
+            return;
+          }
+
+          if (typeof model.startTapMotion === "function") {
+            model.startTapMotion(tapArea, tapMotions);
+          }
+        }
+
+        function scheduleAutoTapMotion() {
+          if (autoTapTimer) return;
+          const tick = () => {
+            triggerRandomTapMotion();
+            autoTapTimer = window.setTimeout(tick, randomDelay());
+          };
+          autoTapTimer = window.setTimeout(tick, randomDelay());
+        }
+
+        function handleMessage(event) {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload && payload.type === "set-model-and-conf") {
+              currentModelInfo = payload.model_info || null;
+              scheduleAutoTapMotion();
+            }
+            updateOverlay(payload);
+          } catch (_) {}
+        }
+
+        window.WebSocket = function (...args) {
+          const socket = new nativeWebSocket(...args);
+          socket.addEventListener("message", handleMessage);
+          return socket;
+        };
+        window.WebSocket.prototype = nativeWebSocket.prototype;
+        window.WebSocket.CONNECTING = nativeWebSocket.CONNECTING;
+        window.WebSocket.OPEN = nativeWebSocket.OPEN;
+        window.WebSocket.CLOSING = nativeWebSocket.CLOSING;
+        window.WebSocket.CLOSED = nativeWebSocket.CLOSED;
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/main-nu7uwxNJ.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/main-QEkl09-0.css">
+  </head>
+
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

@@ -27,6 +27,8 @@ from .conversations.conversation_handler import (
     handle_group_interrupt,
     handle_individual_interrupt,
 )
+from .conversations.single_conversation import process_single_conversation
+from .live.youtube_live import YouTubeChatMessage
 
 
 class MessageType(Enum):
@@ -258,6 +260,90 @@ class WebSocketHandler:
         else:
             if msg_type != "frontend-playback-complete":
                 logger.warning(f"Unknown message type: {msg_type}")
+
+    def has_connected_clients(self) -> bool:
+        return bool(self.client_connections)
+
+    def is_idle(self) -> bool:
+        return all(task is None or task.done() for task in self.current_conversation_tasks.values())
+
+    def _get_primary_client(self) -> tuple[str, WebSocket, ServiceContext] | None:
+        for client_uid, websocket in self.client_connections.items():
+            context = self.client_contexts.get(client_uid)
+            if context:
+                return client_uid, websocket, context
+        return None
+
+    async def process_youtube_live_message(
+        self, message: YouTubeChatMessage, max_wait_seconds: float | None = None
+    ) -> bool:
+        primary_client = self._get_primary_client()
+        if not primary_client:
+            logger.info("YouTube Live has no connected frontend client yet; waiting.")
+            return False
+        if not self.is_idle():
+            logger.debug("YouTube Live skipped response because character is not idle.")
+            return False
+
+        client_uid, websocket, context = primary_client
+        viewer_name = message.author_display_name or "a viewer"
+        user_input = (
+            f"A YouTube live viewer named {viewer_name} says: \"{message.text}\"\n"
+            "Reply naturally as the configured character. Keep it stream-friendly and concise. "
+            "Acknowledge the viewer when it feels natural, but do not say the username every time."
+        )
+        metadata = {
+            "source": "youtube_live",
+            "from_name": viewer_name,
+            "viewer_display_name": viewer_name,
+            "viewer_message": message.text,
+            "youtube_message_id": message.message_id,
+        }
+
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "youtube-live-selected-message",
+                    "active": True,
+                    "author": viewer_name,
+                    "message": message.text,
+                }
+            )
+        )
+        task = asyncio.create_task(
+            process_single_conversation(
+                context=context,
+                websocket_send=websocket.send_text,
+                client_uid=client_uid,
+                user_input=user_input,
+                images=None,
+                metadata=metadata,
+            )
+        )
+        self.current_conversation_tasks[client_uid] = task
+        try:
+            if max_wait_seconds:
+                await asyncio.wait_for(asyncio.shield(task), timeout=max_wait_seconds)
+            else:
+                await task
+            return True
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"YouTube Live response still running after {max_wait_seconds:.1f}s; continuing without blocking selection loop."
+            )
+            return True
+        except Exception as exc:
+            logger.error(f"YouTube Live response failed: {exc}")
+            return False
+        finally:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "youtube-live-selected-message",
+                        "active": False,
+                    }
+                )
+            )
 
     async def _handle_group_operation(
         self, websocket: WebSocket, client_uid: str, data: dict

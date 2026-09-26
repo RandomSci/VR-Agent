@@ -3,7 +3,7 @@ import json
 from uuid import uuid4
 import numpy as np
 from datetime import datetime
-from fastapi import APIRouter, WebSocket, UploadFile, File, Response
+from fastapi import APIRouter, WebSocket, UploadFile, File, Response, Request
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
@@ -12,7 +12,7 @@ from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
 
 
-def init_client_ws_route(default_context_cache: ServiceContext) -> APIRouter:
+def init_client_ws_route(ws_handler: WebSocketHandler) -> APIRouter:
     """
     Create and return API routes for handling the `/client-ws` WebSocket connections.
 
@@ -24,8 +24,6 @@ def init_client_ws_route(default_context_cache: ServiceContext) -> APIRouter:
     """
 
     router = APIRouter()
-    ws_handler = WebSocketHandler(default_context_cache)
-
     @router.websocket("/client-ws")
     async def websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for client connections"""
@@ -70,7 +68,9 @@ def init_proxy_route(server_url: str) -> APIRouter:
     return router
 
 
-def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
+def init_webtool_routes(
+    default_context_cache: ServiceContext, youtube_live_service_getter=None
+) -> APIRouter:
     """
     Create and return API routes for handling web tool interactions.
 
@@ -82,6 +82,36 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
     """
 
     router = APIRouter()
+
+    def get_youtube_live_service():
+        if youtube_live_service_getter:
+            return youtube_live_service_getter()
+        return None
+
+    @router.get("/youtube-live/status")
+    async def youtube_live_status():
+        youtube_live_service = get_youtube_live_service()
+        if not youtube_live_service:
+            return JSONResponse({"enabled": False, "running": False})
+        return JSONResponse(youtube_live_service.status())
+
+    @router.post("/youtube-live/mock-message")
+    async def youtube_live_mock_message(request: Request):
+        youtube_live_service = get_youtube_live_service()
+        if not youtube_live_service:
+            return JSONResponse(
+                {"error": "YouTube Live service is unavailable"}, status_code=503
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        author = str(payload.get("author", "Mock Viewer"))
+        message = str(payload.get("message", "")).strip()
+        if not message:
+            return JSONResponse({"error": "message is required"}, status_code=400)
+        result = await youtube_live_service.inject_mock_message(author, message)
+        return JSONResponse(result)
 
     @router.get("/web-tool")
     async def web_tool_redirect():

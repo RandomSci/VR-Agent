@@ -17,6 +17,8 @@ from starlette.staticfiles import StaticFiles as StarletteStaticFiles
 from .routes import init_client_ws_route, init_webtool_routes, init_proxy_route
 from .service_context import ServiceContext
 from .config_manager.utils import Config
+from .websocket_handler import WebSocketHandler
+from .live.youtube_live import YouTubeLiveChatService
 
 
 # Create a custom StaticFiles class that adds CORS headers
@@ -78,6 +80,8 @@ class WebSocketServer:
             default_context_cache or ServiceContext()
         )  # Use provided context or initialize a new empty one waiting to be loaded
         # It will be populated during the initialize method call
+        self.ws_handler = WebSocketHandler(self.default_context_cache)
+        self.youtube_live_service = None
 
         # Add global CORS middleware
         self.app.add_middleware(
@@ -91,10 +95,13 @@ class WebSocketServer:
         # Include routes, passing the context instance
         # The context will be populated during the initialize step
         self.app.include_router(
-            init_client_ws_route(default_context_cache=self.default_context_cache),
+            init_client_ws_route(ws_handler=self.ws_handler),
         )
         self.app.include_router(
-            init_webtool_routes(default_context_cache=self.default_context_cache),
+            init_webtool_routes(
+                default_context_cache=self.default_context_cache,
+                youtube_live_service_getter=lambda: self.youtube_live_service,
+            ),
         )
 
         # Initialize and include proxy routes if proxy is enabled
@@ -152,6 +159,21 @@ class WebSocketServer:
         """Asynchronously load the service context from config.
         Calling this function is needed if default_context_cache was not provided to the constructor."""
         await self.default_context_cache.load_from_config(self.config)
+        self.youtube_live_service = YouTubeLiveChatService(
+            config=self.config.live_config.youtube_live,
+            default_context=self.default_context_cache,
+            connection_provider=self.ws_handler,
+        )
+
+        @self.app.on_event("startup")
+        async def start_youtube_live_service():
+            if self.youtube_live_service:
+                await self.youtube_live_service.start()
+
+        @self.app.on_event("shutdown")
+        async def stop_youtube_live_service():
+            if self.youtube_live_service:
+                await self.youtube_live_service.stop()
 
     @staticmethod
     def clean_cache():
