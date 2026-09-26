@@ -8,6 +8,37 @@ Guiding rule. Intelligence and world logic are separate. The LLM writes dialogue
 Ordinary code owns game rules, scores, timers, attention, camera, animation, sound, cooldowns,
 deterministic routing, idle behaviour and capability checks.
 
+## Run it
+
+1. Keep `conf.yaml` as it is. The room uses its LLM provider and TTS for Mika (`voice: inherit`).
+   Luna speaks with the free Edge TTS voice `en-GB-SoniaNeural` (set in `room/characters/luna.yaml`).
+2. Start the server as usual with `uv run run_server.py`.
+3. In OBS point the Browser source (1920x1080, "Control audio via OBS" ticked) at
+   `http://127.0.0.1:12393/vr-agent/room.html`
+4. Chat works exactly as before. Viewers can now also type
+   - a name to pick who answers (`Luna what do you think?`), `you both`, `which of you`, `Luna ask Mika ...`
+   - `play trivia`, `what games do you have`, `next round`, `make it harder`, `science questions`,
+     `let Luna answer first`, `stop the game`, and plain answers while a question is up
+   - `zoom in on Luna`, `close up`, `zoom out`
+5. `/?mode=live` still works unchanged. With no room page open the server behaves exactly as before,
+   and the room page falls back to it by itself if the room is disabled or no model loads.
+
+URL flags for the room page. `&subtitles=0` hides captions, `&card=0` the comment card, `&status=0`
+the LIVE badge, `&idle=0` idle motion, `&sfx=0-100` sets effect volume, `&nofallback=1` disables the
+fallback redirect (layout work).
+
+Configuration lives in `room/room.yaml` (cast, relationship, director budget, camera, ambient life,
+objects, SFX volume, `cost.speech_window_seconds`, game timeouts) and `room/characters/<id>.yaml`
+(persona, voice, layout, look and mouth parameters, emotion and reaction maps, topics, trivia skill
+and lines). Games live in `src/open_llm_vtuber/games/<id>/` with a `config.yaml`.
+
+Developer monitoring (never on stream). `GET /vr-agent/room/status` shows usage counters
+(`llm_requests`, `tts_requests`, `viewer_triggered_interactions`), the Director's last plan, traces
+with chat to voice timings, the game state, camera and voices. `POST /vr-agent/room/attention`,
+`/vr-agent/room/test-action` and `/vr-agent/room/event` drive the room by hand.
+`uv run python -m tests.harness.room_server --port 12399` serves the room with a fake TTS and no LLM
+for layout work (`POST /harness/chat {"user": "@me", "text": "play trivia"}`).
+
 ## 1. Current architecture (what exists and keeps working)
 
 1. `YouTubePlaywrightChatSource` reads the public chat page with a MutationObserver. No API quota.
@@ -296,16 +327,27 @@ checkpoint. Game answers and game commands are consumed by the engine and never 
 | Director error | Classic single-character reply by the primary character |
 | Server down | Existing OBS watchdog shows BRB |
 
-## 15. Delivery order
+## 15. Status
 
-Each layer is tested before the next and committed separately on `vr-agent/multi-character-room`.
+All seven layers are implemented on `vr-agent/multi-character-room`, each committed separately.
 
-1. Room page renders Mika and Luna independently, renderer attention with capability detection,
-   ambient glances, classic fallback. Proves A, B, C, J.
-2. EventBus, RoomState, Attention, Action and World Directors with unit tests and a developer route.
-3. Game Engine, Registry, Trivia Battle as pure Python with unit tests. Proves D, E, F, H.
-4. Game UI, SFX and the chat observe feed, trivia playable on stream with template speech. Proves F, G, I.
-5. Character runtimes (voices, agents), Speaking Coordinator, Conversation Director and routing,
-   game interruption.
-6. Camera Director and game camera.
-7. Bounded multi-character dialogue, boredom lines, instrumentation, failure isolation, long soak test.
+| Check | Proof |
+|---|---|
+| Two characters render independently | headless browser test loads both models, per-model look and mouth parameters |
+| Attention works, characters look at each other | browser test drives CHARACTER, GAME and OBJECT targets and reads head direction |
+| Trivia runs deterministically, turns alternate | `tests/test_games_trivia.py` with seeded randomness and a fake clock |
+| Viewers participate, score and state are correct | engine tests plus a browser test answering from chat |
+| Sound effects play | browser test records the effect files the page plays |
+| No chat means no LLM and no TTS | `tests/test_zero_activity.py`, 30 simulated idle minutes give 0 and 0 |
+| Games end by themselves | a viewer-started game pauses, then stops as inactive, speech stops after the window |
+| Long unattended runs stay bounded | `tests/test_room_soak.py`, six simulated hours with viewer bursts |
+| Classic mode still works | `vr-agent.js`, `index.html` and the bundle are unchanged, all original tests pass |
+
+Known limits.
+
+- Neither model can wave, clap, dance, wink or jump; those map to honest alternatives.
+- Luna's voice needs Edge TTS (free, online). If it fails, her lines show as captions and she cools
+  down after three failures while Mika keeps going.
+- "First token" timing is measured at the first audio chunk (LLM first sentence plus its TTS).
+- Hiyori's expressions were authored for this project from her face parameters; they are subtler
+  than mao_pro's original expression files.

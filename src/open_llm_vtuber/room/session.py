@@ -215,6 +215,11 @@ class RoomSession:
         if message.is_system:
             return False
         self.note_viewer_activity()
+        self.trace(
+            "viewer_message_received",
+            platform=message.platform,
+            user=message.display_name,
+        )
         camera_ops = self._camera_request(message)
         if camera_ops is not None:
             from ..vr_agent.usage import usage
@@ -392,6 +397,19 @@ class RoomSession:
             for op in ops
             if op and op.get("op") in OP_KINDS
         ]
+        for op in ops:
+            if op["op"] == "camera":
+                self.trace(
+                    "camera_transition_started",
+                    shot=op.get("shot"),
+                    character=op.get("target"),
+                )
+            elif op["op"] == "action":
+                self.trace(
+                    "character_action_started",
+                    character=op.get("character"),
+                    action=op.get("name"),
+                )
         if ops:
             await self.broadcast(
                 {"type": "vr-room-update", "ops": ops, "at": time.time()}

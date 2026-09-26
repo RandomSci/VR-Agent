@@ -121,3 +121,9 @@ The watchdog checks `/vr-agent/health` every 2 seconds. Server down for two chec
 BRB. When the server is back it refreshes the Browser source and switches to the live scene as soon as
 the livestream page reconnects. It only switches between those two scenes, so other scenes you pick
 yourself are left alone.
+
+## Multi-character room
+
+Two characters (Mika and Luna), a Conversation Director, attention, a camera and Trivia Battle on an
+in-room game board live on a separate page, `http://127.0.0.1:12393/vr-agent/room.html`. See
+`doc/VR_AGENT_ROOM.md`. This page (`/?mode=live`) is unchanged and remains the fallback.
