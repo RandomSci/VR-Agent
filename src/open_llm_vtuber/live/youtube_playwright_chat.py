@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -79,6 +80,23 @@ _MODE_LABEL_SELECTORS = [
 _MODE_ITEM_SELECTOR = (
     "tp-yt-iron-dropdown tp-yt-paper-listbox a, yt-dropdown-menu tp-yt-paper-listbox a"
 )
+
+
+def desktop_user_agent(version: str) -> str:
+    """Headless Chromium announces itself as "HeadlessChrome", and YouTube's
+    live chat answers that with an "update your browser" page instead of the
+    chat. A regular desktop Chrome user agent for the same version fixes it."""
+    major = (version or "130").split(".")[0]
+    if sys.platform == "darwin":
+        platform = "Macintosh; Intel Mac OS X 10_15_7"
+    elif sys.platform.startswith("win"):
+        platform = "Windows NT 10.0; Win64; x64"
+    else:
+        platform = "X11; Linux x86_64"
+    return (
+        f"Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) "
+        f"Chrome/{major}.0.0.0 Safari/537.36"
+    )
 
 
 @dataclass
@@ -252,6 +270,7 @@ class YouTubePlaywrightChatSource:
             "--mute-audio",
             "--disable-dev-shm-usage",
             "--autoplay-policy=no-user-gesture-required",
+            "--disable-blink-features=AutomationControlled",
         ]
         common = dict(
             headless=self.config.playwright_headless,
@@ -260,18 +279,20 @@ class YouTubePlaywrightChatSource:
         context_opts = dict(
             locale="en-US",
             viewport={"width": 420, "height": 720},
-            user_agent=self.config.playwright_user_agent or None,
         )
-        context_opts = {k: v for k, v in context_opts.items() if v is not None}
         if self.config.playwright_user_data_dir:
             user_dir = Path(self.config.playwright_user_data_dir).expanduser()
             user_dir.mkdir(parents=True, exist_ok=True)
+            context_opts["user_agent"] = await self._user_agent(common)
             self._context = await self._playwright.chromium.launch_persistent_context(
                 str(user_dir), **common, **context_opts
             )
             self._browser = None
         else:
             self._browser = await self._playwright.chromium.launch(**common)
+            context_opts["user_agent"] = self.config.playwright_user_agent or (
+                desktop_user_agent(self._browser.version)
+            )
             self._context = await self._browser.new_context(**context_opts)
         # Block heavy resources; the chat DOM is all we need.
         await self._context.route("**/*", self._route_filter)
@@ -279,6 +300,16 @@ class YouTubePlaywrightChatSource:
         self.health.browser_running = True
         self.health.note("browser started")
         logger.info("YouTube Playwright browser started.")
+
+    async def _user_agent(self, launch_opts: dict) -> str:
+        """Configured UA, or a normal desktop Chrome UA for this Chromium build."""
+        if self.config.playwright_user_agent:
+            return self.config.playwright_user_agent
+        probe = await self._playwright.chromium.launch(**launch_opts)
+        try:
+            return desktop_user_agent(probe.version)
+        finally:
+            await probe.close()
 
     def _browser_alive(self) -> bool:
         if self._browser is not None:
