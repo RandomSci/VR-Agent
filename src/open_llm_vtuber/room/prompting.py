@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..vr_agent.intent import ActionIntent, intent_verb
-from ..vr_agent.text_safety import prompt_quote
+from ..vr_agent.text_safety import VIEWER_TEXT_MAX, prompt_quote
 from .profiles import EMOTIONS, CharacterProfile, RoomConfig
 from .state import RoomState
 
@@ -130,4 +130,4 @@ def strip_wrapping_quotes(text: str) -> str:
 
 
 def viewer_quote(username: str, text: str) -> str:
-    return f'YouTube viewer {prompt_quote(username, 60) or "a viewer"} says: "{prompt_quote(text, 280)}"'
+    return f'YouTube viewer {prompt_quote(username, 60) or "a viewer"} says: "{prompt_quote(text, VIEWER_TEXT_MAX)}"'

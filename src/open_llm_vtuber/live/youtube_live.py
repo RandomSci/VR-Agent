@@ -4,7 +4,7 @@ import json
 import re
 import time
 from collections import Counter, OrderedDict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable, Deque, Optional
 
@@ -12,6 +12,7 @@ import httpx
 from loguru import logger
 
 from ..vr_agent.state import VRAgentState, runtime
+from ..vr_agent.text_safety import VIEWER_TEXT_MAX, is_garbage, trim_viewer_text
 
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
@@ -90,6 +91,8 @@ def _message_priority_score(message: YouTubeChatMessage) -> float:
         score += 0.7
     if len(text) < 4:
         score -= 1.5
+    if re.search(r"(.{1,4}?)\1{3,}", normalized):
+        score -= 2.0  # "hahahahaha", "lolololol": low value for a spoken reply
     if SIDE_CONVERSATION_RE.search(normalized) and "?" not in text:
         score -= 2.5
     if re.match(r"^@\S+", normalized) and not DIRECT_TO_CHARACTER_RE.search(normalized):
@@ -257,18 +260,16 @@ class YouTubeLiveChatClient:
         if message_type and message_type != "textMessageEvent":
             return None
 
-        text = snippet.get("displayMessage") or snippet.get("textMessageDetails", {}).get(
-            "messageText", ""
-        )
+        text = snippet.get("displayMessage") or snippet.get(
+            "textMessageDetails", {}
+        ).get("messageText", "")
         text = html.unescape(str(text)).strip()
         if not text:
             return None
 
         timestamp_raw = snippet.get("publishedAt")
         try:
-            timestamp = datetime.fromisoformat(
-                timestamp_raw.replace("Z", "+00:00")
-            )
+            timestamp = datetime.fromisoformat(timestamp_raw.replace("Z", "+00:00"))
         except Exception:
             timestamp = datetime.now(timezone.utc)
 
@@ -329,41 +330,69 @@ class YouTubeMessageBuffer:
         self.answered_message_ids = _BoundedSet(5000)
         self.last_answered_by_author: dict[str, float] = {}
         self.recent_normalized: Counter[str] = Counter()
-        self.startup_cutoff = datetime.now(timezone.utc).timestamp() - STARTUP_BACKLOG_GRACE_SECONDS
+        self.startup_cutoff = (
+            datetime.now(timezone.utc).timestamp() - STARTUP_BACKLOG_GRACE_SECONDS
+        )
 
-    def add(self, message: YouTubeChatMessage) -> tuple[bool, str]:
+    def admit(
+        self, message: YouTubeChatMessage
+    ) -> tuple[bool, str, YouTubeChatMessage]:
+        """Safety checks every message passes before anything else sees it.
+
+        Deliberately NOT here: the single-character "noise" and repeated-text
+        filters. Those judge whether a message is worth a conversational reply,
+        and they used to drop "5" (a Tic-Tac-Toe move) and the third identical
+        vote ("rock", "5") before the game ever saw them. Games get the first
+        look now; conversation filters run in ``queue`` afterwards.
+        """
         self.expire_stale()
         if not message.message_id:
-            return False, "missing_id"
+            return False, "missing_id", message
         if message.timestamp.timestamp() < self.startup_cutoff:
-            return False, "startup_backlog"
+            return False, "startup_backlog", message
         if message.message_id in self.buffered_message_ids:
-            return False, "already_in_buffer"
+            return False, "already_in_buffer", message
         if message.message_id in self.seen_message_ids:
-            return False, "duplicate_id"
+            return False, "duplicate_id", message
         if message.message_id in self.answered_message_ids:
-            return False, "already_answered"
-        text = message.text.strip()
+            return False, "already_answered", message
+        text, trimmed = trim_viewer_text(message.text)
         if not text:
-            return False, "empty"
-        if len(text) > 280:
-            return False, "too_long"
-        normalized = _normalize_message(text)
+            return False, "empty", message
+        if is_garbage(text):
+            return False, "garbage", message
+        if self.UNSAFE_RE.search(_normalize_message(text)):
+            return False, "unsafe", message
+        if trimmed:
+            logger.info(
+                f"YouTube message from {message.author_display_name} trimmed to "
+                f"{VIEWER_TEXT_MAX} characters"
+            )
+            message = replace(message, text=text)
+        self.seen_message_ids.add(message.message_id)
+        return True, "admitted", message
+
+    def queue(self, message: YouTubeChatMessage) -> tuple[bool, str]:
+        """Conversation filters, then into the buffer for reply selection."""
+        normalized = _normalize_message(message.text)
         if len(normalized) <= 1:
             return False, "noise"
-        if self.UNSAFE_RE.search(normalized):
-            return False, "unsafe"
         if self.recent_normalized[normalized] >= 2:
             return False, "repeated_spam"
-
         self.messages.append(message)
-        self.seen_message_ids.add(message.message_id)
         self.buffered_message_ids.add(message.message_id)
         self.recent_normalized[normalized] += 1
         while len(self.messages) > self.max_messages:
             removed = self.messages.popleft()
             self.buffered_message_ids.discard(removed.message_id)
         return True, "accepted"
+
+    def add(self, message: YouTubeChatMessage) -> tuple[bool, str]:
+        """admit + queue in one step (no room in between)."""
+        admitted, reason, message = self.admit(message)
+        if not admitted:
+            return False, reason
+        return self.queue(message)
 
     def expire_stale(self) -> None:
         cutoff = datetime.now(timezone.utc).timestamp() - self.message_buffer_seconds
@@ -455,7 +484,9 @@ class YouTubeLiveChatService:
         self.config = config
         self.default_context = default_context
         self.connection_provider = connection_provider
-        self.chat_source = (getattr(config, "chat_source", "playwright") or "playwright").lower()
+        self.chat_source = (
+            getattr(config, "chat_source", "playwright") or "playwright"
+        ).lower()
         self.client = YouTubeLiveChatClient(
             api_key=config.api_key,
             channel_id=config.channel_id,
@@ -490,7 +521,10 @@ class YouTubeLiveChatService:
             return self.playwright_source.ready()
         if self.client.ready():
             return True, ""
-        return False, "api_key and channel_id or video_id are required for chat_source=api"
+        return (
+            False,
+            "api_key and channel_id or video_id are required for chat_source=api",
+        )
 
     async def start(self) -> None:
         if not self.enabled():
@@ -510,7 +544,9 @@ class YouTubeLiveChatService:
         runtime.set(VRAgentState.STARTING, f"chat source {self.chat_source}")
         logger.info(f"YouTube Live mode started (chat_source={self.chat_source}).")
         ingest = (
-            self._playwright_ingest_loop() if self.playwright_source else self._ingest_loop()
+            self._playwright_ingest_loop()
+            if self.playwright_source
+            else self._ingest_loop()
         )
         self._tasks = [
             asyncio.create_task(ingest, name="youtube-live-ingest"),
@@ -546,10 +582,22 @@ class YouTubeLiveChatService:
         return consumed
 
     def _accept(self, message: YouTubeChatMessage, source_label: str) -> bool:
-        accepted, reason = self.buffer.add(message)
-        if accepted and self._observe(message):
+        """The one path every chat message takes (Playwright, API and mock).
+
+        1. safety checks (admit), 2. the room's active context router (games,
+        stage and camera requests) gets the first look, 3. only what the room
+        did not consume is filtered and buffered for a conversational reply.
+        """
+        admitted, reason, message = self.buffer.admit(message)
+        if not admitted:
+            logger.debug(
+                f"YouTube {source_label} filtered ({reason}): {_truncate(message.text, 60)}"
+            )
+            return False
+        if self._observe(message):
             self._last_message_seen_at = time.time()
             return True
+        accepted, reason = self.buffer.queue(message)
         if accepted:
             now = time.time()
             self._last_message_seen_at = now
@@ -562,33 +610,51 @@ class YouTubeLiveChatService:
                 f"YouTube {source_label} from {message.author_display_name}: {_truncate(message.text)}"
             )
         else:
-            logger.debug(f"YouTube {source_label} filtered ({reason}): {_truncate(message.text, 60)}")
+            logger.debug(
+                f"YouTube {source_label} filtered ({reason}): {_truncate(message.text, 60)}"
+            )
         return accepted
 
     async def inject_mock_message(
         self, author: str, message: str, author_channel_id: str = "mock-author"
     ) -> dict[str, Any]:
         mock = YouTubeChatMessage(
-            message_id=f"mock-{int(time.time() * 1000)}",
+            message_id=f"mock-{time.time_ns()}",
             author_channel_id=author_channel_id,
             author_display_name=author or "Mock Viewer",
             text=message,
             timestamp=datetime.now(timezone.utc),
         )
-        accepted, reason = self.buffer.add(mock)
-        if accepted and self._observe(mock):
+        admitted, reason, admitted_message = self.buffer.admit(mock)
+        if not admitted:
+            logger.info(f"YouTube mock message filtered: {reason}")
+            return {"accepted": False, "reason": reason, "message_id": mock.message_id}
+        if self._observe(admitted_message):
             self._last_message_seen_at = time.time()
-            return {"accepted": True, "reason": "handled_by_room", "message_id": mock.message_id}
+            return {
+                "accepted": True,
+                "reason": "handled_by_room",
+                "message_id": mock.message_id,
+            }
+        accepted = self._accept_queued(admitted_message, "mock message")
+        return {
+            "accepted": accepted,
+            "reason": "accepted" if accepted else "filtered",
+            "message_id": mock.message_id,
+        }
+
+    def _accept_queued(self, message: YouTubeChatMessage, source_label: str) -> bool:
+        accepted, reason = self.buffer.queue(message)
         if accepted:
             self._last_message_seen_at = time.time()
-            self._received_at[mock.message_id] = time.time()
+            self._received_at[message.message_id] = time.time()
             self._message_event.set()
             logger.info(
-                f"YouTube mock message accepted from {mock.author_display_name}: {_truncate(mock.text)}"
+                f"YouTube {source_label} accepted from {message.author_display_name}: {_truncate(message.text)}"
             )
         else:
-            logger.info(f"YouTube mock message filtered: {reason}")
-        return {"accepted": accepted, "reason": reason, "message_id": mock.message_id}
+            logger.info(f"YouTube {source_label} filtered: {reason}")
+        return accepted
 
     def status(self) -> dict[str, Any]:
         status = {
@@ -625,12 +691,18 @@ class YouTubeLiveChatService:
                 if not self._live_chat_id:
                     logger.info("Waiting for active YouTube livestream...")
                     runtime.set(VRAgentState.WAITING_FOR_STREAM, "api discovery")
-                    self._live_chat_id = await self.client.discover_active_live_chat_id()
+                    self._live_chat_id = (
+                        await self.client.discover_active_live_chat_id()
+                    )
                     if not self._live_chat_id:
                         # API search costs 100 quota units per call; never poll it fast.
-                        await asyncio.sleep(max(30, self.config.discovery_retry_seconds))
+                        await asyncio.sleep(
+                            max(30, self.config.discovery_retry_seconds)
+                        )
                         continue
-                    logger.info("YouTube liveChatId acquired; chat connection established.")
+                    logger.info(
+                        "YouTube liveChatId acquired; chat connection established."
+                    )
                     runtime.set(VRAgentState.IDLE, "api chat connected")
 
                 async for messages in self.client.iter_messages(self._live_chat_id):
@@ -694,7 +766,11 @@ class YouTubeLiveChatService:
                 if not selection.selected_message_id:
                     continue
                 selected = next(
-                    (m for m in messages if m.message_id == selection.selected_message_id),
+                    (
+                        m
+                        for m in messages
+                        if m.message_id == selection.selected_message_id
+                    ),
                     None,
                 )
                 if not selected:
@@ -719,13 +795,17 @@ class YouTubeLiveChatService:
                 raise
             except Exception as exc:
                 logger.error(f"YouTube response loop error: {exc}")
-                runtime.set(VRAgentState.ERROR_RECOVERABLE, f"response loop: {exc}"[:200])
+                runtime.set(
+                    VRAgentState.ERROR_RECOVERABLE, f"response loop: {exc}"[:200]
+                )
                 await asyncio.sleep(1.0)
 
     async def _maybe_idle_banter(self) -> None:
         # Zero-activity rule: with no viewer messages the stream makes no LLM
         # or TTS requests at all, so the old quiet-chat banter never runs.
-        if self.config.idle_banter_enabled and not getattr(self, "_banter_warned", False):
+        if self.config.idle_banter_enabled and not getattr(
+            self, "_banter_warned", False
+        ):
             self._banter_warned = True
             logger.warning(
                 "idle_banter_enabled is ignored: VR Agent never calls the LLM or TTS "

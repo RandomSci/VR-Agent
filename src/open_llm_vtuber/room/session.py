@@ -209,10 +209,14 @@ class RoomSession:
         self.show.engine.notify_viewer_activity(now)
 
     def observe_viewer_message(self, message: LiveMessage) -> bool:
-        """Every accepted chat message passes here first.
+        """The active context router: every accepted chat message passes here
+        before any conversational reply is considered.
 
-        Game commands and game answers are consumed (they never reach the LLM).
-        Returns True when consumed.
+        Priority: 1. input for the game that is on the board ("5" while chat
+        plays X), 2. deterministic requests the stage can perform itself
+        (camera), 3. game commands ("play trivia"). Anything not consumed goes
+        on to reply selection and the Conversation Director. Returns True when
+        consumed.
         """
         if message.is_system:
             return False
@@ -223,28 +227,41 @@ class RoomSession:
             platform=message.platform,
             user=message.display_name,
         )
+        from ..vr_agent.usage import usage
+
+        playing = self.show.engine.playing
+        if playing:
+            consumed, ops = self._observe_game(message)
+            if consumed:
+                usage.record_viewer_interaction()
+                self._push_soon(ops)
+                self.trace(
+                    "routed", route="game_input", game=self.show.engine.active.info.id
+                )
+                return True
+            self._push_soon(ops)
         camera_ops = self._camera_request(message)
         if camera_ops is not None:
-            from ..vr_agent.usage import usage
-
             usage.record_viewer_interaction()
             self._push_soon(camera_ops)
+            self.trace("routed", route="camera")
             return True
+        if not playing:
+            consumed, ops = self._observe_game(message)
+            if consumed:
+                usage.record_viewer_interaction()
+                self._push_soon(ops)
+                self.trace("routed", route="game_command")
+                return True
+            self._push_soon(ops)
+        return False
+
+    def _observe_game(self, message: LiveMessage) -> tuple[bool, list[dict[str, Any]]]:
         try:
-            consumed, ops = self.show.observe(message)
+            return self.show.observe(message)
         except Exception as exc:  # a game problem must not break chat
             logger.error(f"VR Room: game observe failed: {exc}")
-            return False
-        if consumed:
-            from ..vr_agent.usage import usage
-
-            usage.record_viewer_interaction()
-        if ops:
-            try:
-                asyncio.get_running_loop().create_task(self.push(ops))
-            except RuntimeError:
-                pass
-        return consumed
+            return False, []
 
     CHAT_SEEN_INTERVAL = 2.0
 

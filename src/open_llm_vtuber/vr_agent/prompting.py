@@ -11,7 +11,7 @@ from typing import Optional
 
 from .capabilities import CharacterCapabilities
 from .intent import ActionIntent, intent_verb
-from .text_safety import prompt_quote
+from .text_safety import VIEWER_TEXT_MAX, prompt_quote
 
 
 def build_livestream_prompt(
@@ -29,7 +29,7 @@ def build_livestream_prompt(
         )
 
     name = prompt_quote(viewer_name, 60) or "a viewer"
-    text = prompt_quote(viewer_text, 280)
+    text = prompt_quote(viewer_text, VIEWER_TEXT_MAX)
     lines = [
         "[Livestream] You are live on YouTube right now, reading your live chat out loud.",
         f'YouTube viewer {name} says: "{text}"',

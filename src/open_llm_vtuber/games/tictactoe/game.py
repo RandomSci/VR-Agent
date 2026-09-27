@@ -47,18 +47,70 @@ CELL_WORDS = {
     "bottom center": 7,
     "bottom": 7,
     "bottom right": 8,
+    "upper left": 0,
+    "upper right": 2,
+    "lower left": 6,
+    "lower right": 8,
+    "center middle": 4,
+    "middle center": 4,
+    "middle middle": 4,
 }
 _CELL_RE = re.compile(r"^\s*(?:#|cell\s*|box\s*|square\s*)?([1-9])\s*[!.]*\s*$", re.I)
+_NUMBER_WORDS = {
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+}
+# Words that may surround a move without changing it: "put X in 5",
+# "I choose 5", "X on the middle square please". Anything else left over
+# means the message is ordinary chat, not a move.
+_FILLER = frozenset(
+    "i ill i'll choose chose pick picking go going put place placing play mark "
+    "take want vote votes voting my our move x o in on at into the a to for "
+    "number no num cell box square spot tile position one please pls plz "
+    "lets let's let us is it its it's this that ok okay then now yes".split()
+)
+_SIDE_WORDS = frozenset(
+    "top bottom left right middle center centre upper lower corner".split()
+)
 
 
 def parse_cell(text: str) -> Optional[int]:
-    """0-based cell index from chat text ("5", "#5", "cell 5", "top left")."""
+    """0-based cell index from chat text, or None when it is not a move.
+
+    Accepts "5", "#5", "cell 5", "five", "center", "middle square",
+    "top left corner", "put X in 5", "I choose 5", "5 please".
+    """
     raw = str(text or "").strip().lower()
+    if len(raw) > 40:
+        return None
     match = _CELL_RE.match(raw)
     if match:
         return int(match.group(1)) - 1
-    cleaned = " ".join(re.sub(r"[^a-z ]", " ", raw).split())
-    return CELL_WORDS.get(cleaned)
+    words = re.findall(r"[a-z']+|[0-9]+", raw.replace("#", " "))
+    words = [_NUMBER_WORDS.get(w, w) for w in words]
+    digits = [w for w in words if w.isdigit()]
+    rest = [w for w in words if not w.isdigit() and w not in _FILLER]
+    if digits:
+        if len(digits) == 1 and not rest and len(digits[0]) == 1 and digits[0] != "0":
+            return int(digits[0]) - 1
+        return None
+    if not rest or any(w not in _SIDE_WORDS for w in rest):
+        return None
+    rest = [w for w in rest if w != "corner"]
+    phrase = " ".join(rest)
+    if phrase in CELL_WORDS:
+        return CELL_WORDS[phrase]
+    # "left top" means "top left"
+    if len(rest) == 2 and f"{rest[1]} {rest[0]}" in CELL_WORDS:
+        return CELL_WORDS[f"{rest[1]} {rest[0]}"]
+    return None
 
 
 def winning_line(cells: list[str]) -> Optional[tuple[int, int, int]]:

@@ -46,18 +46,40 @@ HAND_WORDS = {
 }
 
 
+_HAND_FILLER = frozenset(
+    "i ill i'll choose chose pick go going with throw play vote my our is it "
+    "a the for please pls plz ok okay then this time final answer we".split()
+)
+
+
 def parse_hand(text: str) -> Optional[str]:
+    """rock, paper or scissors from chat text, or None.
+
+    Accepts "rock", "✊", "I choose paper", "going with scissors please".
+    A message with one hand word plus only filler words counts; anything
+    longer or mixed ("rock is overrated tbh") stays ordinary chat.
+    """
     raw = str(text or "").strip().lower()
-    raw = raw.replace("️", "")
-    if not raw or len(raw) > 20:
+    raw = raw.replace("\ufe0f", "")
+    if not raw or len(raw) > 40:
         return None
     if raw in HAND_WORDS:
         return HAND_WORDS[raw]
-    words = re.findall(r"[a-z]+", raw)
-    if 1 <= len(words) <= 2:
-        hands = {HAND_WORDS[w] for w in words if w in HAND_WORDS and len(w) > 1}
-        if len(hands) == 1:
-            return hands.pop()
+    for symbol, hand in HAND_WORDS.items():
+        if (
+            len(symbol) == 1
+            and not symbol.isalpha()
+            and symbol in raw
+            and len(raw) <= 3
+        ):
+            return hand
+    words = re.findall(r"[a-z']+", raw)
+    if not 1 <= len(words) <= 6:
+        return None
+    hands = {HAND_WORDS[w] for w in words if w in HAND_WORDS and len(w) > 1}
+    rest = [w for w in words if w not in HAND_WORDS and w not in _HAND_FILLER]
+    if len(hands) == 1 and not rest:
+        return hands.pop()
     return None
 
 

@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ..vr_agent.text_safety import clean_viewer_text
+from ..vr_agent.text_safety import VIEWER_TEXT_MAX, clean_viewer_text
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class LiveMessage:
 
     @property
     def clean_text(self) -> str:
-        return clean_viewer_text(self.text, 280)
+        return clean_viewer_text(self.text, VIEWER_TEXT_MAX)
 
     @property
     def is_system(self) -> bool:
