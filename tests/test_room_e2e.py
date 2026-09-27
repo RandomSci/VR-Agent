@@ -543,3 +543,85 @@ def test_tic_tac_toe_and_rock_paper_scissors_render_and_play(browser):
         _shot(page, "rps-reveal.png")
         assert usage.snapshot()["llm_requests"] == 0
         assert not errors
+
+
+def test_characters_glance_at_chat_walk_jump_dance_and_stay_home_in_games(browser):
+    """A comment makes someone glance at chat at once. Characters walk, jump
+    and dance inside their own half of the stage, and go home and stay there
+    while a game is on. All of it runs in the browser with zero LLM calls."""
+    from open_llm_vtuber.vr_agent.usage import usage
+
+    usage.reset()
+    with Server() as server:
+        page, errors = open_room(browser, server)
+        state = lambda: page.evaluate("vrRoom.state()")  # noqa: E731
+        stage = {s["id"]: s for s in state()["stage"]}
+        mika, luna = stage["mika"], stage["luna"]
+        left, right = sorted([mika, luna], key=lambda s: s["home"])
+        # Lanes hold each home and never overlap, so they cannot bump into each other.
+        for s in (mika, luna):
+            assert s["lane"][0] <= s["home"] <= s["lane"][1]
+        assert left["lane"][1] < right["lane"][0]
+
+        def settle(cid):
+            page.wait_for_function(
+                f"vrRoom.state().stage.find(s => s.id === '{cid}').move === null",
+                timeout=10000,
+            )
+            return {s["id"]: s for s in state()["stage"]}[cid]
+
+        # Walk to the far edge of her lane (a request past it is clamped).
+        far = left["lane"][0] - 500
+        assert page.evaluate(f"vrRoom.move('{left['id']}', 'walk', {{x: {far}}})")
+        page.wait_for_timeout(300)
+        mid = {s["id"]: s for s in state()["stage"]}[left["id"]]
+        assert mid["move"] == "walk"
+        after = settle(left["id"])
+        assert after["x"] == left["lane"][0] and after["x"] != left["home"]
+        _shot(page, "moves-walked.png")
+        assert page.evaluate(f"vrRoom.move('{left['id']}', 'home')")
+        after = settle(left["id"])
+        assert abs(after["x"] - left["home"]) <= 1
+
+        # A jump goes up and lands back where she stood.
+        assert page.evaluate(f"vrRoom.move('{right['id']}', 'jump', {{hops: 1}})")
+        page.wait_for_timeout(310)
+        airborne = {s["id"]: s for s in state()["stage"]}[right["id"]]
+        assert airborne["y"] < right["y"] - 40
+        assert settle(right["id"])["y"] == right["y"]
+        assert page.evaluate(f"vrRoom.move('{right['id']}', 'dance', {{ms: 2000}})")
+        settle(right["id"])
+
+        # A comment arrives: someone looks at chat right away.
+        httpx.post(server.base + "/harness/push", json={"ops": [{"op": "chat_seen"}]})
+        page.wait_for_function(
+            "vrRoom.state().characters.some(c => c.target === 'CHAT')", timeout=3000
+        )
+
+        # Mika wanders off, then a game starts: she walks home and nobody moves.
+        assert page.evaluate(f"vrRoom.move('{left['id']}', 'walk', {{x: {far}}})")
+        page.wait_for_timeout(250)
+        httpx.post(
+            server.base + "/harness/chat",
+            json={"user": "@selwyn", "text": "play tic tac toe"},
+        )
+        page.wait_for_function("vrRoom.state().gameActive === true", timeout=5000)
+        page.wait_for_function(
+            "vrRoom.state().stage.every(s => s.move === null && Math.abs(s.x - s.home) <= 1)",
+            timeout=5000,
+        )
+        assert (
+            page.evaluate(f"vrRoom.move('{left['id']}', 'walk', {{x: {far}}})") is False
+        )
+        assert page.evaluate(f"vrRoom.move('{right['id']}', 'dance')") is False
+        page.wait_for_timeout(1500)  # ambient beats keep them in place too
+        assert all(abs(s["x"] - s["home"]) <= 1 for s in state()["stage"])
+
+        httpx.post(
+            server.base + "/harness/chat",
+            json={"user": "@selwyn", "text": "stop the game"},
+        )
+        page.wait_for_function("vrRoom.state().gameActive === false", timeout=5000)
+        assert page.evaluate(f"vrRoom.move('{right['id']}', 'jump')")
+        assert usage.snapshot()["llm_requests"] == 0
+        assert not errors

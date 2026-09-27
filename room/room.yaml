@@ -42,6 +42,14 @@ ambient:                       # local only, no LLM or TTS
   glance_min_seconds: 25
   glance_max_seconds: 70
   expression_chance: 0.15
+  # Stage moves, all in the browser (no LLM, no TTS). Each one stays in her own
+  # half of the stage and walks home when a game starts. Add &moves=0 to the
+  # room URL to turn them off for one browser.
+  moves_enabled: true
+  move_chance: 0.45             # chance an ambient beat becomes a walk, jump or dance
+  walk: true
+  jump: true
+  dance: true
 
 # Objects that exist in the room. Positions are fractions of the 16:9 stage.
 objects:

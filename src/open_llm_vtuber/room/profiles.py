@@ -322,6 +322,12 @@ class AmbientSettings:
     glance_min_seconds: float = 25.0
     glance_max_seconds: float = 70.0
     expression_chance: float = 0.15
+    # Stage moves (walk, jump, dance). Frontend only, never while a game is on.
+    moves_enabled: bool = True
+    move_chance: float = 0.45
+    walk: bool = True
+    jump: bool = True
+    dance: bool = True
 
     @classmethod
     def parse(cls, raw: Any) -> "AmbientSettings":
@@ -338,15 +344,25 @@ class AmbientSettings:
                 glance_min + 1, _clamp(raw.get("glance_max_seconds"), 6, 900, 70)
             ),
             expression_chance=_clamp(raw.get("expression_chance"), 0, 1, 0.15),
+            moves_enabled=raw.get("moves_enabled", True) is not False,
+            move_chance=_clamp(raw.get("move_chance"), 0, 1, 0.45),
+            walk=raw.get("walk", True) is not False,
+            jump=raw.get("jump", True) is not False,
+            dance=raw.get("dance", True) is not False,
         )
 
-    def to_frontend(self) -> dict[str, float]:
+    def to_frontend(self) -> dict[str, Any]:
         return {
             "idle_min_seconds": self.idle_min_seconds,
             "idle_max_seconds": self.idle_max_seconds,
             "glance_min_seconds": self.glance_min_seconds,
             "glance_max_seconds": self.glance_max_seconds,
             "expression_chance": self.expression_chance,
+            "moves_enabled": self.moves_enabled,
+            "move_chance": self.move_chance,
+            "walk": self.walk,
+            "jump": self.jump,
+            "dance": self.dance,
         }
 
 

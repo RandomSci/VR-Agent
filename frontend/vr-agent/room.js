@@ -27,6 +27,7 @@
     fallback: params.get("nofallback") !== "1",
     sfx: params.has("sfx") ? Math.max(0, Math.min(100, Number(params.get("sfx")) || 0)) / 100 : null,
     bgm: params.has("bgm") ? Math.max(0, Math.min(100, Number(params.get("bgm")) || 0)) / 100 : null,
+    moves: params.get("moves") !== "0",
   };
   const log = (...args) => console.log("[VR Room]", ...args);
   const now = () => performance.now();
@@ -37,7 +38,9 @@
 
   const PRIORITY_IDLE = 2;
   const PRIORITY_FORCE = 3;
-  const TARGET_RE = /^(VIEWER|CAMERA|NEUTRAL|GAME|(CHARACTER|OBJECT):[a-z][a-z0-9_]{0,23})$/;
+  const TARGET_RE = /^(VIEWER|CAMERA|NEUTRAL|GAME|CHAT|(CHARACTER|OBJECT):[a-z][a-z0-9_]{0,23})$/;
+  // Where the viewer comment card sits (bottom left), in stage coordinates.
+  const CHAT_POINT = { x: 0.13, y: 0.84 };
 
   // ---------------------------------------------------------------------------
   // State
@@ -53,6 +56,8 @@
     lastGestureAt: 0,
     lastSpeechEndAt: 0,
     booted: false,
+    gameActive: false, // a game board is up: nobody walks around
+    lastChatGlanceAt: 0,
   };
 
   // ---------------------------------------------------------------------------
@@ -406,6 +411,12 @@
       this.lastIdle = [];
       this.lastLargeIdleAt = now();
       this.nextIdleAt = now() + rand(4000, 12000);
+      // Stage moves (walk, jump, dance): pure transforms of the model, no AI.
+      this.home = { x: 0, y: 0 };
+      this.baseX = 0; // where the character stands now (changes after a walk)
+      this.lane = { min: 0, max: STAGE_W };
+      this.move = null; // {type, start, end, from, to, ...}
+      this.movesDone = 0;
     }
 
     async load() {
@@ -426,6 +437,8 @@
       const scale = ((Number(layout.height) || 0.95) * STAGE_H) / baseHeight;
       model.scale.set(scale);
       model.position.set((Number(layout.x) || 0.5) * STAGE_W, (Number(layout.bottom) || 1.02) * STAGE_H);
+      this.home = { x: model.position.x, y: model.position.y };
+      this.baseX = this.home.x;
       model.zIndex = Math.round(model.position.y);
       layers.characters.addChild(model);
       this.setupParameters();
@@ -508,6 +521,7 @@
       if (target === "VIEWER" || target === "CAMERA") return { x: 0, y: 0 };
       if (target === "NEUTRAL") return this.neutralOffset;
       let point = null;
+      if (target === "CHAT") point = { x: CHAT_POINT.x * STAGE_W, y: CHAT_POINT.y * STAGE_H };
       if (target === "GAME") {
         const box = room.objects.game_board;
         if (box) point = { x: box.x * STAGE_W, y: (box.y - box.height * 0.2) * STAGE_H };
@@ -616,7 +630,179 @@
     }
 
     busy(t) {
-      return this.speaking || t < this.motionBusyUntil;
+      return this.speaking || t < this.motionBusyUntil || !!this.move;
+    }
+
+    // ---- stage moves ---------------------------------------------------------
+    startMove(type, opts) {
+      if (!this.loaded) return false;
+      const t = now();
+      const o = opts || {};
+      if (type === "walk" || type === "home") {
+        const to = clamp(type === "home" ? this.home.x : Number(o.x), this.lane.min, this.lane.max);
+        const from = this.model.position.x;
+        const dist = Math.abs(to - from);
+        if (dist < 20) return false;
+        const speed = type === "home" && o.fast ? 520 : 230; // stage px per second
+        this.move = { type: "walk", start: t, end: t + (dist / speed) * 1000, from, to };
+      } else if (type === "jump") {
+        const hops = clamp(Number(o.hops) || 1, 1, 3);
+        this.move = { type: "jump", start: t, end: t + hops * 620, hops };
+      } else if (type === "dance") {
+        const ms = clamp(Number(o.ms) || 5200, 2000, 9000);
+        this.move = { type: "dance", start: t, end: t + ms, speed: rand(0.9, 1.15) };
+      } else {
+        return false;
+      }
+      this.movesDone += 1;
+      log(`${this.name} ${type}`);
+      return true;
+    }
+
+    cancelMove(soft) {
+      if (!this.move) return;
+      if (soft && this.move.type !== "walk") {
+        // let dances and jumps fade out over a quarter second instead of snapping
+        this.move.end = Math.min(this.move.end, now() + 250);
+        this.move.fading = true;
+        return;
+      }
+      if (this.move.type === "walk") this.baseX = this.model.position.x;
+      this.move = null;
+      this.model.position.y = this.home.y;
+      this.model.rotation = 0;
+    }
+
+    updateMove(t) {
+      if (!this.loaded) return;
+      const m = this.move;
+      if (!m) return;
+      if (this.speaking && (m.type === "dance" || m.type === "jump") && !m.fading) this.cancelMove(true);
+      const k = clamp((t - m.start) / Math.max(1, m.end - m.start), 0, 1);
+      let x = this.baseX;
+      let y = this.home.y;
+      let rot = 0;
+      if (m.type === "walk") {
+        const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+        x = m.from + (m.to - m.from) * e;
+        const steps = (t - m.start) / 210;
+        const moving = k > 0.02 && k < 0.98 ? 1 : 0;
+        y -= Math.abs(Math.sin(steps * Math.PI)) * 14 * moving;
+        rot = Math.sign(m.to - m.from) * 0.035 * moving + Math.sin(steps * Math.PI) * 0.012 * moving;
+      } else if (m.type === "jump") {
+        const hopK = ((t - m.start) / 620) % 1;
+        y -= Math.sin(hopK * Math.PI) * 105;
+        rot = Math.sin(hopK * Math.PI * 2) * 0.02;
+      } else if (m.type === "dance") {
+        const s = ((t - m.start) / 1000) * m.speed;
+        const env = Math.min(1, (t - m.start) / 300, Math.max(0, (m.end - t) / 300));
+        x += Math.sin(s * Math.PI * 1.2) * 26 * env;
+        y -= Math.abs(Math.sin(s * Math.PI * 2.4)) * 20 * env;
+        rot = Math.sin(s * Math.PI * 1.2) * 0.07 * env;
+      }
+      this.model.position.set(x, y);
+      this.model.rotation = rot;
+      if (k >= 1) {
+        if (m.type === "walk") this.baseX = m.to;
+        this.move = null;
+        this.model.position.set(this.baseX, this.home.y);
+        this.model.rotation = 0;
+      }
+    }
+  }
+
+  // Each character walks only inside her own lane, so they never cross or overlap.
+  function computeLanes() {
+    const chars = [...room.characters.values()].filter((c) => c.loaded).sort((a, b) => a.home.x - b.home.x);
+    chars.forEach((c, i) => {
+      const prev = chars[i - 1];
+      const next = chars[i + 1];
+      const gap = STAGE_W * 0.07;
+      let min = prev ? (prev.home.x + c.home.x) / 2 + gap : STAGE_W * 0.08;
+      let max = next ? (c.home.x + next.home.x) / 2 - gap : STAGE_W * 0.92;
+      min = Math.max(min, c.home.x - STAGE_W * 0.2);
+      max = Math.min(max, c.home.x + STAGE_W * 0.2);
+      c.lane = { min: Math.min(min, c.home.x), max: Math.max(max, c.home.x) };
+    });
+  }
+
+  function movesSettings() {
+    const a = (room.config && room.config.ambient) || {};
+    return {
+      enabled: FLAGS.moves && a.moves_enabled !== false,
+      chance: clamp(Number(a.move_chance != null ? a.move_chance : 0.45), 0, 1),
+      walk: a.walk !== false,
+      jump: a.jump !== false,
+      dance: a.dance !== false,
+    };
+  }
+
+  // A game is on the board: everyone goes back to her place and stays there.
+  function setGameActive(active) {
+    if (room.gameActive === !!active) return;
+    room.gameActive = !!active;
+    if (!room.gameActive) return;
+    for (const c of room.characters.values()) {
+      if (!c.loaded) continue;
+      if (c.move) c.cancelMove(false);
+      if (Math.abs(c.model.position.x - c.home.x) > 20) c.startMove("home", { fast: true });
+      else c.baseX = c.home.x;
+    }
+  }
+
+  function pickMove(c) {
+    const s = movesSettings();
+    const away = Math.abs(c.baseX - c.home.x) > 40;
+    // After wandering, often walk back home so the room keeps its layout.
+    if (away && Math.random() < 0.55) return { type: "home" };
+    const pool = [];
+    if (s.walk) pool.push(["walk", 5]);
+    if (s.dance) pool.push(["dance", 3]);
+    if (s.jump) pool.push(["jump", 2]);
+    if (!pool.length) return null;
+    let roll = Math.random() * pool.reduce((sum, p) => sum + p[1], 0);
+    let type = pool[pool.length - 1][0];
+    for (const [name, weight] of pool) {
+      if (roll < weight) {
+        type = name;
+        break;
+      }
+      roll -= weight;
+    }
+    if (type === "walk") {
+      // pick a spot at least a little way from where she stands
+      for (let i = 0; i < 6; i++) {
+        const x = rand(c.lane.min, c.lane.max);
+        if (Math.abs(x - c.baseX) > STAGE_W * 0.06) return { type: "walk", x };
+      }
+      return { type: "home" };
+    }
+    if (type === "jump") return { type: "jump", hops: Math.random() < 0.35 ? 2 : 1 };
+    return { type: "dance", ms: rand(4200, 6800) };
+  }
+
+  // A viewer's comment came in: someone glances at chat right away. This shows
+  // the comment was seen long before the AI reply arrives.
+  function noticeChat(opts) {
+    const t = now();
+    const o = opts || {};
+    if (room.paused) return;
+    if (!o.card && t - room.lastChatGlanceAt < 2500) return;
+    room.lastChatGlanceAt = t;
+    const chars = [...room.characters.values()].filter((c) => c.loaded && !c.speaking);
+    if (!chars.length) return;
+    const lookers = o.card ? chars : [pick(chars)];
+    lookers.forEach((c, i) => {
+      c.glance("CHAT", o.card ? rand(1500, 2200) : rand(1000, 1600), i * rand(120, 320));
+    });
+    const to = Array.isArray(o.to) ? o.to : [];
+    const reactor = lookers.find((c) => to.includes(c.id)) || (Math.random() < 0.35 ? pick(lookers) : null);
+    if (reactor) {
+      const happy = ((reactor.spec.reactions || {}).happy || []).find((n) => {
+        const act = reactor.action(n);
+        return act && act.kind === "expression";
+      });
+      if (happy) dueActions.push({ at: t + 450, character: reactor, name: happy });
     }
   }
 
@@ -663,6 +849,20 @@
       if (Math.random() < 0.3) {
         c.nextIdleAt = t + rand(settings.idle_min_seconds, settings.idle_max_seconds) * 1000;
         continue;
+      }
+      const moves = movesSettings();
+      if (moves.enabled && !room.gameActive && Math.random() < moves.chance) {
+        const plan = pickMove(c);
+        if (plan && c.startMove(plan.type, plan)) {
+          room.lastGestureAt = t;
+          // a dance gets a little body motion on top when the model has one
+          if (plan.type === "dance") {
+            const extra = pickIdle(c, t);
+            if (extra) c.play(extra.name, "idle");
+          }
+          c.nextIdleAt = t + rand(settings.idle_min_seconds, settings.idle_max_seconds) * 1000;
+          continue;
+        }
       }
       const action = pickIdle(c, t);
       if (action && c.play(action.name, "idle")) {
@@ -885,6 +1085,9 @@
     const t = now();
     updateCamera();
     updateMouths();
+    for (const c of room.characters.values()) {
+      if (c.move) c.updateMove(t);
+    }
     if (t - lastAmbientTick > 100) {
       lastAmbientTick = t;
       runDueActions(t);
@@ -969,6 +1172,7 @@
   }
 
   function reportModels() {
+    computeLanes();
     const loaded = [];
     const failed = [];
     for (const c of room.characters.values()) {
@@ -1023,6 +1227,10 @@
       const view = op.view && typeof op.view === "object" ? op.view : null;
       if (board) board.render(view);
       if (music) music.setGame(!!view);
+      setGameActive(!!view);
+    },
+    chat_seen() {
+      noticeChat({});
     },
     sfx(op) {
       if (sfx && typeof op.name === "string" && sfx.names.includes(op.name) && !room.paused) sfx.play(op.name);
@@ -1112,7 +1320,10 @@
         }
         break;
       case "youtube-live-selected-message":
-        if (payload.active) showCard(payload);
+        if (payload.active) {
+          showCard(payload);
+          noticeChat({ card: true, to: payload.to });
+        }
         else hideCard(payload);
         break;
       case "audio":
@@ -1241,7 +1452,22 @@
       objects: room.objects,
       queue: speech.queue.length,
       music: music ? music.state() : null,
+      gameActive: room.gameActive,
+      stage: [...room.characters.values()].map((c) => ({
+        id: c.id,
+        x: c.model ? Math.round(c.model.position.x) : null,
+        y: c.model ? Math.round(c.model.position.y) : null,
+        home: Math.round(c.home.x),
+        lane: [Math.round(c.lane.min), Math.round(c.lane.max)],
+        move: c.move ? c.move.type : null,
+        moves: c.movesDone,
+      })),
     }),
+    move: (id, type, opts) => {
+      const c = room.characters.get(id);
+      if (!c || (room.gameActive && type !== "home")) return false;
+      return c.startMove(type, opts || {});
+    },
     look: (id, target, ms) => {
       const c = room.characters.get(id);
       if (c) c.direct(target, ms || 4000, 0);

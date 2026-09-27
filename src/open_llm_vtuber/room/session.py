@@ -40,6 +40,7 @@ OP_KINDS = (
     "sfx",
     "board",
     "line",
+    "chat_seen",
 )
 
 
@@ -90,6 +91,7 @@ class RoomSession:
             clock=clock,
         )
         self._conversation_paused_game = False
+        self._last_chat_seen = float("-inf")
         from .director import ConversationDirector
 
         self.director = ConversationDirector(self, rng=self.rng, clock=clock)
@@ -215,6 +217,7 @@ class RoomSession:
         if message.is_system:
             return False
         self.note_viewer_activity()
+        self._chat_seen()
         self.trace(
             "viewer_message_received",
             platform=message.platform,
@@ -242,6 +245,17 @@ class RoomSession:
             except RuntimeError:
                 pass
         return consumed
+
+    CHAT_SEEN_INTERVAL = 2.0
+
+    def _chat_seen(self) -> None:
+        """Tell the room a comment arrived so a character glances at chat at once
+        (the reply comes later). Only on viewer messages, so idle stays silent."""
+        now = self.clock()
+        if now - self._last_chat_seen < self.CHAT_SEEN_INTERVAL:
+            return
+        self._last_chat_seen = now
+        self._push_soon([{"op": "chat_seen"}])
 
     def _camera_request(self, message: LiveMessage) -> Optional[list[dict[str, Any]]]:
         """'zoom in on Luna', 'close up', 'zoom out'. Consumed, no LLM."""

@@ -200,3 +200,40 @@ def test_game_talk_gets_grounded_rules_in_the_prompt():
     runner = ScriptedRunner(["Hi!"])
     run(session, "Mika what's your favorite food?", runner)
     assert "Games the stream can run" not in runner.calls[0][2]
+
+
+def test_a_viewer_comment_tells_the_room_to_glance_at_chat_rate_limited():
+    import asyncio as _asyncio
+
+    from open_llm_vtuber.room.live_message import LiveMessage
+    from open_llm_vtuber.room.profiles import load_room
+    from open_llm_vtuber.room.session import RoomSession
+
+    now = [100.0]
+    session = RoomSession(load_room(ROOT / "room", ROOT), clock=lambda: now[0])
+    pushed = []
+
+    async def push(ops):
+        pushed.extend(op["op"] for op in ops)
+
+    session.push = push
+
+    async def go():
+        for text in ("hi Selwyn here", "second comment", "third"):
+            session.observe_viewer_message(
+                LiveMessage("youtube", text, "@selwyn", text, 0.0)
+            )
+            await _asyncio.sleep(0)
+        now[0] += session.CHAT_SEEN_INTERVAL + 0.1
+        session.observe_viewer_message(
+            LiveMessage("youtube", "later", "@selwyn", "later", 0.0)
+        )
+        await _asyncio.sleep(0)
+
+    _asyncio.run(go())
+    assert pushed.count("chat_seen") == 2
+    # Idle ticks never ask for a glance.
+    before = len(pushed)
+    for _ in range(40):
+        session.show.tick()
+    assert pushed.count("chat_seen") == 2 and len(pushed) >= before
