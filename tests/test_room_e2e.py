@@ -577,7 +577,8 @@ def test_characters_glance_at_chat_walk_jump_dance_and_stay_home_in_games(browse
         mid = {s["id"]: s for s in state()["stage"]}[left["id"]]
         assert mid["move"] == "walk"
         after = settle(left["id"])
-        assert after["x"] == left["lane"][0] and after["x"] != left["home"]
+        # Positions are clamped to the stage (lanes no longer limit requested moves).
+        assert after["x"] == round(1920 * 0.06) and after["x"] != left["home"]
         _shot(page, "moves-walked.png")
         assert page.evaluate(f"vrRoom.move('{left['id']}', 'home')")
         after = settle(left["id"])
@@ -623,5 +624,90 @@ def test_characters_glance_at_chat_walk_jump_dance_and_stay_home_in_games(browse
         )
         page.wait_for_function("vrRoom.state().gameActive === false", timeout=5000)
         assert page.evaluate(f"vrRoom.move('{right['id']}', 'jump')")
+        assert usage.snapshot()["llm_requests"] == 0
+        assert not errors
+
+
+def test_world_objects_render_from_state_and_magic_removes_them(browser):
+    """What is on screen = what RoomState holds: a frog spawned in the state
+    is drawn, Mika's magic makes it vanish on screen and in the state, and
+    a viewer's 'walk towards the center' glides her there (no LLM)."""
+    from open_llm_vtuber.room.state import SceneState
+    from open_llm_vtuber.vr_agent.usage import usage
+
+    usage.reset()
+    with Server() as server:
+        page, errors = open_room(browser, server)
+        session = server.app.state.session
+        loop_push = lambda ops: httpx.post(  # noqa: E731
+            server.base + "/harness/push", json={"ops": ops}
+        )
+        session.state.scene = SceneState(
+            id="pond", name="a quiet pond", env="forest", zones={"pond": 0.8}
+        )
+        ops = session.world.spawn_object("frog", zone="pond", object_id="frog")
+        ops += session.world.spawn_object(
+            "campfire", zone="center", object_id="fire", state="burning"
+        )
+        loop_push([op for op in ops if op["op"] == "object"])
+        page.wait_for_function(
+            "vrRoom.state().world.objects.filter(o => o.drawn).length === 2",
+            timeout=8000,
+        )
+        world = page.evaluate("vrRoom.state().world")
+        assert {o["id"] for o in world["objects"]} == {"frog", "fire"}
+        page.wait_for_timeout(600)
+        _shot(page, "world-objects.png")
+
+        # Mika's magic: bolt flies, the frog vanishes on screen and in state.
+        outcome = session.interactions.cast_on("mika", "frog")
+        assert outcome.performed
+        loop_push(
+            [
+                op
+                for op in outcome.ops
+                if op["op"] in ("world_fx", "world_sfx", "attention", "action")
+            ]
+        )
+        page.wait_for_timeout(1500)
+        _shot(page, "world-magic-bolt.png")
+        page.wait_for_timeout(700)
+        landed = session.tick()
+        assert "frog" not in session.state.objects
+        loop_push(
+            [
+                op
+                for op in landed
+                if op["op"]
+                in ("object", "world_fx", "world_sfx", "action", "attention")
+            ]
+        )
+        page.wait_for_function(
+            "!vrRoom.state().world.objects.some(o => o.id === 'frog')", timeout=4000
+        )
+        page.wait_for_timeout(250)
+        _shot(page, "world-poof.png")
+
+        # A viewer asks Mika to walk to the center: a calm glide, she arrives.
+        httpx.post(
+            server.base + "/harness/chat",
+            json={"user": "@selwyn", "text": "walk towards the center"},
+        )
+        page.wait_for_function(
+            "vrRoom.state().stage.find(s => s.id === 'mika').move === 'walk'",
+            timeout=4000,
+        )
+        page.wait_for_timeout(1200)
+        _shot(page, "world-glide.png")
+        page.wait_for_function(
+            "vrRoom.state().stage.find(s => s.id === 'mika').move === null",
+            timeout=10000,
+        )
+        mika = next(
+            s for s in page.evaluate("vrRoom.state().stage") if s["id"] == "mika"
+        )
+        assert abs(mika["x"] - session.state.characters["mika"].x * 1920) < 4
+        world = page.evaluate("vrRoom.state().world")
+        assert world["particles"] <= 220 and world["errors"] == 0
         assert usage.snapshot()["llm_requests"] == 0
         assert not errors

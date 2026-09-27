@@ -294,13 +294,12 @@ class RoomSession:
 
         playing = self.show.engine.playing
         if playing:
+            game_id = self.show.engine.active.info.id
             consumed, ops = self._observe_game(message)
             if consumed:
                 usage.record_viewer_interaction()
                 self._push_soon(ops)
-                self.trace(
-                    "routed", route="game_input", game=self.show.engine.active.info.id
-                )
+                self.trace("routed", route="game_input", game=game_id)
                 return True
             self._push_soon(ops)
         camera_ops = self._camera_request(message)

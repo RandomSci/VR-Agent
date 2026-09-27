@@ -107,6 +107,7 @@ class WorldDirector:
         if x is None:
             return []
         state_obj = self.session.state
+        x = self._clear_of_characters(float(x), kind.width)
         object_id = object_id or f"{type_id}_{next(_ids)}"
         if not _ID_RE.match(object_id):
             return []
@@ -145,6 +146,30 @@ class WorldDirector:
             after=0.0,
         )
         return ops
+
+    CHARACTER_CLEARANCE = 0.1  # half a character's body width, as a stage fraction
+
+    def _clear_of_characters(self, x: float, width: float) -> float:
+        """Objects never hide behind a character's legs: slide to the nearest
+        free side (still inside the stage)."""
+        need = self.CHARACTER_CLEARANCE + width / 2
+        for _ in range(3):
+            blocker = next(
+                (
+                    c
+                    for c in self.session.state.characters.values()
+                    if abs(c.x - x) < need
+                ),
+                None,
+            )
+            if blocker is None:
+                return x
+            left, right = blocker.x - need, blocker.x + need
+            options = [p for p in (left, right) if 0.05 <= p <= 0.95]
+            if not options:
+                return x
+            x = min(options, key=lambda p: abs(p - x))
+        return x
 
     def set_object_state(
         self, object_id: str, new_state: str, note: str = ""

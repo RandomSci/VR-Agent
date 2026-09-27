@@ -38,7 +38,9 @@
 
   const PRIORITY_IDLE = 2;
   const PRIORITY_FORCE = 3;
-  const TARGET_RE = /^(VIEWER|CAMERA|NEUTRAL|GAME|CHAT|(CHARACTER|OBJECT):[a-z][a-z0-9_]{0,23})$/;
+  const TARGET_RE = /^(VIEWER|CAMERA|NEUTRAL|GAME|CHAT|LEFT|RIGHT|UP|DOWN|(CHARACTER|OBJECT):[a-z][a-z0-9_]{0,23})$/;
+  // Where side targets point, relative to the character's face (stage px).
+  const SIDE_POINTS = { LEFT: { dx: -700, dy: -40 }, RIGHT: { dx: 700, dy: -40 }, UP: { dx: 0, dy: -500 }, DOWN: { dx: 0, dy: 360 } };
   // Where the viewer comment card sits (bottom left), in stage coordinates.
   const CHAT_POINT = { x: 0.13, y: 0.84 };
 
@@ -237,8 +239,9 @@
     layers.camera = new PIXI.Container(); // camera transform
     layers.background = new PIXI.Container();
     layers.characters = new PIXI.Container();
-    layers.characters.sortableChildren = true;
-    layers.camera.addChild(layers.background, layers.characters);
+    layers.characters.sortableChildren = true; // characters and world props sort by their feet
+    layers.fx = new PIXI.Container(); // particles and magic, above everyone
+    layers.camera.addChild(layers.background, layers.characters, layers.fx);
     layers.root.addChild(layers.camera);
     app.stage.addChild(layers.root);
     // PIXI resizes the canvas on the next animation frame, so fit the stage
@@ -522,6 +525,10 @@
       if (target === "NEUTRAL") return this.neutralOffset;
       let point = null;
       if (target === "CHAT") point = { x: CHAT_POINT.x * STAGE_W, y: CHAT_POINT.y * STAGE_H };
+      if (own(SIDE_POINTS, target)) {
+        const f = this.facePoint();
+        point = { x: f.x + SIDE_POINTS[target].dx, y: f.y + SIDE_POINTS[target].dy };
+      }
       if (target === "GAME") {
         const box = room.objects.game_board;
         if (box) point = { x: box.x * STAGE_W, y: (box.y - box.height * 0.2) * STAGE_H };
@@ -638,13 +645,22 @@
       if (!this.loaded) return false;
       const t = now();
       const o = opts || {};
-      if (type === "walk" || type === "home") {
-        const to = clamp(type === "home" ? this.home.x : Number(o.x), this.lane.min, this.lane.max);
+      if (type === "glide" || type === "walk" || type === "home") {
+        // Short repositioning only. The models have no walk cycle, so this is
+        // a calm eased glide with a soft bob and lean (never a fast slide);
+        // Mika can blink across longer distances with magic instead.
+        const to = clamp(type === "home" ? this.home.x : Number(o.x), STAGE_W * 0.06, STAGE_W * 0.94);
         const from = this.model.position.x;
         const dist = Math.abs(to - from);
-        if (dist < 20) return false;
-        const speed = type === "home" && o.fast ? 520 : 230; // stage px per second
-        this.move = { type: "walk", start: t, end: t + (dist / speed) * 1000, from, to };
+        if (dist < 8) {
+          this.baseX = to;
+          return false;
+        }
+        const ms = clamp(Number(o.ms) || (dist / (o.fast ? 480 : 135)) * 1000, 500, 8000);
+        const style = o.style === "magic" ? "magic" : "walk";
+        this.move = { type: "walk", style, start: t, end: t + ms, from, to };
+        if (style === "walk") this.direct(to > from ? "RIGHT" : "LEFT", Math.min(ms * 0.8, 3000), 0);
+        if (style === "magic" && world) world.fx({ name: "magic_blink_out", character: this.id });
       } else if (type === "jump") {
         const hops = clamp(Number(o.hops) || 1, 1, 3);
         this.move = { type: "jump", start: t, end: t + hops * 620, hops };
@@ -667,9 +683,10 @@
         this.move.fading = true;
         return;
       }
-      if (this.move.type === "walk") this.baseX = this.model.position.x;
+      if (this.move.type === "walk") this.baseX = this.move.style === "magic" ? this.move.to : this.model.position.x;
       this.move = null;
-      this.model.position.y = this.home.y;
+      this.model.alpha = 1;
+      this.model.position.set(this.baseX, this.home.y);
       this.model.rotation = 0;
     }
 
@@ -682,13 +699,31 @@
       let x = this.baseX;
       let y = this.home.y;
       let rot = 0;
-      if (m.type === "walk") {
-        const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      if (m.type === "walk" && m.style === "magic") {
+        // fade out in a swirl of sparkles, reappear at the destination
+        if (k < 0.35) {
+          this.model.alpha = 1 - k / 0.35;
+          x = m.from;
+        } else if (k < 0.55) {
+          this.model.alpha = 0;
+          x = m.to;
+          if (!m.arrived) {
+            m.arrived = true;
+            this.baseX = m.to;
+            if (world) world.fx({ name: "magic_blink_in", character: this.id });
+          }
+        } else {
+          this.model.alpha = (k - 0.55) / 0.45;
+          x = m.to;
+        }
+        y -= Math.sin(k * Math.PI) * 10;
+      } else if (m.type === "walk") {
+        const e = 0.5 - Math.cos(Math.PI * k) / 2; // ease in and out
         x = m.from + (m.to - m.from) * e;
-        const steps = (t - m.start) / 210;
-        const moving = k > 0.02 && k < 0.98 ? 1 : 0;
-        y -= Math.abs(Math.sin(steps * Math.PI)) * 14 * moving;
-        rot = Math.sign(m.to - m.from) * 0.035 * moving + Math.sin(steps * Math.PI) * 0.012 * moving;
+        const velocity = Math.sin(Math.PI * k); // 0 at both ends, 1 mid-way
+        const steps = (t - m.start) / 300; // about 1.7 soft steps per second
+        y -= Math.abs(Math.sin(steps * Math.PI)) * 6 * velocity;
+        rot = Math.sign(m.to - m.from) * 0.018 * velocity + Math.sin(steps * Math.PI) * 0.006 * velocity;
       } else if (m.type === "jump") {
         const hopK = ((t - m.start) / 620) % 1;
         y -= Math.sin(hopK * Math.PI) * 105;
@@ -705,6 +740,7 @@
       if (k >= 1) {
         if (m.type === "walk") this.baseX = m.to;
         this.move = null;
+        this.model.alpha = 1;
         this.model.position.set(this.baseX, this.home.y);
         this.model.rotation = 0;
       }
@@ -745,18 +781,19 @@
     for (const c of room.characters.values()) {
       if (!c.loaded) continue;
       if (c.move) c.cancelMove(false);
-      if (Math.abs(c.model.position.x - c.home.x) > 20) c.startMove("home", { fast: true });
-      else c.baseX = c.home.x;
+      if (Math.abs(c.model.position.x - c.home.x) > 20) c.startMove("home", { ms: 1100 });
+      else {
+        c.baseX = c.home.x;
+        c.model.position.x = c.home.x; // exactly at the game spot, not a few px off
+      }
     }
   }
 
   function pickMove(c) {
     const s = movesSettings();
-    const away = Math.abs(c.baseX - c.home.x) > 40;
-    // After wandering, often walk back home so the room keeps its layout.
-    if (away && Math.random() < 0.55) return { type: "home" };
+    // No ambient walking: the models have no walk cycle, and positions belong
+    // to the backend (Stage Director). Ambient life stays in place.
     const pool = [];
-    if (s.walk) pool.push(["walk", 5]);
     if (s.dance) pool.push(["dance", 3]);
     if (s.jump) pool.push(["jump", 2]);
     if (!pool.length) return null;
@@ -1088,6 +1125,7 @@
     for (const c of room.characters.values()) {
       if (c.move) c.updateMove(t);
     }
+    if (world) world.update(t);
     if (t - lastAmbientTick > 100) {
       lastAmbientTick = t;
       runDueActions(t);
@@ -1160,6 +1198,21 @@
 
   function applySnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== "object") return;
+    // A page that (re)connects draws exactly what the world state holds.
+    for (const [cid, cs] of Object.entries(snapshot.characters || {})) {
+      const c = room.characters.get(cid);
+      const x = cs && Number(cs.x);
+      if (c && c.loaded && Number.isFinite(x) && !c.move) {
+        c.baseX = clamp(x, 0, 1) * STAGE_W;
+        c.model.position.x = c.baseX;
+      }
+    }
+    if (world) {
+      world.clearObjects();
+      for (const box of Object.values(snapshot.objects || {})) {
+        if (box && box.type) world.applyObject({ ...box, quiet: true });
+      }
+    }
     for (const [id, box] of Object.entries(snapshot.objects || {})) {
       if (own(room.objects, id) || !/^[a-z][a-z0-9_]{0,23}$/.test(id)) continue;
       room.objects[id] = {
@@ -1193,10 +1246,40 @@
       music = A.createAudioDirector({
         settings: () => (room.config || {}).music || {},
         override: () => FLAGS.bgm,
+        sfxVolume: () => (FLAGS.sfx != null ? FLAGS.sfx : Number((room.config || {}).sfx_volume) || 0.35),
       });
     } catch (err) {
       log("music unavailable", err);
       music = null;
+    }
+  }
+  let world = null;
+  function createWorldRenderer() {
+    const W = window.VRRoomWorld;
+    if (!W || !app) return;
+    try {
+      world = W.createWorld({
+        app,
+        stageW: STAGE_W,
+        stageH: STAGE_H,
+        log,
+        now,
+        layers: { props: layers.characters, fx: layers.fx },
+        objectBox: (id) => room.objects[id] || null,
+        facePoint: (id) => {
+          const c = room.characters.get(id);
+          return c && c.loaded ? c.facePoint() : null;
+        },
+        wandPoint: (id) => {
+          const c = room.characters.get(id);
+          if (!c || !c.loaded) return null;
+          const f = c.facePoint();
+          return { x: f.x + (c.model.position.x < STAGE_W / 2 ? 150 : -150), y: f.y + 120 };
+        },
+      });
+    } catch (err) {
+      log("world renderer unavailable", err);
+      world = null;
     }
   }
   function createBoardAndSfx() {
@@ -1232,6 +1315,32 @@
     chat_seen() {
       noticeChat({});
     },
+    stage(op) {
+      // The backend's Stage Director owns positions; this only animates.
+      const c = room.characters.get(op.character);
+      if (!c || !c.loaded) return;
+      const move = String(op.move || "");
+      if (move === "walk") {
+        const x = clamp(Number(op.x), 0, 1) * STAGE_W;
+        if (Number.isFinite(x)) c.startMove("glide", { x, ms: op.ms, style: op.style });
+      } else if (move === "hop") c.startMove("jump", { hops: 1 });
+      else if (move === "jump") c.startMove("jump", { hops: 2 });
+      else if (move === "dance") {
+        c.startMove("dance", { ms: 4500 });
+        const extra = pickIdle(c, now());
+        if (extra) c.play(extra.name, "idle");
+      }
+    },
+    world_fx(op) {
+      if (world) world.fx(op);
+    },
+    world_sfx(op) {
+      if (room.paused || !music || typeof op.name !== "string" || !/^[a-z_]{1,24}$/.test(op.name)) return;
+      const play = () => music.playSfx(op.name, clamp(Number(op.pan) || 0, -1, 1));
+      const delay = clamp(Number(op.delay_ms) || 0, 0, 10000);
+      if (delay) setTimeout(play, delay);
+      else play();
+    },
     sfx(op) {
       if (sfx && typeof op.name === "string" && sfx.names.includes(op.name) && !room.paused) sfx.play(op.name);
     },
@@ -1259,6 +1368,7 @@
     object(op) {
       const id = String(op.id || "");
       if (!/^[a-z][a-z0-9_]{0,23}$/.test(id)) return;
+      if (world) world.applyObject(op);
       if (op.remove) {
         delete room.objects[id];
         return;
@@ -1426,6 +1536,7 @@
       return;
     }
     createStage();
+    createWorldRenderer();
     createBoardAndSfx();
     createMusic();
     connect();
@@ -1452,6 +1563,7 @@
       objects: room.objects,
       queue: speech.queue.length,
       music: music ? music.state() : null,
+      world: world ? world.state() : null,
       gameActive: room.gameActive,
       stage: [...room.characters.values()].map((c) => ({
         id: c.id,
@@ -1460,6 +1572,8 @@
         home: Math.round(c.home.x),
         lane: [Math.round(c.lane.min), Math.round(c.lane.max)],
         move: c.move ? c.move.type : null,
+        style: c.move ? c.move.style || null : null,
+        alpha: c.model ? Math.round(c.model.alpha * 100) / 100 : null,
         moves: c.movesDone,
       })),
     }),
