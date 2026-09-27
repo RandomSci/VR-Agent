@@ -115,12 +115,26 @@
     brbImg.src = "./brb.jpg";
     brbImg.addEventListener("error", () => brbImg.remove());
 
+    // Browsers block sound until the page is clicked once. OBS Browser Source
+    // and open_room.bat / open_room.sh (autoplay allowed) never show this.
     ui.audioHint = el("div", "vrr-audio-hint", document.body);
-    ui.audioHint.textContent = "Click to enable audio";
+    ui.audioHint.textContent = "Sound blocked by the browser: click anywhere (or use open_room.bat)";
     ui.audioHint.hidden = true;
-    ui.audioHint.addEventListener("click", () => {
+    const unlockAudio = () => {
       ui.audioHint.hidden = true;
-    });
+      try {
+        // A silent play from inside the click unlocks later speech audio.
+        const a = new Audio(
+          "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="
+        );
+        a.volume = 0;
+        const p = a.play();
+        if (p && p.catch) p.catch(() => {});
+      } catch (_) {}
+    };
+    for (const evt of ["pointerdown", "keydown", "touchstart"]) {
+      window.addEventListener(evt, unlockAudio, { passive: true });
+    }
     renderPhase();
   }
 
