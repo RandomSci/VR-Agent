@@ -35,13 +35,37 @@ class FakeEngine:
         pass
 
 
-def test_luna_yaml_uses_elevenlabs_with_an_edge_fallback():
+def test_luna_yaml_uses_free_edge_voice_maisie():
     room = load_room(ROOT / "room", ROOT)
     luna = room.get("luna")
-    assert luna.voice.tts_model == "elevenlabs_tts"
-    assert luna.voice.settings["voice_id"] == "ExVVn0SQueMnWIWTbm7F"
-    assert luna.voice.fallback.tts_model == "edge_tts"
-    assert luna.voice.fallback.settings["voice"] == "en-US-AnaNeural"
+    assert luna.voice.tts_model == "edge_tts"
+    assert luna.voice.settings == {"voice": "en-GB-MaisieNeural"}
+    assert luna.voice.fallback is None  # same engine as Mika, nothing to fall back to
+
+
+def test_luna_gets_the_same_edge_engine_as_mika_with_her_own_voice(tmp_path):
+    room = load_room(ROOT / "room", ROOT)
+    session = RoomSession(room)
+    built = {}
+
+    def factory(model, **kwargs):
+        built[model] = kwargs
+        return FakeEngine(model, tmp_path, **kwargs)
+
+    voices = CharacterVoices(session, factory=factory)
+    mika_engine = object()
+    edge_block = SimpleNamespace(model_dump=lambda: {"voice": "en-US-AnaNeural"})
+    voices.base_source = lambda: (
+        SimpleNamespace(tts_model="edge_tts", edge_tts=edge_block),
+        mika_engine,
+    )
+    assert voices.engine("mika") is mika_engine
+    luna = voices.engine("luna")
+    assert not isinstance(luna, FallbackTTS)
+    assert built["edge_tts"] == {
+        "voice": "en-GB-MaisieNeural"
+    }  # own voice, conf.yaml untouched
+    assert voices.engine("luna") is luna  # built once, reused for every line
 
 
 def test_fallback_is_not_nested():
@@ -58,8 +82,18 @@ def test_fallback_is_not_nested():
     assert spec.fallback.fallback is None
 
 
+# A character on ElevenLabs with an Edge fallback, to test the fallback feature
+# itself (the bundled Luna now uses Edge directly).
+ELEVEN_WITH_FALLBACK = {
+    "tts_model": "elevenlabs_tts",
+    "settings": {"voice_id": "ExVVn0SQueMnWIWTbm7F"},
+    "fallback": {"tts_model": "edge_tts", "settings": {"voice": "en-US-AnaNeural"}},
+}
+
+
 def _voices(tmp_path, primary_result="file", primary_raises_on_create=False):
     room = load_room(ROOT / "room", ROOT)
+    room.get("luna").voice = VoiceSpec.parse(ELEVEN_WITH_FALLBACK)
     session = RoomSession(room)
     built: dict[str, FakeEngine] = {}
 
