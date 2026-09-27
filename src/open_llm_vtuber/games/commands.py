@@ -166,6 +166,16 @@ _BARE_START_RE = re.compile(
 )
 
 
+# "how to play this", "I don't know how to place anything", "what do I do?"
+_HELP_RE = re.compile(
+    r"\bhow (?:do|does|can|should|to|would) (?:i |we |you |chat )?(?:play|vote|answer|join|place|move|pick|choose|do|win|type)\b"
+    r"|\bhow does (?:this|it|the game) work\b|\bhow to play\b|\bwhat do (?:i|we) (?:do|type|say)\b"
+    r"|\b(?:don'?t|dont|do not) (?:know|understand|get) how\b|\bi'?m confused\b|\bwhat are the rules\b"
+    r"|^(?:rules|help|how)\s*[?!.]*$",
+    re.I,
+)
+
+
 def _mentioned_game(text: str, registry: GameRegistry) -> Optional[str]:
     lowered = f" {normalise_name(text)} "
     for factory in registry.enabled():
@@ -331,6 +341,8 @@ def parse_command(
         return ChangeGame()
 
     if game_active:
+        if _HELP_RE.search(lowered):
+            return HowToPlay(None)  # the running game's rules
         if _NEXT_RE.search(lowered):
             return NextRound()
         difficulty = _DIFFICULTY_RE.search(lowered)

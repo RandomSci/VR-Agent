@@ -491,6 +491,14 @@ def test_tic_tac_toe_and_rock_paper_scissors_render_and_play(browser):
             "e => [e.getBoundingClientRect().width, e.getBoundingClientRect().height]",
         )
         assert abs(box[0] - box[1]) < 2, box
+        # Nothing on the board is cut off: the grid and the scores fit inside it.
+        fits = page.evaluate(
+            "() => { const b = document.querySelector('.vrb-board').getBoundingClientRect();"
+            " return ['.vrg-grid', '.vrb-scores', '.vrb-status'].every(sel => {"
+            " const r = document.querySelector(sel).getBoundingClientRect();"
+            " return r.top >= b.top - 1 && r.bottom <= b.bottom + 1; }); }"
+        )
+        assert fits
         assert chat("@selwyn", "5")["consumed"]
         assert chat("@ana", "5")["consumed"]
         page.wait_for_function(

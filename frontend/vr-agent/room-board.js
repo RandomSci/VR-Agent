@@ -212,6 +212,7 @@
     const timer = el("div", "vrb-timer", root);
     const bar = el("i", "", timer);
     const status = el("div", "vrb-status", root);
+    const hint = el("div", "vrb-hint", root);
     const scores = el("div", "vrb-scores", root);
     const feed = el("div", "vrb-feed", root);
 
@@ -271,6 +272,11 @@
       round.textContent = r ? `Round ${r}/${total}` : "";
       status.textContent = text(view.status, 60);
       const label = text(view.turn_label, 40);
+      // The hint teaches chat between turns; on chat's turn the status line
+      // already says what to type, so the board keeps its height.
+      const hintText = text(view.hint, 80);
+      hint.textContent = hintText;
+      hint.hidden = !hintText || !!view.finished || label.startsWith("CHAT");
       turnLabel.textContent = label;
       turnLabel.hidden = !label;
       turnLabel.classList.toggle("vrb-turn-chat", label.startsWith("CHAT"));

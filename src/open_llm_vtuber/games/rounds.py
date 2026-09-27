@@ -40,6 +40,8 @@ def info_from_config(config: dict[str, Any], defaults: dict[str, Any]) -> GameIn
         enabled=bool(config.get("enabled", True)),
         aliases=tuple(str(a) for a in config.get("aliases") or []),
         how_to_play=" ".join(str(config.get("how_to_play") or "").split())[:400],
+        quick_rules=" ".join(str(config.get("quick_rules") or "").split())[:200],
+        hint=" ".join(str(config.get("board_hint") or "").split())[:80],
         renderer=defaults["renderer"],
         min_players=int(config.get("min_players", 1)),
         modes=modes,
@@ -322,6 +324,7 @@ class RoundGame(Game):
             "finished": self._finished,
             "winner": self.winner,
             "highlight": self.winner if self.phase == "finished" else highlight,
+            "hint": self.info.hint if self.mode == "chat" else "",
             "turn_label": "CHAT'S TURN"
             if self.phase == "vote" and not self._paused
             else "",

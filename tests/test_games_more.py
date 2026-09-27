@@ -189,7 +189,9 @@ def test_chat_votes_a_cell_and_the_character_answers(registry):
     assert (
         view["body"]["cells"][4]["votes"] == 3 and view["turn_label"] == "CHAT'S TURN"
     )
-    events, _ = run(engine, clock, 4.0)  # quiet period closes the vote
+    events, _ = run(
+        engine, clock, game.quiet_close_s + 0.5
+    )  # quiet period closes the vote
     assert game.cells[4] == "X"
     assert base.MOVE_MADE in names(events)
     events, _ = run(engine, clock, 2.0)  # Luna thinks, then places O
@@ -202,7 +204,7 @@ def test_no_votes_means_too_slow_and_a_random_move(registry):
     engine = _ttt(registry, clock, opponent="mika")
     game = engine.active
     run(engine, clock, 3.2)
-    events, lines = run(engine, clock, 12.5)
+    events, lines = run(engine, clock, game.vote_s + 0.5)
     assert base.VIEWER_TIMEOUT in names(events)
     assert any(line.kind == "too_slow" and line.player == "mika" for line in lines)
     assert game.cells.count("X") == 1
@@ -214,7 +216,7 @@ def test_votes_after_the_vote_closed_never_change_the_board(registry):
     game = engine.active
     run(engine, clock, 3.2)
     engine.handle_viewer_message("@a", "1", clock())
-    run(engine, clock, 4.0)
+    run(engine, clock, game.quiet_close_s + 0.5)
     board = list(game.cells)
     consumed, result = engine.handle_viewer_message("@late", "9", clock())
     assert consumed and not result.events and game.cells == board
@@ -273,7 +275,7 @@ def test_rps_character_hand_is_fixed_before_chat_votes(registry):
     beat = {"rock": "paper", "paper": "scissors", "scissors": "rock"}[hidden["mika"]]
     engine.handle_viewer_message("@a", beat, clock())
     assert game.hidden == hidden  # chat's votes cannot change mika's hand
-    events, _ = run(engine, clock, 3.5)
+    events, _ = run(engine, clock, game.quiet_close_s + 0.5)
     assert game.round_winner == "viewers" and game.scores["viewers"] == 1
     assert base.ANSWER_CORRECT in names(events)
 
@@ -285,7 +287,7 @@ def test_rps_no_votes_gives_the_round_to_the_character(registry):
     engine.notify_viewer_activity()
     game = engine.active
     run(engine, clock, 3.2)
-    events, lines = run(engine, clock, 10.5)
+    events, lines = run(engine, clock, game.vote_s + 0.5)
     assert base.VIEWER_TIMEOUT in names(events)
     assert (
         game.scores["luna"] == 1 and game.view(clock())["status"] == "Too slow, chat!"
@@ -313,13 +315,14 @@ def _trivia(registry, clock):
     return engine
 
 
-def test_chat_gets_twelve_seconds_alone_and_girls_stay_silent(registry):
+def test_chat_gets_its_own_turn_alone_and_girls_stay_silent(registry):
     clock = Clock()
     engine = _trivia(registry, clock)
     game = engine.active
-    assert game.phase == "question" and game.viewer_window_s == 12
+    window = game.viewer_window_s
+    assert game.phase == "question" and window >= 12
     assert game.view(clock())["turn_label"] == "CHAT'S TURN"
-    events, lines = run(engine, clock, 11.5)
+    events, lines = run(engine, clock, window - 0.5)
     assert game.phase == "question"
     assert not [
         e for e in events if e.name in (base.CHARACTER_TURN, base.CHARACTER_ANSWERED)
@@ -354,9 +357,81 @@ def test_late_answers_cannot_change_a_closed_round(registry):
     engine = _trivia(registry, clock)
     game = engine.active
     answer = game.question["correct_answer"]
-    run(engine, clock, 12.5)  # chat's turn is over
+    run(engine, clock, game.viewer_window_s + 0.5)  # chat's turn is over
     assert game.phase == "turn"
     scores = dict(game.scores)
     consumed, result = engine.handle_viewer_message("@late", answer, clock())
     assert consumed and not result.events and game.scores == scores
     assert game.viewer_feed[-1]["mark"] == "late"
+
+
+# ---------------------------------------------------------------------------
+# rules for chat: said at the start, on the board, and on request mid-game
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "text",
+    [
+        "how to play this",
+        "I don't know how to place anything",
+        "what do I do?",
+        "rules",
+        "how do we vote?",
+    ],
+)
+def test_help_during_a_game_asks_for_the_running_games_rules(registry, text):
+    assert parse_command(text, registry, NAMES, game_active=True) == base.HowToPlay(
+        None
+    )
+
+
+def test_help_answers_with_the_running_games_quick_rules(registry):
+    engine = GameEngine(registry, clock=Clock(), rng=random.Random(1))
+    engine.start_game("tictactoe", PLAYERS)
+    outcome = engine.handle_command(base.HowToPlay(None), PLAYERS)
+    assert outcome.values["game_id"] == "tictactoe" and outcome.values["playing"]
+    from open_llm_vtuber.room.replies import command_reply
+
+    text = command_reply(outcome.reply, outcome.values, {})
+    assert "1 to 9" in text and "let's start" not in text
+
+
+def _session():
+    from pathlib import Path
+
+    from open_llm_vtuber.room.profiles import load_room
+    from open_llm_vtuber.room.session import RoomSession
+
+    root = Path(__file__).resolve().parents[1]
+    return RoomSession(load_room(root / "room", root))
+
+
+def _say(session, text):
+    from open_llm_vtuber.room.live_message import LiveMessage
+
+    return session.show.observe(LiveMessage("youtube", text, "@selwyn", text, 0.0))
+
+
+def test_game_start_says_the_intro_then_the_rules_in_the_other_voice():
+    session = _session()
+    _say(session, "Luna, play tic tac toe with us")
+    lines = list(session.show.lines)
+    assert len(lines) >= 2
+    intro, rules = lines[0], lines[1]
+    assert "1 to 9" in rules.text and rules.character != intro.character
+
+
+def test_mid_game_confusion_gets_the_rules_right_away():
+    session = _session()
+    _say(session, "play tic tac toe")
+    session.show.lines.clear()
+    consumed, _ops = _say(session, "I don't know how to place anything")
+    assert consumed
+    assert any("1 to 9" in line.text for line in session.show.lines)
+
+
+def test_boards_show_how_to_play(registry):
+    clock = Clock()
+    for game_id, words in (("tictactoe", "1-9"), ("rps", "rock"), ("trivia", "answer")):
+        engine = GameEngine(registry, clock=clock, rng=random.Random(1))
+        engine.start_game(game_id, PLAYERS)
+        assert words in engine.active.view(clock())["hint"]

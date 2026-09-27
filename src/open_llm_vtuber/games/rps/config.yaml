@@ -13,11 +13,16 @@ how_to_play: >-
   bato, papel, gunting work too). Chat's most voted hand is thrown against ours, which
   is picked before you vote, so no peeking. First to three rounds wins!
 
+quick_rules: >-
+  Chat, type rock, paper or scissors on chat's turn. Your most voted hand goes
+  against mine!
+board_hint: "Type rock, paper or scissors on CHAT'S TURN"
+
 first_to: 3
 max_rounds: 7
 intro_seconds: 3
-vote_seconds: 10                 # chat's throw
-close_after_quiet_seconds: 3.0   # close early once votes stop coming in
+vote_seconds: 15                 # chat's throw
+close_after_quiet_seconds: 5     # close early once votes stop coming in
 character_countdown_seconds: 2.4 # girls vs girls
 reveal_seconds: 3.5
 between_rounds_seconds: 2

@@ -232,9 +232,11 @@ class ShowRunner:
     def apply(self, result: StepResult) -> list[dict[str, Any]]:
         ops: list[dict[str, Any]] = []
         sounds: list[str] = []
+        started_game = None
         for event in result.events:
             if event.name == ev.GAME_STARTED:
                 self._more_questions(event.data.get("game"))
+                started_game = event.data.get("game")
             try:
                 ops += self.session.emit(event.name, **event.data)
             except ValueError:
@@ -277,7 +279,21 @@ class ShowRunner:
             ops.append(board)
         for line in result.lines:
             self._queue_game_line(line)
+        if started_game:
+            self._say_quick_rules(started_game, result)
         return ops
+
+    def _say_quick_rules(self, game_id: Any, result: StepResult) -> None:
+        """Right after a game starts, one short line tells chat how to play."""
+        factory = self.registry.get(str(game_id or ""))
+        text = factory.info.quick_rules if factory else ""
+        if not text:
+            return
+        intro_speaker = next((line.player for line in result.lines), None)
+        others = [p.id for p in self.players() if p.id != intro_speaker]
+        speaker = others[0] if others else intro_speaker
+        if speaker:
+            self.enqueue(speaker, text, blocking=False, optional=False)
 
     def _more_questions(self, game_id: Any) -> None:
         """A viewer started a game: ask for fresh AI trivia questions (background)."""

@@ -13,11 +13,19 @@ how_to_play: >-
   to 9 to vote for a square, counting left to right from the top. The most voted
   square gets played. Three in a row wins the round, and first to two rounds wins!
 
+# Said once when the game starts, and again whenever chat asks how to play.
+quick_rules: >-
+  Chat, you're X! When it says chat's turn, type a number from 1 to 9 to pick a
+  square. The most voted square wins.
+board_hint: "Chat is X. Type 1-9 on CHAT'S TURN"
+
 first_to: 2
 max_rounds: 3
 intro_seconds: 3
-vote_seconds: 12                 # chat's turn
-close_after_quiet_seconds: 3.5   # close the vote early once votes stop coming in
+# Viewers see the stream a few seconds late (more on YouTube Normal latency),
+# so chat's turn must stay open long enough for them to see it and type.
+vote_seconds: 18                 # chat's turn
+close_after_quiet_seconds: 6     # close the vote early once votes stop coming in
 character_think_seconds: 1.6
 reveal_seconds: 3.5
 between_rounds_seconds: 2.5

@@ -95,6 +95,11 @@ def command_reply(
             return f"{summary} Want to play? Just say yes!"
         return f"{summary} Which one? Just say its name!" if summary else None
     if key == "how_to_play":
+        if values.get("playing"):
+            return (
+                str(values.get("quick_rules") or values.get("rules") or "").strip()
+                or None
+            )
         rules = str(values.get("rules") or "").strip()
         return f"{rules} Ready? Say let's start!".strip()
     if key == "unsupported_game":

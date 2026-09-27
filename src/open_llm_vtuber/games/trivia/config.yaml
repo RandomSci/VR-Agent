@@ -8,7 +8,7 @@ players: 2
 viewer_participation: true
 # Read out when a viewer asks how the game works. Keep it true to the code below.
 how_to_play: >-
-  A question pops up on the board and it's chat's turn first: you get 12 seconds,
+  A question pops up on the board and it's chat's turn first: you get 15 seconds,
   all to yourselves, to type the answer. If nobody gets it, Mika and Luna take
   their guesses. Every correct answer is a point, and after
   five rounds whoever has the most points wins. Chat plays as one team!
@@ -18,10 +18,14 @@ default_difficulty: mixed           # easy, medium, hard, or mixed
 intro_seconds: 3
 # Viewer first: chat gets this long, alone, before Mika and Luna may answer. The
 # girls never answer (or hint) during chat's turn, and if chat gets it right they
-# skip their answers entirely. 12 s covers reading, typing and the YouTube chat
+# skip their answers entirely. 15 s covers reading, typing and the YouTube chat
 # delay; check /vr-agent/room/status "chat_timing" after a real stream and raise it
 # if answers keep arriving late.
-viewer_answer_window_seconds: 12
+viewer_answer_window_seconds: 15
+quick_rules: >-
+  Chat, type the answer in chat when you see chat's turn. Get it before the timer
+  runs out and chat gets the point!
+board_hint: "Type your answer in chat on CHAT'S TURN"
 wrong_answers_keep_window: true     # a wrong guess does not end chat's turn
 character_think_seconds: 2.5        # pause before a character answers
 line_timeout_seconds: 12            # safety net if a spoken line never finishes

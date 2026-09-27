@@ -491,7 +491,7 @@ html[data-vr-room].vra-paused #vr-room-world {
 }
 
 .vrg-grid {
-  --vrg-size: clamp(180px, 34vh, 290px);
+  --vrg-size: 236px; /* board space is in 1080p stage pixels */
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(3, 1fr);
@@ -700,4 +700,19 @@ html[data-vr-room].vra-paused #vr-room-world {
   .vrr-hand.vrr-pop {
     animation: none !important;
   }
+}
+
+/* How to play, always visible while chat can take part */
+.vrb-hint {
+  align-self: center;
+  padding: 3px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.vrb-hint[hidden] {
+  display: none;
 }

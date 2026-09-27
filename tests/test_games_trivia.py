@@ -263,7 +263,7 @@ def test_character_answer_waits_for_line_and_timeout_safety(registry):
     engine = GameEngine(registry, clock=clock, rng=random.Random(11))
     engine.start_game("trivia", PLAYERS)
     engine.notify_viewer_activity()
-    events, lines = run(engine, clock, 3.5 + 12.5 + 3.0, speech_done=False)
+    events, lines = run(engine, clock, 3.5 + 15.5 + 3.0, speech_done=False)
     game = engine.active
     assert any(line.kind == "answer" and line.blocking for line in lines)
     assert game.awaiting_line in ("mika", "luna")

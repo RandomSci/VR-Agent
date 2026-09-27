@@ -78,6 +78,8 @@ class GameInfo:
     difficulties: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
     how_to_play: str = ""
+    quick_rules: str = ""  # one short spoken sentence, said when the game starts
+    hint: str = ""  # always shown on the board, e.g. "Type 1-9 on CHAT'S TURN"
     renderer: str = ""  # which Game Board renderer draws it (trivia, grid, rps)
     min_players: int = 1  # characters needed
     modes: tuple[str, ...] = (
@@ -89,6 +91,8 @@ class GameInfo:
             "id": self.id,
             "display_name": self.display_name,
             "how_to_play": self.how_to_play,
+            "quick_rules": self.quick_rules,
+            "hint": self.hint,
             "renderer": self.renderer,
             "min_players": self.min_players,
             "max_players": self.players,

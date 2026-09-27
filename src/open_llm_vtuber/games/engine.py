@@ -203,7 +203,10 @@ class GameEngine:
                 },
             )
         if isinstance(command, base.HowToPlay):
-            factory = self.registry.get(command.game_id) or self.registry.default()
+            factory = self.registry.get(command.game_id)
+            if factory is None and self.active is not None:
+                factory = self.registry.get(self.active.info.id)
+            factory = factory or self.registry.default()
             if not factory:
                 return Outcome(
                     False, "games_list", {"summary": self.registry.summary_sentence()}
@@ -215,6 +218,10 @@ class GameEngine:
                     "game": factory.info.display_name,
                     "game_id": factory.info.id,
                     "rules": factory.info.how_to_play or factory.info.description,
+                    "quick_rules": factory.info.quick_rules,
+                    "playing": bool(
+                        self.active and self.active.info.id == factory.info.id
+                    ),
                 },
             )
         if isinstance(command, StartGame):

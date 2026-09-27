@@ -112,6 +112,16 @@ class CameraDirector:
         player = event.get("player")
         if not self._game_ok() or player not in self.session.state.characters:
             return []
+        engine = getattr(getattr(self.session, "show", None), "engine", None)
+        active = getattr(engine, "active", None)
+        if active is not None and getattr(active.info, "renderer", "") in (
+            "grid",
+            "rps",
+        ):
+            # Board games move every few seconds: zooming to the mover each time
+            # hides the board and the other girl. Keep the board framing.
+            self.last_game_move_at = self.clock()
+            return []
         self.last_game_move_at = self.clock()
         return [self._op("focus", player, hold=5.0)]
 

@@ -108,6 +108,8 @@ def load(config: dict[str, Any], game_dir: Path) -> GameFactory:
         difficulties=DIFFICULTIES,
         aliases=tuple(str(a) for a in config.get("aliases") or []),
         how_to_play=" ".join(str(config.get("how_to_play") or "").split())[:400],
+        quick_rules=" ".join(str(config.get("quick_rules") or "").split())[:200],
+        hint=" ".join(str(config.get("board_hint") or "").split())[:80],
         renderer="trivia",
         min_players=1,
         modes=("chat", "characters"),
@@ -731,6 +733,7 @@ class TriviaBattle(Game):
             "winner": self.winner,
             "highlight": highlight,
             "turn_label": self._turn_label(),
+            "hint": self.info.hint if self.info.viewer_participation else "",
             "timer": {
                 "remaining_ms": int(remaining * 1000),
                 "total_ms": int(self.phase_total * 1000),
