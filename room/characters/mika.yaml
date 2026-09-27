@@ -39,6 +39,10 @@ emotions:
   anger: pout
   disgust: pout
 
+# World abilities beyond gestures. magic: her spells can make small creatures
+# and objects vanish or glow (validated and performed by the stream itself).
+abilities: [magic]
+
 # Semantic reactions used by the Action Director. Only registry actions are allowed.
 reactions:
   celebrate: [magic_heart, nod, sparkle]

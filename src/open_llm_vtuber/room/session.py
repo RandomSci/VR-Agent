@@ -13,7 +13,8 @@ import json
 import random
 import re
 import time
-from collections import deque
+from collections import OrderedDict, deque
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 from loguru import logger
@@ -41,7 +42,57 @@ OP_KINDS = (
     "board",
     "line",
     "chat_seen",
+    "stage",
+    "world_fx",
+    "world_sfx",
+    "scene",
+    "speak",
+    "adventure",
 )
+
+
+class Timeline:
+    """Deterministic delayed consequences ("the frog vanishes when the bolt
+    lands"). Run from the room tick; bounded so nothing piles up."""
+
+    MAX = 64
+
+    def __init__(self, clock=time.time):
+        self.clock = clock
+        self.items: list[tuple[float, int, Callable[[], list[dict[str, Any]]]]] = []
+        self._seq = 0
+        self.errors = 0
+
+    def after(self, seconds: float, fn: Callable[[], list[dict[str, Any]]]) -> None:
+        if len(self.items) >= self.MAX:
+            self.items.pop(0)
+        self._seq += 1
+        self.items.append((self.clock() + max(0.0, seconds), self._seq, fn))
+        self.items.sort(key=lambda item: (item[0], item[1]))
+
+    def run(self) -> list[dict[str, Any]]:
+        now = self.clock()
+        ops: list[dict[str, Any]] = []
+        while self.items and self.items[0][0] <= now:
+            _, _, fn = self.items.pop(0)
+            try:
+                ops += fn() or []
+            except Exception as exc:  # one broken consequence never stops the room
+                self.errors += 1
+                logger.error(f"VR Room: timeline step failed: {exc}")
+        return ops
+
+
+@dataclass
+class PerformedRequest:
+    """A viewer request the stage performed (or refused) before the reply,
+    handed to the Conversation Director so the character's words match."""
+
+    character: str
+    phrase: str
+    performed: bool
+    description: str = ""
+    reason: str = ""
 
 
 class RoomSession:
@@ -63,7 +114,13 @@ class RoomSession:
                 id=profile.id, name=profile.name
             )
         for object_id, box in room.objects.items():
-            self.state.objects[object_id] = RoomObject(id=object_id, **box)
+            self.state.objects[object_id] = RoomObject(
+                id=object_id,
+                type="game_board" if object_id == "game_board" else "",
+                **box,
+            )
+        self.timeline = Timeline(clock=clock)
+        self._performed: "OrderedDict[str, PerformedRequest]" = OrderedDict()
         self._clients: dict[str, Send] = {}
         self._client_models: dict[str, dict[str, list[str]]] = {}
         self._loop_task: Optional[asyncio.Task] = None
@@ -90,6 +147,11 @@ class RoomSession:
             rng=self.rng,
             clock=clock,
         )
+        from .interactions import Interactions
+        from .stage import StageDirector
+
+        self.stage = StageDirector(self, clock=clock)
+        self.interactions = Interactions(self)
         self._conversation_paused_game = False
         self._last_chat_seen = float("-inf")
         from .director import ConversationDirector
@@ -181,6 +243,7 @@ class RoomSession:
         viewer is around; otherwise they are shown as captions.
         """
         ops = self.world.expire()
+        ops += self.timeline.run()
         ops += self.show.tick()
         return ops
 
@@ -246,6 +309,18 @@ class RoomSession:
             self._push_soon(camera_ops)
             self.trace("routed", route="camera")
             return True
+        performed = self._world_request(message)
+        if performed is not None:
+            # Not consumed: the character still answers, knowing exactly what
+            # the stage is doing (or why it cannot).
+            self.trace(
+                "routed",
+                route="world_request",
+                character=performed.character,
+                performed=performed.performed,
+                reason=performed.reason,
+            )
+            return False
         if not playing:
             consumed, ops = self._observe_game(message)
             if consumed:
@@ -255,6 +330,109 @@ class RoomSession:
                 return True
             self._push_soon(ops)
         return False
+
+    def _world_request(self, message: LiveMessage) -> Optional[PerformedRequest]:
+        from .requests import parse_request
+
+        named = {
+            label.split()[-1]: zone
+            for zone, label in self.state.scene.zone_labels.items()
+        }
+        named.update({z.replace("_", " "): z for z in self.state.scene.zones})
+        request = parse_request(message.clean_text, named)
+        if request is None:
+            return None
+        character = self.addressed_or_primary(message.clean_text)
+        if request.kind == "magic":
+            users = self.interactions.magic_users()
+            if (
+                character not in users
+                and users
+                and not self._named_in(message.clean_text)
+            ):
+                character = users[0]
+        if not character:
+            return None
+        performed = self.perform_request(character, request)
+        self._performed[message.message_id] = performed
+        while len(self._performed) > 50:
+            self._performed.popitem(last=False)
+        return performed
+
+    def _named_in(self, text: str) -> bool:
+        lowered = f" {text.lower()} "
+        return any(
+            re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", lowered)
+            for p in self.room.characters
+            for name in p.names
+        )
+
+    def perform_request(self, character: str, request) -> PerformedRequest:
+        """Carry out a stage or world request now. Deterministic, no LLM."""
+        ops: list[dict[str, Any]] = []
+        description = ""
+        if request.kind == "move":
+            ok, reason, ops = self.stage.move_to(
+                character, zone=request.zone, why=" (a viewer asked)"
+            )
+            description = "moving there right now" if ok else ""
+        elif request.kind == "home":
+            ok, reason, ops = self.stage.home(character, why=" (a viewer asked)")
+            description = "going back to your usual spot right now" if ok else ""
+        elif request.kind in ("hop", "dance"):
+            ok, reason, ops = self.stage.gesture(character, request.kind)
+            description = (
+                {
+                    "hop": "doing a little hop right now",
+                    "dance": "doing a little dance right now",
+                }[request.kind]
+                if ok
+                else ""
+            )
+        elif request.kind == "look":
+            target = self._look_target(character, request.target)
+            if target:
+                op = self.attention_op(character, target, "request", 4.0)
+                ops = [op] if op else []
+                ok, reason = bool(op), ""
+                description = f"looking at {request.target} right now"
+            else:
+                ok, reason = False, f"there is no {request.target} here to look at"
+        elif request.kind == "magic":
+            obj_id = self.interactions.target_for_magic(request.target)
+            if not obj_id:
+                ok, reason = False, f"there is no {request.target} here right now"
+            else:
+                outcome = self.interactions.cast_on(
+                    character, obj_id, cause=" (a viewer asked)"
+                )
+                ok, reason, ops, description = (
+                    outcome.performed,
+                    outcome.reason,
+                    outcome.ops,
+                    outcome.description,
+                )
+        else:
+            ok, reason = False, "the stage cannot do that"
+        if ops:
+            self._push_soon(self._follow_actions(ops, depth=0))
+        return PerformedRequest(character, request.phrase, ok, description, reason)
+
+    def _look_target(self, character: str, what: str) -> Optional[str]:
+        what = what.lower().strip()
+        if re.search(r"(?<![a-z])(?:me|us|chat|viewers?|camera|here)(?![a-z])", what):
+            return "VIEWER"
+        for side in ("left", "right", "up", "down"):
+            if re.search(rf"(?<![a-z]){side}(?![a-z])", what):
+                return side.upper()
+        for profile in self.room.characters:
+            if profile.id != character and any(n in what for n in profile.names):
+                return f"CHARACTER:{profile.id}"
+        obj = self.world.find(what)
+        return f"OBJECT:{obj.id}" if obj else None
+
+    def take_performed(self, message_id: str) -> Optional[PerformedRequest]:
+        return self._performed.pop(message_id, None)
 
     def _observe_game(self, message: LiveMessage) -> tuple[bool, list[dict[str, Any]]]:
         try:

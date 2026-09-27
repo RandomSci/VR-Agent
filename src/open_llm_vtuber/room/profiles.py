@@ -180,6 +180,10 @@ class VoiceSpec:
         return f"{self.tts_model} {voice}".strip()
 
 
+# World abilities a character may have (room/interactions.py performs them).
+WORLD_ABILITIES = ("magic",)
+
+
 @dataclass
 class CharacterProfile:
     id: str
@@ -199,6 +203,8 @@ class CharacterProfile:
     reactions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     game_skill: dict[str, float] = field(default_factory=dict)
     game_lines: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # World abilities beyond Live2D gestures (see room/interactions.py).
+    abilities: tuple[str, ...] = ()
     # Filled in by load_room once the model is resolved.
     model_info: dict[str, Any] = field(default_factory=dict)
     capabilities: Optional[CharacterCapabilities] = None
@@ -577,6 +583,11 @@ def parse_profile(
         reactions=reactions,
         game_skill=game_skill,
         game_lines=game_lines,
+        abilities=tuple(
+            a
+            for a in (str(x).strip().lower() for x in (raw.get("abilities") or []))
+            if a in WORLD_ABILITIES
+        ),
         source_path=source,
     )
 

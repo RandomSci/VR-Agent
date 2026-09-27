@@ -7,7 +7,7 @@ one instruction, never a growing history.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from ..vr_agent.intent import ActionIntent, intent_verb
 from ..vr_agent.text_safety import VIEWER_TEXT_MAX, prompt_quote
@@ -71,20 +71,35 @@ def turn_prompt(
     instruction: str,
     intent: Optional[ActionIntent] = None,
     game_note: Optional[str] = None,
+    world_note: Optional[str] = None,
+    performed: Any = None,
 ) -> str:
     parts = ["[Livestream room]"]
     recent = _room_lines(state, room, room.director.context_lines)
     if recent:
         parts.append("Recent lines in the room:\n" + "\n".join(recent))
+    if world_note:
+        parts.append(world_note)
     if game_note:
         parts.append(game_note)
     caps = profile.capabilities
-    if caps:
+    if caps and not world_note:
         parts.append(
             f"Physical actions your avatar can really perform: {caps.prompt_summary()}. "
             "You cannot do anything else physically."
         )
-    if intent and intent.requested:
+    if performed is not None:
+        if performed.performed:
+            parts.append(
+                f"A viewer asked you to {performed.phrase}. The stream is doing it for you right now "
+                f"({performed.description or 'in progress'}). Say yes naturally; never claim you cannot."
+            )
+        else:
+            parts.append(
+                f"A viewer asked you to {performed.phrase}, but it is not happening because "
+                f"{performed.reason}. Say so lightly and truthfully."
+            )
+    elif intent and intent.requested:
         asked = intent_verb(intent.requested)
         if intent.supported and intent.action:
             parts.append(

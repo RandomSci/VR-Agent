@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 from loguru import logger
 
 from ..vr_agent.intent import NO_INTENT, ActionIntent, resolve_intent
+from . import awareness
 from ..vr_agent.text_safety import prompt_quote
 from . import events as ev
 from .live_message import LiveMessage
@@ -69,6 +70,7 @@ class InteractionPlan:
     decision: RoutingDecision
     turns: list[Turn] = field(default_factory=list)
     created: float = field(default_factory=time.time)
+    performed: Any = None  # a stage request carried out for this message
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -153,7 +155,22 @@ class ConversationDirector:
                     Turn(others[0], "follow_up", addressee=first, optional=True)
                 )
 
-        if decision.intent:
+        performed = self.session.take_performed(message.message_id)
+        if performed is not None:
+            # The stage already acted on this message: the one who acted
+            # answers first, and her prompt says exactly what is happening.
+            plan.performed = performed
+            if (
+                performed.character in available
+                and plan.turns[0].speaker != performed.character
+            ):
+                plan.turns[0].speaker = performed.character
+                for turn in plan.turns[1:]:
+                    if turn.speaker == performed.character:
+                        turn.speaker = first
+                    if turn.addressee == performed.character:
+                        turn.addressee = None
+        elif decision.intent:
             profile = room.get(first)
             plan.turns[0].intent = resolve_intent(
                 _strip_names(message.clean_text, room),
@@ -413,6 +430,8 @@ class ConversationDirector:
             self._instruction(plan, index),
             intent=turn.intent if turn.intent.requested else None,
             game_note=self._game_note(plan),
+            world_note=awareness.build(self.session, turn.speaker),
+            performed=plan.performed if index == 0 else None,
         )
 
     def _replacement(self, speaker: str) -> Optional[str]:
