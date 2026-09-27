@@ -711,3 +711,109 @@ def test_world_objects_render_from_state_and_magic_removes_them(browser):
         assert world["particles"] <= 220 and world["errors"] == 0
         assert usage.snapshot()["llm_requests"] == 0
         assert not errors
+
+
+def test_scene_traversal_changes_the_world_not_the_characters(browser):
+    """Long travel is the world changing around the characters: layered
+    environments slide and dip or Mika's magic carries them; the characters
+    never fake a long walk; old scenes are cleaned up."""
+    from open_llm_vtuber.room.state import SceneState
+
+    with Server() as server:
+        page, errors = open_room(browser, server)
+        page.set_viewport_size({"width": 1280, "height": 720})
+        session = server.app.state.session
+
+        def go(scene, transition):
+            ops = session.world.set_scene(scene, transition=transition)
+            httpx.post(server.base + "/harness/push", json={"ops": ops})
+
+        start = page.evaluate("vrRoom.state().stage")
+        go(
+            SceneState(
+                id="forest_trail",
+                name="the forest trail",
+                env="forest",
+                time="night",
+                weather="fireflies",
+                title="Forest Trail",
+                subtitle="Journey to the Astral Ruins",
+                actor_scale=0.84,
+            ),
+            "travel",
+        )
+        page.wait_for_function(
+            "vrRoom.state().scene.env === 'forest' && !vrRoom.state().scene.transition",
+            timeout=15000,
+        )
+        page.wait_for_timeout(1800)
+        _shot(page, "scene-forest.png")
+        state = page.evaluate("vrRoom.state()")
+        assert state["scene"]["title"] == "Forest Trail"
+        # the characters stayed where they were: the world moved, not them
+        for before, after in zip(start, state["stage"]):
+            assert abs(before["x"] - after["x"]) <= 2 and after["move"] is None
+
+        session.world.spawn_object(
+            "campfire", zone="center", object_id="fire", state="burning"
+        )
+        httpx.post(
+            server.base + "/harness/push",
+            json={
+                "ops": [{"op": "object", **session.state.objects["fire"].snapshot()}]
+            },
+        )
+        go(
+            SceneState(
+                id="deep_pond",
+                name="the deep forest pond",
+                env="deep_forest",
+                time="night",
+                weather="fog",
+                title="Deep Forest",
+                subtitle="a quiet pond",
+                actor_scale=0.84,
+            ),
+            "magic",
+        )
+        page.wait_for_function(
+            "vrRoom.state().scene.env === 'deep_forest' && !vrRoom.state().scene.transition",
+            timeout=15000,
+        )
+        page.wait_for_timeout(3500)
+        _shot(page, "scene-deep-forest-fog.png")
+        state = page.evaluate("vrRoom.state()")
+        assert not any(
+            o["id"] == "fire" for o in state["world"]["objects"]
+        )  # old scene props gone
+        for kit, weather in (
+            ("river", "clear"),
+            ("mountain", "fog"),
+            ("valley", "wind"),
+            ("ruins", "clear"),
+            ("city", "drizzle"),
+            ("outskirts", "clear"),
+        ):
+            go(
+                SceneState(
+                    id=kit,
+                    name=kit,
+                    env=kit,
+                    weather=weather,
+                    title=kit.title(),
+                    actor_scale=0.84,
+                ),
+                "fade",
+            )
+            page.wait_for_function(
+                f"vrRoom.state().scene.env === '{kit}' && !vrRoom.state().scene.transition",
+                timeout=15000,
+            )
+            page.wait_for_timeout(1200)
+            _shot(page, f"scene-{kit}.png")
+        state = page.evaluate("vrRoom.state()")
+        assert state["scene"]["errors"] == 0 and state["scene"]["missing"] == []
+        assert state["scene"]["drops"] <= 260
+        go(SceneState(), "fade")  # back to the room
+        page.wait_for_function("vrRoom.state().scene.env === 'room'", timeout=8000)
+        assert not errors

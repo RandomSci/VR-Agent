@@ -36,11 +36,21 @@ class YouTubeLiveConfig(I18nMixin):
     playwright_headless: bool = Field(True, alias="playwright_headless")
     playwright_user_data_dir: str = Field("", alias="playwright_user_data_dir")
     playwright_user_agent: str = Field("", alias="playwright_user_agent")
-    playwright_heartbeat_seconds: float = Field(5.0, alias="playwright_heartbeat_seconds")
-    playwright_chat_load_timeout_seconds: int = Field(30, alias="playwright_chat_load_timeout_seconds")
-    playwright_restart_min_seconds: float = Field(5.0, alias="playwright_restart_min_seconds")
-    playwright_restart_max_seconds: float = Field(120.0, alias="playwright_restart_max_seconds")
-    playwright_page_recycle_hours: float = Field(6.0, alias="playwright_page_recycle_hours")
+    playwright_heartbeat_seconds: float = Field(
+        5.0, alias="playwright_heartbeat_seconds"
+    )
+    playwright_chat_load_timeout_seconds: int = Field(
+        30, alias="playwright_chat_load_timeout_seconds"
+    )
+    playwright_restart_min_seconds: float = Field(
+        5.0, alias="playwright_restart_min_seconds"
+    )
+    playwright_restart_max_seconds: float = Field(
+        120.0, alias="playwright_restart_max_seconds"
+    )
+    playwright_page_recycle_hours: float = Field(
+        6.0, alias="playwright_page_recycle_hours"
+    )
     prefer_stream_list: bool = Field(True, alias="prefer_stream_list")
     message_buffer_seconds: int = Field(180, alias="message_buffer_seconds")
     response_cooldown_seconds: float = Field(1.0, alias="response_cooldown_seconds")
@@ -99,10 +109,12 @@ class VRAgentConfig(I18nMixin):
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "overlay_title": Description(
-            en="Text shown in the small LIVE badge in livestream mode", zh="直播模式角标文字"
+            en="Text shown in the small LIVE badge in livestream mode",
+            zh="直播模式角标文字",
         ),
         "show_comment_card": Description(
-            en="Show the viewer comment the character is answering", zh="显示角色正在回复的观众评论"
+            en="Show the viewer comment the character is answering",
+            zh="显示角色正在回复的观众评论",
         ),
         "idle_min_seconds": Description(
             en="Minimum seconds between idle motions", zh="待机动作最短间隔（秒）"
@@ -123,9 +135,7 @@ class LiveConfig(I18nMixin):
     bilibili_live: BiliBiliLiveConfig = Field(
         BiliBiliLiveConfig(), alias="bilibili_live"
     )
-    youtube_live: YouTubeLiveConfig = Field(
-        YouTubeLiveConfig(), alias="youtube_live"
-    )
+    youtube_live: YouTubeLiveConfig = Field(YouTubeLiveConfig(), alias="youtube_live")
     vr_agent: VRAgentConfig = Field(VRAgentConfig(), alias="vr_agent")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {

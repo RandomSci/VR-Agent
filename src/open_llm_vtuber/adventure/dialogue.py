@@ -37,7 +37,9 @@ class DialoguePicker:
     ) -> list[Exchange]:
         pool = self.library.by_trigger.get(trigger, [])
         now = state.active_minutes
-        recent = list(state.dialogue_history)[-min(RECENT_WINDOW, max(0, len(pool) - 1)) :]
+        recent = list(state.dialogue_history)[
+            -min(RECENT_WINDOW, max(0, len(pool) - 1)) :
+        ]
         out = []
         for ex in pool:
             if ex.id in recent:
@@ -102,7 +104,9 @@ class VoiceClips:
         except FileNotFoundError:
             logger.info("Adventure: no voice clip manifest, dialogue shows as captions")
         except Exception as exc:
-            logger.warning(f"Adventure: voice manifest unreadable ({exc}); captions only")
+            logger.warning(
+                f"Adventure: voice manifest unreadable ({exc}); captions only"
+            )
 
     def get(self, line_id: str, text: str) -> Optional[dict[str, Any]]:
         entry = self.clips.get(line_id)
@@ -110,7 +114,12 @@ class VoiceClips:
             self.missing += 1
             return None
         name = str(entry["file"])
-        if "/" in name or ".." in name or not self.folder or not (self.folder / name).is_file():
+        if (
+            "/" in name
+            or ".." in name
+            or not self.folder
+            or not (self.folder / name).is_file()
+        ):
             self.missing += 1
             return None
         volumes = entry.get("volumes") or []

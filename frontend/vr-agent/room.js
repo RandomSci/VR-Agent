@@ -241,7 +241,19 @@
     layers.characters = new PIXI.Container();
     layers.characters.sortableChildren = true; // characters and world props sort by their feet
     layers.fx = new PIXI.Container(); // particles and magic, above everyone
-    layers.camera.addChild(layers.background, layers.characters, layers.fx);
+    layers.envBack = new PIXI.Container(); // adventure scene: sky, far, mid, near
+    layers.fore = new PIXI.Container(); // adventure scene framing in front of the characters
+    layers.light = new PIXI.Container(); // scene lighting tint and flashes
+    layers.weather = new PIXI.Container(); // rain, fireflies, leaves
+    layers.camera.addChild(
+      layers.background,
+      layers.envBack,
+      layers.characters,
+      layers.fore,
+      layers.light,
+      layers.weather,
+      layers.fx,
+    );
     layers.root.addChild(layers.camera);
     app.stage.addChild(layers.root);
     // PIXI resizes the canvas on the next animation frame, so fit the stage
@@ -439,6 +451,9 @@
       const baseHeight = model.height || 1;
       const scale = ((Number(layout.height) || 0.95) * STAGE_H) / baseHeight;
       model.scale.set(scale);
+      this.baseScale = scale;
+      this.actorScale = 1;
+      this.actorScaleTo = 1;
       model.position.set((Number(layout.x) || 0.5) * STAGE_W, (Number(layout.bottom) || 1.02) * STAGE_H);
       this.home = { x: model.position.x, y: model.position.y };
       this.baseX = this.home.x;
@@ -638,6 +653,15 @@
 
     busy(t) {
       return this.speaking || t < this.motionBusyUntil || !!this.move;
+    }
+
+    // Adventure scenes show more of the world: the characters stand a little
+    // smaller (feet stay on the ground line). Eased, never a jump.
+    updateScale() {
+      if (!this.loaded || Math.abs(this.actorScale - this.actorScaleTo) < 0.001) return;
+      this.actorScale += (this.actorScaleTo - this.actorScale) * 0.04;
+      if (Math.abs(this.actorScale - this.actorScaleTo) < 0.002) this.actorScale = this.actorScaleTo;
+      this.model.scale.set(this.baseScale * this.actorScale);
     }
 
     // ---- stage moves ---------------------------------------------------------
@@ -1118,14 +1142,18 @@
   }
 
   let lastAmbientTick = 0;
+  let lastFrameAt = now();
   function onFrame() {
     const t = now();
     updateCamera();
     updateMouths();
     for (const c of room.characters.values()) {
       if (c.move) c.updateMove(t);
+      c.updateScale();
     }
     if (world) world.update(t);
+    if (scene) scene.update(t, Math.min(100, t - lastFrameAt));
+    lastFrameAt = t;
     if (t - lastAmbientTick > 100) {
       lastAmbientTick = t;
       runDueActions(t);
@@ -1207,6 +1235,7 @@
         c.model.position.x = c.baseX;
       }
     }
+    if (scene && snapshot.scene) scene.apply({ ...snapshot.scene, transition: "instant" });
     if (world) {
       world.clearObjects();
       for (const box of Object.values(snapshot.objects || {})) {
@@ -1253,6 +1282,45 @@
       music = null;
     }
   }
+  let scene = null;
+  function createSceneRenderer() {
+    const S = window.VRRoomScene;
+    if (!S || !app) return;
+    try {
+      scene = S.createScene({
+        app,
+        stageW: STAGE_W,
+        stageH: STAGE_H,
+        log,
+        now,
+        layers: { envBack: layers.envBack, fore: layers.fore, light: layers.light, weather: layers.weather, roomBackground: layers.background },
+        domRoot: ui.root,
+        worldTexture: (name) => (world ? world.textures.get(name) || world.texture(name) : null),
+        get audio() {
+          return music;
+        },
+        onActorScale: (f) => {
+          for (const c of room.characters.values()) c.actorScaleTo = clamp(f, 0.6, 1.2);
+        },
+        onMagicTravel: () => {
+          if (!world) return;
+          for (const c of room.characters.values()) {
+            if (!c.loaded) continue;
+            const f = c.facePoint();
+            world.sparkles(f.x, f.y + 200, 30, 0xe8d0ff, 2);
+          }
+          if (music) music.playSfx("magic", 0);
+        },
+        onThunder: () => {
+          if (music) setTimeout(() => music.playSfx("thunder", rand(-0.6, 0.6)), rand(300, 1400));
+        },
+      });
+    } catch (err) {
+      log("scene renderer unavailable", err);
+      scene = null;
+    }
+  }
+
   let world = null;
   function createWorldRenderer() {
     const W = window.VRRoomWorld;
@@ -1330,6 +1398,9 @@
         const extra = pickIdle(c, now());
         if (extra) c.play(extra.name, "idle");
       }
+    },
+    scene(op) {
+      if (scene && op.scene && typeof op.scene === "object") scene.apply(op.scene);
     },
     world_fx(op) {
       if (world) world.fx(op);
@@ -1537,6 +1608,7 @@
     }
     createStage();
     createWorldRenderer();
+    createSceneRenderer();
     createBoardAndSfx();
     createMusic();
     connect();
@@ -1564,6 +1636,7 @@
       queue: speech.queue.length,
       music: music ? music.state() : null,
       world: world ? world.state() : null,
+      scene: scene ? scene.state() : null,
       gameActive: room.gameActive,
       stage: [...room.characters.values()].map((c) => ({
         id: c.id,

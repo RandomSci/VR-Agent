@@ -92,6 +92,7 @@ class WebSocketHandler:
         except Exception as exc:
             logger.error(f"VR Room disabled: {exc}")
             self.room_session = RoomSession(RoomConfig())
+
         # conf.yaml's TTS is loaded after this handler exists, so voices that
         # inherit it look it up when they speak, not now.
         def _base_voice(ctx=default_context_cache):
@@ -307,7 +308,8 @@ class WebSocketHandler:
 
     def is_idle(self) -> bool:
         idle = all(
-            task is None or task.done() for task in self.current_conversation_tasks.values()
+            task is None or task.done()
+            for task in self.current_conversation_tasks.values()
         )
         if idle and self._room_is_primary():
             # In the room a reply waits for the current line and a game checkpoint.
@@ -335,7 +337,10 @@ class WebSocketHandler:
         runtimes = getattr(self, "_room_runtimes", None)
         if runtimes is None:
             runtimes = RoomRuntimes(
-                self.room_session, self.default_context_cache, client_uid, websocket.send_text
+                self.room_session,
+                self.default_context_cache,
+                client_uid,
+                websocket.send_text,
             )
             self._room_runtimes = runtimes
             self.room_session.director.turn_runner = runtimes.run_turn
@@ -366,12 +371,16 @@ class WebSocketHandler:
         try:
             plan = session.director.plan(live)
         except Exception as exc:
-            logger.error(f"VR Room: director planning failed, using classic reply: {exc}")
+            logger.error(
+                f"VR Room: director planning failed, using classic reply: {exc}"
+            )
             return None
         if not plan.turns:
             return None
 
-        settings = self._vr_agent_settings(self.client_contexts.get(client_uid) or self.default_context_cache)
+        settings = self._vr_agent_settings(
+            self.client_contexts.get(client_uid) or self.default_context_cache
+        )
         usage.record_viewer_interaction()
         session.trace(
             "message_routed",
@@ -392,7 +401,9 @@ class WebSocketHandler:
                         "active": True,
                         "id": message.message_id,
                         "author": clean_viewer_text(live.display_name, 60) or "Viewer",
-                        "message": clean_viewer_text(live.text, max(20, settings.comment_card_max_chars)),
+                        "message": clean_viewer_text(
+                            live.text, max(20, settings.comment_card_max_chars)
+                        ),
                         "paid": message.kind == "paid",
                         "amount": clean_viewer_text(message.amount, 30),
                         "to": [t.speaker for t in plan.turns[:2]],
@@ -416,7 +427,11 @@ class WebSocketHandler:
                 asyncio.ensure_future(
                     self._safe_send(
                         websocket,
-                        {"type": "youtube-live-selected-message", "active": False, "id": message.message_id},
+                        {
+                            "type": "youtube-live-selected-message",
+                            "active": False,
+                            "id": message.message_id,
+                        },
                     )
                 )
 
@@ -444,7 +459,11 @@ class WebSocketHandler:
             return False
         from .room.live_message import LiveMessage
 
-        live = message if isinstance(message, LiveMessage) else LiveMessage.from_youtube(message)
+        live = (
+            message
+            if isinstance(message, LiveMessage)
+            else LiveMessage.from_youtube(message)
+        )
         return self.room_session.observe_viewer_message(live)
 
     def _get_primary_client(self) -> tuple[str, WebSocket, ServiceContext] | None:
@@ -500,7 +519,9 @@ class WebSocketHandler:
 
             return VRAgentConfig()
 
-    async def _send_vr_agent_config(self, websocket: WebSocket, context: ServiceContext) -> None:
+    async def _send_vr_agent_config(
+        self, websocket: WebSocket, context: ServiceContext
+    ) -> None:
         settings = self._vr_agent_settings(context)
         caps = self.get_capabilities(context)
         payload = {
@@ -513,7 +534,8 @@ class WebSocketHandler:
                 "idle_motions_enabled": settings.idle_motions_enabled,
                 "idle_min_seconds": max(3.0, float(settings.idle_min_seconds)),
                 "idle_max_seconds": max(
-                    float(settings.idle_min_seconds) + 1.0, float(settings.idle_max_seconds)
+                    float(settings.idle_min_seconds) + 1.0,
+                    float(settings.idle_max_seconds),
                 ),
                 "idle_in_dev_mode": settings.idle_in_dev_mode,
             },
@@ -553,7 +575,9 @@ class WebSocketHandler:
         self.room_session.unregister(client_uid)
         if mode == "live":
             self.live_client_uids.add(client_uid)
-            logger.info(f"Client {client_uid} registered as the livestream presentation page.")
+            logger.info(
+                f"Client {client_uid} registered as the livestream presentation page."
+            )
         else:
             self.live_client_uids.discard(client_uid)
 
@@ -676,7 +700,9 @@ class WebSocketHandler:
                 first_audio_sent = True
                 timing.first_audio_at = time.time()
                 runtime.set(
-                    VRAgentState.PERFORMING_ACTION if intent.action else VRAgentState.SPEAKING,
+                    VRAgentState.PERFORMING_ACTION
+                    if intent.action
+                    else VRAgentState.SPEAKING,
                     message.message_id,
                 )
                 logger.info(
@@ -723,7 +749,11 @@ class WebSocketHandler:
                 asyncio.ensure_future(
                     self._safe_send(
                         websocket,
-                        {"type": "youtube-live-selected-message", "active": False, "id": message.message_id},
+                        {
+                            "type": "youtube-live-selected-message",
+                            "active": False,
+                            "id": message.message_id,
+                        },
                     )
                 )
 

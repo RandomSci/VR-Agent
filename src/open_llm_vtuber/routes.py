@@ -209,7 +209,9 @@ def init_webtool_routes(
         except (TypeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         if not op:
-            return JSONResponse({"error": "unknown character or target"}, status_code=400)
+            return JSONResponse(
+                {"error": "unknown character or target"}, status_code=400
+            )
         await ws_handler.room_session.push([op])
         return JSONResponse({"sent": op})
 
@@ -226,7 +228,9 @@ def init_webtool_routes(
             str(payload.get("character", "")), str(payload.get("action", ""))
         )
         if not ops:
-            return JSONResponse({"error": "unknown character or action"}, status_code=400)
+            return JSONResponse(
+                {"error": "unknown character or action"}, status_code=400
+            )
         await ws_handler.room_session.push(ops)
         return JSONResponse({"sent": [o.get("op") for o in ops]})
 
@@ -247,7 +251,9 @@ def init_webtool_routes(
             payload = {}
         name = str(payload.get("name", ""))
         if name not in ALL_EVENTS:
-            return JSONResponse({"error": "unknown event", "known": sorted(ALL_EVENTS)}, status_code=400)
+            return JSONResponse(
+                {"error": "unknown event", "known": sorted(ALL_EVENTS)}, status_code=400
+            )
         data = {}
         for key, value in (payload.get("data") or {}).items():
             if isinstance(key, str) and key.isidentifier() and len(key) <= 24:

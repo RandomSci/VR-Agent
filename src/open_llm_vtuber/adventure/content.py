@@ -274,9 +274,7 @@ def validate_effects(effects: Any, where: str) -> list[str]:
             if not all(isinstance(v, str) and ID_RE.match(v) for v in _list(value)):
                 problems.append(f"{where}: bad {key}")
         elif key == "mood":
-            if not isinstance(value, dict) or not all(
-                "." in str(k) for k in value
-            ):
+            if not isinstance(value, dict) or not all("." in str(k) for k in value):
                 problems.append(f"{where}: bad mood effect")
         elif key == "discover":
             if not (isinstance(value, str) and ID_RE.match(value)):
@@ -388,7 +386,9 @@ def _read(path: Path) -> Any:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def parse_event(event_id: str, raw: Any, cast: set[str]) -> tuple[Optional[EventDef], list[str]]:
+def parse_event(
+    event_id: str, raw: Any, cast: set[str]
+) -> tuple[Optional[EventDef], list[str]]:
     where = f"event {event_id}"
     if not ID_RE.match(str(event_id)) or not isinstance(raw, dict):
         return None, [f"{where}: bad id or not a mapping"]
@@ -422,7 +422,9 @@ def parse_event(event_id: str, raw: Any, cast: set[str]) -> tuple[Optional[Event
     )
 
 
-def parse_exchange(raw: Any, cast: set[str], where: str) -> tuple[Optional[Exchange], list[str]]:
+def parse_exchange(
+    raw: Any, cast: set[str], where: str
+) -> tuple[Optional[Exchange], list[str]]:
     if not isinstance(raw, dict):
         return None, [f"{where}: exchange must be a mapping"]
     ex_id = str(raw.get("id", ""))
@@ -443,7 +445,9 @@ def parse_exchange(raw: Any, cast: set[str], where: str) -> tuple[Optional[Excha
             who, text = item[0], item[1]
             reaction = item[2] if len(item) == 3 else None
         else:
-            problems.append(f"{where}: line {i} must be [who, text] or [who, text, reaction]")
+            problems.append(
+                f"{where}: line {i} must be [who, text] or [who, text, reaction]"
+            )
             continue
         text = " ".join(str(text or "").split())
         if (cast and who not in cast) or not text or len(text) > 180:
@@ -468,7 +472,9 @@ def parse_exchange(raw: Any, cast: set[str], where: str) -> tuple[Optional[Excha
     )
 
 
-def parse_adventure(raw: Any, events: dict[str, EventDef], where: str) -> tuple[Optional[Adventure], list[str]]:
+def parse_adventure(
+    raw: Any, events: dict[str, EventDef], where: str
+) -> tuple[Optional[Adventure], list[str]]:
     if not isinstance(raw, dict):
         return None, [f"{where}: must be a mapping"]
     adv_id = str(raw.get("id", ""))
@@ -511,14 +517,18 @@ def parse_adventure(raw: Any, events: dict[str, EventDef], where: str) -> tuple[
                 problems.append(f"{where}: region {rid} has a bad objective")
                 continue
             favoured = tuple(
-                e for e in (o.get("events") or []) if event_ref(e, f"objective {o['id']}")
+                e
+                for e in (o.get("events") or [])
+                if event_ref(e, f"objective {o['id']}")
             )
             objectives.append(
                 Objective(
                     id=o["id"],
                     text=str(o.get("text") or o["id"])[:120],
                     distance=_num(o.get("distance"), 0.5, 1000, 10),
-                    finish_event=event_ref(o.get("finish_event"), f"objective {o['id']}"),
+                    finish_event=event_ref(
+                        o.get("finish_event"), f"objective {o['id']}"
+                    ),
                     activity=str(o.get("activity") or "walking")[:80],
                     events=favoured,
                 )
@@ -616,5 +626,7 @@ def load_library(folder: Path | str, cast: Iterable[str] = ()) -> AdventureLibra
             lib.problems.append(f"{path.name}: {exc}")
 
     if lib.problems:
-        logger.warning(f"Adventure: {len(lib.problems)} content problem(s): {lib.problems[:5]}")
+        logger.warning(
+            f"Adventure: {len(lib.problems)} content problem(s): {lib.problems[:5]}"
+        )
     return lib

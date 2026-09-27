@@ -188,6 +188,10 @@ class SceneState:
     description: str = ""
     zones: dict[str, float] = field(default_factory=dict)
     zone_labels: dict[str, str] = field(default_factory=dict)
+    title: str = ""  # title card shown when the world arrives here
+    subtitle: str = ""
+    ambience: list[str] = field(default_factory=list)
+    actor_scale: float = 1.0  # adventure scenes show the characters a bit smaller
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -199,6 +203,10 @@ class SceneState:
             "weather": self.weather,
             "zones": dict(self.zones),
             "zone_labels": dict(self.zone_labels),
+            "title": self.title,
+            "subtitle": self.subtitle,
+            "ambience": list(self.ambience),
+            "actor_scale": self.actor_scale,
         }
 
 

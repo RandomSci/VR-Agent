@@ -51,7 +51,9 @@ class AdventureState:
 
     flags: list[str] = field(default_factory=list)
     discovered: list[str] = field(default_factory=list)
-    recent: Deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=MAX_RECENT))
+    recent: Deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=MAX_RECENT)
+    )
     event_last: dict[str, float] = field(default_factory=dict)
     region_counts: dict[str, int] = field(default_factory=dict)
     once_done: list[str] = field(default_factory=list)
