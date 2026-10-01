@@ -1,0 +1,322 @@
+# Journey to the Astral Ruins: the first Adventure World expedition.
+#
+# REGION -> OBJECTIVE -> PLACE. The characters stay a while at each place
+# (stay: [min, max] active minutes; things happen while they are there), then
+# the world traverses to the next place around them. 27 places, roughly 6 to 9
+# hours of stream time depending on events, rests and setbacks. Progress is
+# saved, so the journey continues across streams.
+#
+# Zones: every place has far_left, left, center, right, far_right; a place can
+# add named zones (x is a fraction of the stage width). Props are world objects
+# the characters know about. Events come from library/events, lines from
+# library/dialogue.
+
+id: astral_ruins
+title: Journey to the Astral Ruins
+destination: the Astral Ruins
+summary: >-
+  Luna found an old star chart showing ruins that only appear under a clear
+  starry sky, and Mika insisted they go find them, snacks included.
+start_event: journey_start
+arrive_event: reach_ruins
+
+regions:
+  - id: night_city
+    name: Night City
+    env: city
+    time: night
+    description: Their neon city at night, where the journey begins.
+    weather: {clear: 5, drizzle: 2}
+    ambience: [city_night]
+    tags: [city, urban]
+    transition: fade
+    rest_allowed: false
+    objectives:
+      - id: pack_up
+        text: Pack up and slip out of the city
+        places:
+          - id: rooftop
+            name: their apartment rooftop
+            stay: [12, 17]
+            activity: packing snacks and checking the star chart
+            props: [{kind: lantern, zone: center, id: roof_lantern, state: glowing}]
+            tags: [rooftop]
+          - id: back_streets
+            name: the quiet back streets
+            stay: [10, 14]
+            activity: sneaking through the back streets
+            tags: [street]
+      - id: leave_city
+        text: Reach the old road out of town
+        finish_event: city_gate
+        places:
+          - id: station_road
+            name: the old station road
+            stay: [10, 15]
+            activity: following the old station road
+            props: [{kind: signpost, zone: center, id: station_sign}]
+            tags: [street]
+          - id: city_edge
+            name: the edge of the city
+            env: outskirts
+            time: night
+            stay: [10, 14]
+            activity: looking back at the city lights
+            tags: [edge]
+
+  - id: outskirts
+    name: The Outskirts
+    env: outskirts
+    time: dusk
+    description: Rolling farmland at dusk, the city glowing behind them.
+    weather: {clear: 4, wind: 2}
+    ambience: [forest_day]
+    tags: [open, fields]
+    objectives:
+      - id: farm_road
+        text: Follow the old farm road east
+        places:
+          - id: farm_road
+            name: the old farm road
+            stay: [12, 18]
+            activity: walking the farm road
+            props: [{kind: signpost, zone: center, id: farm_sign}]
+            tags: [road]
+          - id: wheat_fields
+            name: the wheat fields
+            stay: [12, 16]
+            activity: crossing the fields
+            props: [{kind: bush, zone: right, id: field_bush}]
+            tags: [fields]
+      - id: forest_edge
+        text: Find the edge of the Whispering Forest
+        places:
+          - id: hill_crest
+            name: a windy hill crest
+            stay: [10, 15]
+            activity: catching their breath on the hill
+            props: [{kind: rock, zone: center, id: hill_rock}]
+            tags: [hill]
+          - id: forest_gate
+            name: the edge of the Whispering Forest
+            env: forest
+            time: dusk
+            stay: [10, 14]
+            activity: peering into the forest
+            props: [{kind: signpost, zone: center, id: forest_sign}]
+            tags: [edge, forest]
+
+  - id: whispering_forest
+    name: Whispering Forest
+    env: forest
+    time: night
+    description: An old pine forest full of small sounds and fireflies.
+    weather: {clear: 3, fireflies: 3, drizzle: 1, fog: 1}
+    ambience: [forest_night]
+    tags: [forest, wild]
+    objectives:
+      - id: trail_markers
+        text: Find the hidden trail markers
+        places:
+          - id: forest_trail
+            name: the forest trail
+            stay: [14, 20]
+            activity: looking for trail markers
+            props: [{kind: mushrooms, zone: center, id: trail_shrooms}]
+            tags: [trail]
+          - id: mossy_clearing
+            name: a mossy clearing
+            stay: [12, 18]
+            activity: searching the clearing
+            props:
+              - {kind: glow_stone, zone: center, id: clearing_stone, state: dim}
+              - {kind: rock, zone: right, id: clearing_rock}
+            tags: [clearing]
+      - id: make_camp
+        text: Make camp for the night
+        places:
+          - id: campsite
+            name: a sheltered campsite
+            env: camp
+            stay: [18, 26]
+            activity: resting by the campfire
+            props: [{kind: campfire, zone: center, id: campfire, state: burning}]
+            tags: [camp]
+
+  - id: deep_forest
+    name: Deep Forest
+    env: deep_forest
+    time: night
+    description: The heart of the forest, where moss glows and a moon pond lies still.
+    weather: {fog: 3, fireflies: 3, clear: 2}
+    ambience: [forest_night]
+    tags: [forest, magical, wild]
+    transition: magic
+    objectives:
+      - id: moon_pond
+        text: Reach the moon pond from the star chart
+        places:
+          - id: moon_pond
+            name: the moon pond
+            stay: [14, 20]
+            activity: investigating the moon pond
+            zones: {pond: {x: 0.66, label: the moon pond}}
+            props: [{kind: mushrooms, zone: center, id: pond_shrooms, state: glowing}]
+            arrive: frog_by_pond
+            tags: [pond, water]
+      - id: northern_trail
+        text: Find the northern trail
+        finish_event: clear_log
+        places:
+          - id: northern_trail
+            name: the northern trail
+            stay: [12, 17]
+            activity: following the northern trail
+            props: [{kind: fallen_log, zone: center, id: trail_log, state: blocking}]
+            tags: [trail]
+          - id: shrine_path
+            name: a path with a tiny shrine
+            stay: [10, 15]
+            activity: visiting the little shrine
+            props: [{kind: shrine, zone: center, id: forest_shrine, state: dim}]
+            tags: [shrine]
+
+  - id: silverrun_river
+    name: Silverrun River
+    env: river
+    time: dawn
+    description: A wide, bright river at dawn with a wobbly old rope bridge.
+    weather: {clear: 4, drizzle: 2, wind: 1}
+    ambience: [river]
+    tags: [water, open]
+    objectives:
+      - id: cross_river
+        text: Cross the Silverrun River
+        finish_event: cross_bridge
+        places:
+          - id: riverbank
+            name: the riverbank
+            stay: [12, 17]
+            activity: looking for a way across
+            props: [{kind: rock, zone: center, id: bank_rock}]
+            tags: [water, bank]
+          - id: bridge
+            name: the old rope bridge
+            stay: [10, 14]
+            activity: eyeing the rope bridge
+            props: [{kind: rope_bridge, zone: center, id: rope_bridge, state: swaying}]
+            tags: [water, bridge]
+      - id: upstream
+        text: Follow the river upstream
+        places:
+          - id: reed_bend
+            name: a bend full of reeds
+            stay: [12, 16]
+            activity: following the river
+            zones: {shallows: {x: 0.64, label: the shallows}}
+            tags: [water, reeds]
+          - id: river_rocks
+            name: the stepping stones
+            stay: [10, 15]
+            activity: hopping along the stepping stones
+            props: [{kind: rock, zone: center, id: step_rock}]
+            tags: [water]
+
+  - id: misty_pass
+    name: Misty Pass
+    env: mountain
+    time: day
+    description: A cold mountain trail wrapped in fog.
+    weather: {fog: 4, wind: 3, clear: 2, snow: 1}
+    ambience: [wind]
+    tags: [mountain, cold, high]
+    objectives:
+      - id: climb_pass
+        text: Climb the Misty Pass
+        places:
+          - id: switchbacks
+            name: the switchback trail
+            stay: [14, 20]
+            activity: climbing the switchbacks
+            props: [{kind: boulder, zone: center, id: pass_boulder}]
+            tags: [trail]
+          - id: high_ridge
+            name: the high ridge
+            stay: [12, 16]
+            activity: walking the ridge
+            tags: [ridge]
+      - id: through_fog
+        text: Find a way through the fog
+        finish_event: light_crystal
+        places:
+          - id: fog_saddle
+            name: the foggy saddle
+            stay: [12, 18]
+            activity: trying to see through the fog
+            props: [{kind: crystal, zone: center, id: fog_crystal, state: dim}]
+            tags: [fog]
+
+  - id: ancient_valley
+    name: Ancient Valley
+    env: valley
+    time: dusk
+    description: A dry valley of mesas and broken pillars from an old civilization.
+    weather: {clear: 3, wind: 3}
+    ambience: [wind]
+    tags: [ancient, open, dry]
+    objectives:
+      - id: cross_valley
+        text: Cross the Ancient Valley
+        places:
+          - id: pillar_road
+            name: the road of pillars
+            stay: [12, 18]
+            activity: walking between old pillars
+            props: [{kind: signpost, zone: center, id: pillar_sign}]
+            tags: [ancient, road]
+          - id: dry_riverbed
+            name: a dry riverbed
+            stay: [12, 16]
+            activity: crossing the dry riverbed
+            props: [{kind: map_scroll, zone: center, id: old_scroll, state: rolled}]
+            tags: [ancient]
+      - id: star_gate
+        text: Find the star gate
+        places:
+          - id: gate_ruins
+            name: the ruined star gate
+            stay: [12, 16]
+            activity: studying the ruined gate
+            props: [{kind: shrine, zone: center, id: gate_shrine, state: dim}]
+            tags: [ancient, gate]
+
+  - id: astral_ruins
+    name: Astral Ruins
+    env: ruins
+    time: night
+    description: Ruins under a sky full of stars, floating islands overhead.
+    weather: {clear: 5, fireflies: 1}
+    ambience: [ruins]
+    tags: [ancient, magical, destination]
+    transition: magic
+    objectives:
+      - id: enter_ruins
+        text: Explore the Astral Ruins
+        places:
+          - id: outer_arches
+            name: the outer arches
+            stay: [12, 16]
+            activity: walking through the arches
+            tags: [ruins]
+          - id: star_plaza
+            name: the star plaza
+            stay: [12, 16]
+            activity: exploring the star plaza
+            props: [{kind: crystal, zone: center, id: plaza_crystal, state: glowing}]
+            tags: [ruins]
+          - id: observatory_heart
+            name: the heart of the old observatory
+            stay: [10, 14]
+            activity: looking up at the stars
+            props: [{kind: glow_stone, zone: center, id: star_stone, state: glowing}]
+            tags: [ruins, final]

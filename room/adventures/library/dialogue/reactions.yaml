@@ -1,0 +1,221 @@
+# Reactions to things that really happened in the world (the event that
+# triggers them is the proof). Several variants each, with repetition
+# protection, so a long stream rarely hears the same exchange twice.
+
+exchanges:
+  # ---- owl ----------------------------------------------------------------
+  - id: owl_1
+    trigger: after_owl
+    lines:
+      - [luna, "Just an owl. On the right, up in the trees."]
+      - [mika, "I knew that. I was not scared. At all."]
+  - id: owl_2
+    trigger: after_owl
+    lines:
+      - [mika, "Hoo hoo! See, I speak owl."]
+      - [luna, "You just told it your shoes are untied."]
+  - id: owl_3
+    trigger: after_owl
+    lines:
+      - [luna, "Owls hunt at night. It's probably having dinner."]
+      - [mika, "Poor mouse. Good owl. Complicated feelings."]
+  - id: owl_4
+    trigger: after_owl
+    when: {mood: {mika.annoyance: ">=2"}}
+    lines:
+      - [mika, "Even the owl is judging me tonight."]
+      - [luna, "The owl is neutral, Mika."]
+  - id: owl_visit_1
+    trigger: owl_visit
+    lines:
+      - [mika, "An owl! Right there! Hi, fluffy!"]
+      - [luna, "Don't wave at it, you'll scare it off."]
+  - id: owl_visit_2
+    trigger: owl_visit
+    lines:
+      - [luna, "It's watching us. Very seriously."]
+      - [mika, "It's a professional. I respect that."]
+  # ---- birds -------------------------------------------------------------------
+  - id: bird_1
+    trigger: after_bird
+    lines:
+      - [mika, "Birdie on the left! Good morning, birdie!"]
+  - id: bird_2
+    trigger: after_bird
+    lines:
+      - [luna, "That's a songbird. They sing more when the weather is calm."]
+      - [mika, "Then sing louder, birdie, I want calm weather."]
+  - id: bird_3
+    trigger: after_bird
+    when: {time: [dawn]}
+    lines:
+      - [luna, "The dawn chorus. Every bird wakes up at once."]
+  # ---- rabbit ---------------------------------------------------------------------
+  - id: rabbit_1
+    trigger: rabbit_appears
+    lines:
+      - [mika, "A bunny! A wild bunny! It came to see me!", happy]
+      - [luna, "It came out of a bush, Mika. It lives there."]
+  - id: rabbit_2
+    trigger: rabbit_appears
+    lines:
+      - [luna, "That was only a rabbit. Your heart can calm down."]
+      - [mika, "My heart is calm. My heart is excited. Both!"]
+  - id: rabbit_3
+    trigger: rabbit_appears
+    lines:
+      - [mika, "Is that one of my summoned rabbits? No wait, it's a real one!"]
+      - [luna, "Real rabbits don't sparkle. That's how you tell."]
+  # ---- twig / howl ---------------------------------------------------------------------
+  - id: twig_1
+    trigger: after_twig
+    lines:
+      - [mika, "What was that? On the left?", surprised]
+      - [luna, "A twig. Probably a deer. Probably."]
+  - id: twig_2
+    trigger: after_twig
+    lines:
+      - [luna, "Something stepped on a branch over there."]
+      - [mika, "Hello? If you're a monster, please be a cute one."]
+  - id: twig_3
+    trigger: after_twig
+    lines:
+      - [mika, "Luna, you go check."]
+      - [luna, "You're the one with the magic wand."]
+  - id: howl_1
+    trigger: after_howl
+    lines:
+      - [mika, "Okay that was a howl. That was definitely a howl.", surprised]
+      - [luna, "It's very far away. Stay close anyway."]
+  - id: howl_2
+    trigger: after_howl
+    lines:
+      - [luna, "Wolves howl to find each other. It isn't about us."]
+      - [mika, "I'm going to howl back so they know we're friends."]
+      - [luna, "Please don't."]
+  # ---- frog ----------------------------------------------------------------------------
+  - id: frog_1
+    trigger: after_frog
+    lines:
+      - [mika, "A frog! By the water! Look at his little face!", happy]
+      - [luna, "He looks very unimpressed with us."]
+  - id: frog_2
+    trigger: after_frog
+    lines:
+      - [luna, "A frog, sitting right by the water."]
+      - [mika, "Mister Frog, have you seen any ancient ruins lately?"]
+  - id: frog_3
+    trigger: after_frog
+    lines:
+      - [mika, "Ribbit! Ribbit!"]
+      - [luna, "He's not going to answer you."]
+  - id: frog_magic_before_1
+    trigger: frog_magic_before
+    lines:
+      - [mika, "Watch this. I'm going to make the frog do a magic trick."]
+      - [luna, "Mika, leave the frog alone."]
+  - id: frog_magic_before_2
+    trigger: frog_magic_before
+    lines:
+      - [mika, "I've always wanted to try a vanishing spell on a frog."]
+      - [luna, "That sounds like a sentence nobody should say."]
+  - id: frog_vanished_1
+    trigger: frog_vanished
+    lines:
+      - [luna, "The frog is gone. Where did it go?", surprised]
+      - [mika, "Somewhere nice! Probably! I'll learn the bring-back spell later."]
+  - id: frog_vanished_2
+    trigger: frog_vanished
+    lines:
+      - [mika, "Poof! Frog gone! Did you see that?", happy]
+      - [luna, "I saw it. The frog did not consent to that."]
+  # ---- wind / bell / stars / fireflies ----------------------------------------------------
+  - id: wind_1
+    trigger: wind_gust
+    lines:
+      - [mika, "My hat! Hold my hat!", surprised]
+      - [luna, "Hold your own hat."]
+  - id: wind_2
+    trigger: wind_gust
+    lines:
+      - [luna, "That wind came out of nowhere."]
+  - id: wind_3
+    trigger: wind_gust
+    lines:
+      - [mika, "Woo! That one almost blew me back to the city!"]
+  - id: bell_1
+    trigger: city_bell
+    lines:
+      - [luna, "The clock tower. It's later than I thought."]
+      - [mika, "The best adventures start after bedtime."]
+  - id: bell_2
+    trigger: city_bell
+    lines:
+      - [mika, "Ding dong! That's the adventure bell!"]
+      - [luna, "It's the midnight bell."]
+      - [mika, "Adventure bell."]
+  - id: star_1
+    trigger: shooting_star
+    lines:
+      - [mika, "Shooting star! Make a wish, quick!", happy]
+      - [luna, "I wished for you to stop yelling. Let's see if it works."]
+  - id: star_2
+    trigger: shooting_star
+    lines:
+      - [luna, "That was a meteor. Tiny bits of space dust burning up."]
+      - [mika, "You made it sound less magical and somehow more magical."]
+  - id: star_3
+    trigger: shooting_star
+    lines:
+      - [mika, "Did you see it? Did you see it?"]
+      - [luna, "I saw it. It was beautiful."]
+  - id: fireflies_1
+    trigger: fireflies
+    lines:
+      - [mika, "The fireflies are dancing around us!", happy]
+      - [luna, "They're looking for each other. Like tiny lanterns."]
+  - id: fireflies_2
+    trigger: fireflies
+    lines:
+      - [luna, "So many fireflies tonight."]
+      - [mika, "It's like the stars came down to say hi."]
+  # ---- water / rocks / thunder / chime --------------------------------------------------------
+  - id: splash_1
+    trigger: river_splash
+    lines:
+      - [luna, "Something jumped in the water."]
+      - [mika, "A fish! Or a river spirit! Or a fish spirit!"]
+  - id: splash_2
+    trigger: river_splash
+    lines:
+      - [mika, "Splash! I hope that wasn't my snacks."]
+  - id: rocks_1
+    trigger: falling_rocks
+    lines:
+      - [luna, "Rocks, up on the slope. Let's not stand right under them."]
+      - [mika, "Moving! Moving away from the rocks!"]
+  - id: rocks_2
+    trigger: falling_rocks
+    lines:
+      - [mika, "The mountain is throwing pebbles at us!", surprised]
+      - [luna, "It's gravity, not the mountain."]
+  - id: thunder_1
+    trigger: thunder
+    lines:
+      - [mika, "Thunder! Big thunder!", surprised]
+      - [luna, "Count the seconds after the flash to know how far it is."]
+  - id: thunder_2
+    trigger: thunder
+    lines:
+      - [luna, "That one was close."]
+      - [mika, "I'm not hiding behind you. I'm guarding your back."]
+  - id: chime_1
+    trigger: ruins_chime
+    lines:
+      - [luna, "Did you hear that chime? From the stones on the left."]
+      - [mika, "The ruins are singing to us!"]
+  - id: chime_2
+    trigger: ruins_chime
+    lines:
+      - [mika, "That sounded like magic. Old magic."]
+      - [luna, "Or the wind in a hollow stone. Also a little magic."]

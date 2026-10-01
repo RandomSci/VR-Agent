@@ -1,0 +1,327 @@
+# Quiet-stretch banter. Picked only when its conditions hold right now, never
+# twice in a row, with long cooldowns so hours of stream stay fresh.
+# Relationship continuity uses a few small values (mood: mika.annoyance,
+# luna.annoyance) and flags (luna_wrong_turn, mika_spell_failed, frog_vanished).
+
+exchanges:
+  # ---- anywhere ------------------------------------------------------------
+  - id: b_any_1
+    trigger: banter
+    lines:
+      - [mika, "Luna, what's the first thing you'll do when we find the ruins?"]
+      - [luna, "Sit down. Then look at the stars for a very long time."]
+  - id: b_any_2
+    trigger: banter
+    lines:
+      - [luna, "You're humming again."]
+      - [mika, "It's my adventure theme song. It goes, da da da, DAAA."]
+  - id: b_any_3
+    trigger: banter
+    lines:
+      - [mika, "Do you think the ruins have a gift shop?"]
+      - [luna, "They're ancient ruins, Mika."]
+      - [mika, "So that's a maybe."]
+  - id: b_any_4
+    trigger: banter
+    lines:
+      - [luna, "Hey chat. If you're just arriving, we're on our way to the Astral Ruins."]
+      - [mika, "Grab a snack and come along!"]
+  - id: b_any_5
+    trigger: banter
+    lines:
+      - [mika, "I bet I could fly us there on my broom."]
+      - [luna, "You don't have a broom."]
+      - [mika, "I bet I could fly us there on a broom."]
+  - id: b_any_6
+    trigger: banter
+    lines:
+      - [luna, "Fun fact. Some of the stars on this chart don't exist anymore."]
+      - [mika, "What? Where did they go?"]
+      - [luna, "Their light is still travelling. We're seeing the past."]
+      - [mika, "That's so spooky and so beautiful."]
+  - id: b_any_7
+    trigger: banter
+    lines:
+      - [mika, "Rate my walking style from one to ten."]
+      - [luna, "Seven. You bounce too much."]
+      - [mika, "Bouncing is the best part!"]
+  - id: b_any_8
+    trigger: banter
+    lines:
+      - [luna, "I like this. Just walking, and talking, and nothing urgent."]
+      - [mika, "Me too. Don't tell anyone I said something calm."]
+  - id: b_any_9
+    trigger: banter
+    lines:
+      - [mika, "If we find treasure, I'm buying a castle made of cake."]
+      - [luna, "It would melt. Or get eaten. By you."]
+  - id: b_any_10
+    trigger: banter
+    lines:
+      - [luna, "Are your feet tired?"]
+      - [mika, "My feet are never tired. My feet are legendary."]
+  - id: b_any_11
+    trigger: banter
+    lines:
+      - [mika, "Luna, tell me a fact. A weird one."]
+      - [luna, "A day on Venus is longer than its year."]
+      - [mika, "Venus needs to get its life together."]
+  - id: b_any_12
+    trigger: banter
+    lines:
+      - [mika, "Chat is so quiet. Are they sleeping? Hi, sleepy chat!"]
+      - [luna, "Let them relax. They're watching the scenery."]
+  - id: b_any_13
+    trigger: banter
+    lines:
+      - [luna, "Why did you want to come on this trip, really?"]
+      - [mika, "Because you looked so happy when you found that chart."]
+      - [luna, "Oh."]
+  - id: b_any_14
+    trigger: banter
+    lines:
+      - [mika, "Okay, adventure game. I spy with my little eye, something dark."]
+      - [luna, "It's nighttime. Everything is dark."]
+  - id: b_any_15
+    trigger: banter
+    lines:
+      - [luna, "You know, you're pretty good company on a long walk."]
+      - [mika, "Pretty good? I'm the best company!", happy]
+
+  # ---- city ------------------------------------------------------------------------
+  - id: b_city_1
+    trigger: banter
+    when: {region_tag: [city]}
+    lines:
+      - [mika, "Everyone in the city is asleep and we're sneaking out on an adventure."]
+      - [luna, "It does feel a little rebellious."]
+  - id: b_city_2
+    trigger: banter
+    when: {region_tag: [city]}
+    lines:
+      - [luna, "The city lights hide most of the stars."]
+      - [mika, "Then let's get out of here and find them!"]
+  - id: b_city_3
+    trigger: banter
+    when: {region_tag: [city]}
+    lines:
+      - [mika, "Should we have left a note?"]
+      - [luna, "I did. It says gone stargazing, back eventually."]
+
+  # ---- fields ------------------------------------------------------------------------
+  - id: b_fields_1
+    trigger: banter
+    when: {region_tag: [fields]}
+    lines:
+      - [mika, "The sky is so big out here without buildings."]
+      - [luna, "This is what it looked like before the city."]
+  - id: b_fields_2
+    trigger: banter
+    when: {region_tag: [fields], time: [dusk]}
+    lines:
+      - [luna, "The sunset is turning everything orange."]
+      - [mika, "Even you. You look like a peach."]
+  - id: b_fields_3
+    trigger: banter
+    when: {region_tag: [fields]}
+    lines:
+      - [mika, "I think a cow is staring at us."]
+      - [luna, "That's a rock."]
+      - [mika, "A very judgmental rock."]
+
+  # ---- forest ------------------------------------------------------------------------
+  - id: b_forest_1
+    trigger: banter
+    when: {region_tag: [forest]}
+    lines:
+      - [mika, "I get why it's called the Whispering Forest. The trees keep rustling."]
+      - [luna, "It's the wind through the pine needles."]
+  - id: b_forest_2
+    trigger: banter
+    when: {region_tag: [forest], time: [night]}
+    lines:
+      - [luna, "Forests at night sound completely different."]
+      - [mika, "Like a thousand tiny creatures having a party."]
+  - id: b_forest_3
+    trigger: banter
+    when: {region_tag: [forest]}
+    lines:
+      - [mika, "If a tree falls in the forest and nobody hears it..."]
+      - [luna, "We'd hear it. We're right here."]
+  - id: b_forest_4
+    trigger: banter
+    when: {region_tag: [forest], discovered: [trail_marker]}
+    lines:
+      - [luna, "Since we found that trail marker, I feel a lot better about this."]
+      - [mika, "The glowing rock believes in us."]
+  - id: b_forest_5
+    trigger: banter
+    when: {region_tag: [magical]}
+    lines:
+      - [mika, "The air feels tingly here. Like magic."]
+      - [luna, "I feel it too, and I don't even believe in tingly."]
+
+  # ---- water ---------------------------------------------------------------------------
+  - id: b_water_1
+    trigger: banter
+    when: {region_tag: [water]}
+    lines:
+      - [mika, "The river sounds so peaceful."]
+      - [luna, "Water always sounds like it's in no hurry."]
+  - id: b_water_2
+    trigger: banter
+    when: {region_tag: [water], time: [dawn]}
+    lines:
+      - [luna, "We walked all night. The sun is coming up."]
+      - [mika, "Our first sunrise of the adventure!", happy]
+  - id: b_water_3
+    trigger: banter
+    when: {region_tag: [water]}
+    lines:
+      - [mika, "Can I skip a stone?"]
+      - [luna, "Can you skip a stone?"]
+      - [mika, "Emotionally, yes."]
+
+  # ---- mountain -------------------------------------------------------------------------
+  - id: b_mountain_1
+    trigger: banter
+    when: {region_tag: [mountain]}
+    lines:
+      - [mika, "It's so cold. Luna, lend me your scarf."]
+      - [luna, "I'm not wearing a scarf."]
+      - [mika, "Then lend me your warmth."]
+  - id: b_mountain_2
+    trigger: banter
+    when: {region_tag: [mountain]}
+    lines:
+      - [luna, "The air is thinner up here. Breathe slowly."]
+      - [mika, "Breathing slowly. Very slowly. Is this slow enough?"]
+  - id: b_mountain_3
+    trigger: banter
+    when: {region_tag: [mountain], weather: [fog]}
+    lines:
+      - [mika, "The fog makes it feel like we're walking inside a cloud."]
+      - [luna, "Technically, we are."]
+
+  # ---- ancient --------------------------------------------------------------------------
+  - id: b_ancient_1
+    trigger: banter
+    when: {region_tag: [ancient]}
+    lines:
+      - [luna, "Whoever built these pillars cared a lot about the sky."]
+      - [mika, "Kindred spirits. Stargazing nerds, like you."]
+  - id: b_ancient_2
+    trigger: banter
+    when: {region_tag: [ancient]}
+    lines:
+      - [mika, "Do you think they had snacks back then?"]
+      - [luna, "Probably dried fruit."]
+      - [mika, "Tragic."]
+  - id: b_ancient_3
+    trigger: banter
+    when: {region_tag: [destination]}
+    lines:
+      - [mika, "I can't believe we're really here."]
+      - [luna, "Me neither. I keep expecting to wake up."]
+
+  # ---- progress -------------------------------------------------------------------------
+  - id: b_progress_early
+    trigger: banter
+    when: {max_progress: 0.2}
+    lines:
+      - [mika, "How far is it to the ruins?"]
+      - [luna, "Far. We've barely started."]
+  - id: b_progress_mid
+    trigger: banter
+    when: {min_progress: 0.4, max_progress: 0.7}
+    lines:
+      - [luna, "We're about halfway, if the chart is right."]
+      - [mika, "Halfway to legendary!"]
+  - id: b_progress_late
+    trigger: banter
+    when: {min_progress: 0.75}
+    lines:
+      - [mika, "We're so close now. I can feel it in my hat."]
+      - [luna, "Your hat has no sensors, Mika."]
+
+  # ---- relationship continuity ----------------------------------------------------------
+  - id: b_tease_wrong_turn_1
+    trigger: banter
+    when: {flags: [luna_wrong_turn]}
+    lines:
+      - [mika, "Are you sure this is the way? Just checking. For no reason."]
+      - [luna, "One wrong turn. One."]
+  - id: b_tease_wrong_turn_2
+    trigger: banter
+    when: {flags: [luna_wrong_turn], mood: {mika.annoyance: ">=2"}}
+    lines:
+      - [mika, "Maybe I should hold the chart for a while."]
+      - [luna, "You'd use it as a fan."]
+  - id: b_tease_spell_1
+    trigger: banter
+    when: {flags: [mika_spell_failed]}
+    lines:
+      - [luna, "Any more artistic smoke planned today?"]
+      - [mika, "That was ONE spell. Let it go.", pout]
+  - id: b_tease_spell_2
+    trigger: banter
+    when: {flags: [mika_spell_failed, luna_wrong_turn]}
+    lines:
+      - [mika, "Okay. I fizzled a spell, you got us lost. We're even."]
+      - [luna, "Fine. Even."]
+  - id: b_frog_memory
+    trigger: banter
+    when: {flags: [frog_vanished], not_visible: [frog]}
+    lines:
+      - [luna, "I keep thinking about that frog you vanished."]
+      - [mika, "He's fine! He's on a little vacation. Probably."]
+  - id: b_grumpy
+    trigger: banter
+    when: {mood: {luna.annoyance: ">=2"}}
+    lines:
+      - [mika, "Are you still mad about the path thing?"]
+      - [luna, "I'm not mad. I'm just walking. Loudly."]
+  - id: b_made_up
+    trigger: banter
+    when: {mood: {mika.annoyance: "<1", luna.annoyance: "<1"}, min_progress: 0.3}
+    lines:
+      - [luna, "For the record, I'm glad you're the one I'm doing this with."]
+      - [mika, "Aww. Me too. Even when you're a know it all.", happy]
+
+  # ---- weather-aware banter ---------------------------------------------------------------
+  - id: b_rain_1
+    trigger: banter
+    when: {weather: [rain, drizzle]}
+    lines:
+      - [mika, "Rain makes everything smell so fresh."]
+      - [luna, "And my socks so wet."]
+  - id: b_rain_2
+    trigger: banter
+    when: {weather: [rain, storm]}
+    lines:
+      - [luna, "We should find somewhere dry soon."]
+      - [mika, "Or we just become rain people. Embrace it."]
+  - id: b_fog_1
+    trigger: banter
+    when: {weather: [fog]}
+    lines:
+      - [mika, "I keep thinking the fog has faces in it."]
+      - [luna, "That's pareidolia. Your brain looking for faces."]
+  - id: b_wind_1
+    trigger: banter
+    when: {weather: [wind]}
+    lines:
+      - [luna, "This wind is relentless."]
+      - [mika, "My hat is fighting for its life."]
+  - id: b_snow_1
+    trigger: banter
+    when: {weather: [snow]}
+    lines:
+      - [mika, "Snow! Can we build a snow witch?"]
+      - [luna, "Later. When we're not on a mountain."]
+  - id: b_clear_night
+    trigger: banter
+    when: {weather: [clear], time: [night]}
+    lines:
+      - [luna, "Clear sky tonight. Perfect for the chart."]
+      - [mika, "The stars came out just for us."]

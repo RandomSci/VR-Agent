@@ -1,0 +1,316 @@
+# Arriving, leaving and new objectives. Conditioned on the real place/region
+# so the girls only ever name where they actually are.
+# lines: [who, text] or [who, text, reaction]
+
+exchanges:
+  # ---- arrivals: Night City ------------------------------------------------
+  - id: arrive_rooftop_1
+    trigger: arrive
+    when: {place: [rooftop]}
+    lines:
+      - [mika, "Okay! Snacks, star chart, wand. We are so ready.", happy]
+      - [luna, "You packed four bags of candy and one sock."]
+  - id: arrive_back_streets_1
+    trigger: arrive
+    when: {place: [back_streets]}
+    lines:
+      - [luna, "Back streets. Quieter, and nobody asks why a witch is out at midnight."]
+      - [mika, "Witches are always out at midnight. It's basically our job."]
+  - id: arrive_back_streets_2
+    trigger: arrive
+    when: {place: [back_streets]}
+    lines:
+      - [mika, "Shh. Sneaky mode activated."]
+      - [luna, "Your hat has a bell on it, Mika."]
+  - id: arrive_station_1
+    trigger: arrive
+    when: {place: [station_road]}
+    lines:
+      - [luna, "The old station road. The chart says east from here."]
+      - [mika, "East! I love east. East has sunrises."]
+  - id: arrive_city_edge_1
+    trigger: arrive
+    when: {place: [city_edge]}
+    lines:
+      - [mika, "Look back. The whole city is glowing."]
+      - [luna, "It looks smaller from out here. Kind of cozy."]
+  # ---- Outskirts ---------------------------------------------------------------
+  - id: arrive_farm_road_1
+    trigger: arrive
+    when: {place: [farm_road]}
+    lines:
+      - [luna, "Farm road. Long, straight, and very flat."]
+      - [mika, "Perfect for skipping!", happy]
+  - id: arrive_wheat_1
+    trigger: arrive
+    when: {place: [wheat_fields]}
+    lines:
+      - [mika, "Wheat fields! It smells like bread out here."]
+      - [luna, "It smells like dirt. Bread comes later."]
+  - id: arrive_hill_1
+    trigger: arrive
+    when: {place: [hill_crest]}
+    lines:
+      - [luna, "Top of the hill. You can see the forest from here."]
+      - [mika, "It's so dark. And big. And a little spooky."]
+  - id: arrive_forest_gate_1
+    trigger: arrive
+    when: {place: [forest_gate]}
+    lines:
+      - [mika, "The Whispering Forest. Why is it called whispering?"]
+      - [luna, "We are about to find out, I think."]
+  # ---- Whispering Forest -------------------------------------------------------------
+  - id: arrive_trail_1
+    trigger: arrive
+    when: {place: [forest_trail]}
+    lines:
+      - [luna, "The chart mentions markers along this trail. Stones that glow."]
+      - [mika, "A treasure hunt! In the dark! My favorite kind."]
+  - id: arrive_clearing_1
+    trigger: arrive
+    when: {place: [mossy_clearing]}
+    lines:
+      - [mika, "Ooh, a clearing. Everything is so soft and mossy."]
+      - [luna, "Don't lie down. You'll fall asleep."]
+  - id: arrive_camp_1
+    trigger: arrive
+    when: {place: [campsite]}
+    lines:
+      - [luna, "This is a good spot to rest for a while."]
+      - [mika, "Campfire time! I'll light it. Carefully. Mostly carefully.", happy]
+  # ---- Deep Forest ------------------------------------------------------------------------
+  - id: arrive_pond_1
+    trigger: arrive
+    when: {place: [moon_pond]}
+    lines:
+      - [luna, "The moon pond. It's exactly where the chart said."]
+      - [mika, "It's so still. Like a mirror for the whole sky.", happy]
+  - id: arrive_northern_1
+    trigger: arrive
+    when: {place: [northern_trail]}
+    lines:
+      - [mika, "The northern trail! Wait. Is that a log in the way?"]
+      - [luna, "It is very much a log in the way."]
+  - id: arrive_shrine_1
+    trigger: arrive
+    when: {place: [shrine_path]}
+    lines:
+      - [luna, "A tiny shrine. Someone used to come all the way out here."]
+      - [mika, "It's so small and cute. Hello, little shrine."]
+  # ---- River ----------------------------------------------------------------------------------
+  - id: arrive_riverbank_1
+    trigger: arrive
+    when: {place: [riverbank]}
+    lines:
+      - [mika, "Water! Real, sparkly, morning water!", happy]
+      - [luna, "The Silverrun. We need to find a way across."]
+  - id: arrive_bridge_1
+    trigger: arrive
+    when: {place: [bridge]}
+    lines:
+      - [luna, "There's the bridge."]
+      - [mika, "Is it supposed to swing like that?", surprised]
+  - id: arrive_reeds_1
+    trigger: arrive
+    when: {place: [reed_bend]}
+    lines:
+      - [mika, "So many reeds. They're taller than me."]
+      - [luna, "Most things are taller than you."]
+  - id: arrive_stones_1
+    trigger: arrive
+    when: {place: [river_rocks]}
+    lines:
+      - [luna, "Stepping stones. One at a time, please."]
+      - [mika, "One at a time is boring. Two at a time is style."]
+  # ---- Misty Pass -----------------------------------------------------------------------------
+  - id: arrive_switchbacks_1
+    trigger: arrive
+    when: {place: [switchbacks]}
+    lines:
+      - [mika, "It's so cold up here. My nose is freezing."]
+      - [luna, "The switchbacks go up for a long way. Pace yourself."]
+  - id: arrive_ridge_1
+    trigger: arrive
+    when: {place: [high_ridge]}
+    lines:
+      - [luna, "The high ridge. We're above half the clouds."]
+      - [mika, "I could touch one if I jumped. Probably."]
+  - id: arrive_saddle_1
+    trigger: arrive
+    when: {place: [fog_saddle]}
+    lines:
+      - [mika, "I can't see anything. Luna? Are you still there?"]
+      - [luna, "Right next to you. There's a crystal here, though."]
+  # ---- Ancient Valley ------------------------------------------------------------------------
+  - id: arrive_pillars_1
+    trigger: arrive
+    when: {place: [pillar_road]}
+    lines:
+      - [luna, "These pillars are ancient. Older than anything in the city."]
+      - [mika, "Somebody built a whole road just for stargazing? Respect."]
+  - id: arrive_riverbed_1
+    trigger: arrive
+    when: {place: [dry_riverbed]}
+    lines:
+      - [mika, "A river with no water. That's just a very long hole."]
+      - [luna, "A dry riverbed. Look, there's something on the ground."]
+  - id: arrive_gate_1
+    trigger: arrive
+    when: {place: [gate_ruins]}
+    lines:
+      - [luna, "The star gate. The chart ends here, almost."]
+      - [mika, "Almost is so close! I can feel it."]
+  # ---- Astral Ruins ----------------------------------------------------------------------------
+  - id: arrive_arches_1
+    trigger: arrive
+    when: {place: [outer_arches]}
+    lines:
+      - [mika, "Luna. Luna. Look up. The islands are floating.", surprised]
+      - [luna, "The Astral Ruins. They're real."]
+  - id: arrive_plaza_1
+    trigger: arrive
+    when: {place: [star_plaza]}
+    lines:
+      - [luna, "The star plaza. The crystal is humming."]
+      - [mika, "It sounds like a song. A very old one."]
+  - id: arrive_heart_1
+    trigger: arrive
+    when: {place: [observatory_heart]}
+    lines:
+      - [mika, "This is it. The very middle of everything."]
+      - [luna, "The old observatory. You can see every star from here."]
+
+  # ---- generic arrivals (any place, used for variety) ---------------------------------------
+  - id: arrive_generic_night
+    trigger: arrive
+    when: {time: [night]}
+    weight: 0.3
+    lines:
+      - [mika, "New place! Hi, new place."]
+      - [luna, "It can't hear you."]
+  - id: arrive_generic_quiet
+    trigger: arrive
+    weight: 0.3
+    lines:
+      - [luna, "Let's look around here for a bit."]
+
+  # ---- leaving ---------------------------------------------------------------------------------
+  - id: depart_1
+    trigger: depart
+    lines:
+      - [luna, "Okay. Onward."]
+      - [mika, "Onward! Adventure waits for no witch!", happy]
+  - id: depart_2
+    trigger: depart
+    lines:
+      - [mika, "Bye bye, this place! You were nice!"]
+  - id: depart_3
+    trigger: depart
+    lines:
+      - [luna, "Let's keep moving before it gets any later."]
+  - id: depart_4
+    trigger: depart
+    when: {time: [night]}
+    lines:
+      - [mika, "Stay close, okay? It's dark."]
+      - [luna, "I was going to say the same to you."]
+  - id: depart_5
+    trigger: depart
+    when: {region_tag: [water]}
+    lines:
+      - [luna, "Watch your step. The rocks are slippery."]
+  - id: depart_6
+    trigger: depart
+    when: {region_tag: [mountain]}
+    lines:
+      - [mika, "More climbing? My legs are writing a complaint letter."]
+  - id: depart_magic
+    trigger: depart_magic
+    lines:
+      - [mika, "Hold on, I'll take us there the witchy way!", happy]
+  - id: depart_magic_2
+    trigger: depart_magic
+    lines:
+      - [mika, "Everyone hold still. Sparkle travel in three, two, one!"]
+      - [luna, "I will never get used to this."]
+  - id: depart_7
+    trigger: depart
+    when: {min_progress: 0.5}
+    lines:
+      - [luna, "We're more than halfway there, you know."]
+      - [mika, "Halfway! That's basically there!"]
+
+  # ---- new objectives ---------------------------------------------------------------------------
+  - id: obj_leave_city
+    trigger: objective_new
+    when: {objective: [leave_city]}
+    lines:
+      - [luna, "Next, the old road out of town."]
+  - id: obj_farm_road
+    trigger: objective_new
+    when: {objective: [farm_road]}
+    lines:
+      - [luna, "The chart says follow the farm road east."]
+      - [mika, "East again! East is so reliable."]
+  - id: obj_forest_edge
+    trigger: objective_new
+    when: {objective: [forest_edge]}
+    lines:
+      - [luna, "Now we find the edge of the Whispering Forest."]
+  - id: obj_trail_markers
+    trigger: objective_new
+    when: {objective: [trail_markers]}
+    lines:
+      - [luna, "We need to find the trail markers. Glowing stones, apparently."]
+  - id: obj_make_camp
+    trigger: objective_new
+    when: {objective: [make_camp]}
+    lines:
+      - [mika, "Can we make camp? Please? My feet say please too."]
+      - [luna, "Yes. We've earned a rest."]
+  - id: obj_moon_pond
+    trigger: objective_new
+    when: {objective: [moon_pond]}
+    lines:
+      - [luna, "The chart points to a moon pond deeper in."]
+  - id: obj_northern
+    trigger: objective_new
+    when: {objective: [northern_trail]}
+    lines:
+      - [luna, "From the pond, the trail should go north."]
+  - id: obj_cross_river
+    trigger: objective_new
+    when: {objective: [cross_river]}
+    lines:
+      - [luna, "The river's next. We have to get across it."]
+  - id: obj_upstream
+    trigger: objective_new
+    when: {objective: [upstream]}
+    lines:
+      - [luna, "Now we follow the river upstream toward the mountains."]
+  - id: obj_climb
+    trigger: objective_new
+    when: {objective: [climb_pass]}
+    lines:
+      - [mika, "The Misty Pass. Why does everything have a scary name?"]
+      - [luna, "It's to keep tourists away."]
+  - id: obj_fog
+    trigger: objective_new
+    when: {objective: [through_fog]}
+    lines:
+      - [luna, "The chart says the way through the fog is marked by light."]
+  - id: obj_valley
+    trigger: objective_new
+    when: {objective: [cross_valley]}
+    lines:
+      - [luna, "We cross the Ancient Valley next."]
+  - id: obj_gate
+    trigger: objective_new
+    when: {objective: [star_gate]}
+    lines:
+      - [mika, "The star gate! We're so close now!", happy]
+  - id: obj_ruins
+    trigger: objective_new
+    when: {objective: [enter_ruins]}
+    lines:
+      - [luna, "The ruins are right ahead. Let's explore."]

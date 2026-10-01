@@ -394,6 +394,7 @@ class RoomConfig:
             "crossfade_seconds": 1.6,
         }
     )
+    adventure: dict[str, Any] = field(default_factory=dict)  # raw adventure: block
     speech_window_seconds: float = 120.0
     game_pause_after_seconds: float = 90.0
     game_end_after_seconds: float = 180.0
@@ -665,6 +666,7 @@ def load_room(
         "duck_to": _clamp(music.get("duck_to"), 0, 1, 0.35),
         "crossfade_seconds": _clamp(music.get("crossfade_seconds"), 0.2, 6, 1.6),
     }
+    room.adventure = dict(spec.get("adventure")) if isinstance(spec.get("adventure"), dict) else {}
     cost = spec.get("cost") if isinstance(spec.get("cost"), dict) else {}
     room.speech_window_seconds = _clamp(cost.get("speech_window_seconds"), 10, 900, 120)
     games = spec.get("games") if isinstance(spec.get("games"), dict) else {}

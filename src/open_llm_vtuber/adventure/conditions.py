@@ -33,6 +33,11 @@ LIST_KEYS = (
     "not_recent",
     "last_game",
     "activity",
+    "place",
+    "not_place",
+    "place_tag",
+    "visible",
+    "not_visible",
 )
 NUMBER_KEYS = (
     "min_region_minutes",
@@ -64,6 +69,9 @@ class Context:
     since_rest: float = 0.0
     progress: float = 0.0  # whole journey, 0..1
     last_game: str = ""
+    place: str = ""
+    place_tags: frozenset[str] = frozenset()
+    visible: frozenset[str] = frozenset()  # object TYPES visible right now
 
 
 def _as_list(value: Any) -> list[str]:
@@ -161,6 +169,16 @@ def matches(when: Any, ctx: Context) -> bool:
         if key == "not_recent" and _any(items, ctx.recent):
             return False
         if key == "last_game" and ctx.last_game not in items:
+            return False
+        if key == "place" and ctx.place not in items:
+            return False
+        if key == "not_place" and ctx.place in items:
+            return False
+        if key == "place_tag" and not _any(items, ctx.place_tags):
+            return False
+        if key == "visible" and not all(v in ctx.visible for v in items):
+            return False
+        if key == "not_visible" and _any(items, ctx.visible):
             return False
         if key == "mood":
             for mood_key, expr in (value or {}).items():

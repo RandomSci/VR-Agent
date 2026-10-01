@@ -1,0 +1,314 @@
+# Activities, discoveries, obstacles, setbacks, rests and milestones.
+# Actions have consequences in the world state: Mika's spell makes a frog
+# vanish (screen and state), a glow stone really starts glowing, a discovery
+# is remembered, a wrong turn really costs time (delay: minutes).
+
+events:
+  # ---- activities --------------------------------------------------------
+  magic_practice:
+    category: activity
+    when: {visible: [glow_stone], flags_none: [practiced_here]}
+    cooldown: 50
+    activity: practicing a glow spell
+    note: Mika practiced a spell on the glowing stone
+    beats:
+      - say: {trigger: magic_practice_before}
+      - magic: {target: clearing_stone}
+      - say: {trigger: magic_practice_after}
+      - set: {flags: [practiced_here]}
+
+  lantern_glow:
+    category: activity
+    when: {visible: [lantern]}
+    cooldown: 60
+    activity: brightening the lantern with magic
+    beats:
+      - say: {trigger: lantern_magic}
+      - magic: {target: roof_lantern}
+
+  shrine_light:
+    category: activity
+    when: {visible: [shrine], flags_none: [shrine_lit]}
+    cooldown: 60
+    activity: lighting the little shrine
+    note: Mika lit the little shrine with a spell
+    beats:
+      - look: {who: all, at: "object:forest_shrine", seconds: 3}
+      - say: {trigger: shrine}
+      - magic: {target: forest_shrine}
+      - set: {flags: [shrine_lit]}
+
+  spell_fizzles:
+    category: activity
+    cooldown: 60
+    activity: showing off a new spell
+    note: Mika tried a fancy spell and it fizzled into smoke
+    beats:
+      - say: {trigger: spell_boast}
+      - action: {who: mika, name: magic_fail, seconds: 3}
+      - sfx: {name: fizzle, from: LEFT}
+      - react: {who: luna, reaction: suspicious}
+      - say: {trigger: spell_fizzled}
+      - set: {mood: {mika.annoyance: 1}, flags: [mika_spell_failed]}
+
+  summon_bunny:
+    category: activity
+    cooldown: 70
+    activity: summoning her rabbit
+    note: Mika summoned her little rabbit with a golden spell
+    beats:
+      - say: {trigger: summon_before}
+      - action: {who: mika, name: summon_rabbit, seconds: 5}
+      - say: {trigger: summon_after}
+
+  map_reading:
+    category: activity
+    cooldown: 35
+    activity: reading the star chart
+    beats:
+      - react: {who: luna, reaction: thinking}
+      - say: {trigger: map_reading}
+
+  stargazing:
+    category: activity
+    when: {time: [night], weather: [clear, fireflies]}
+    cooldown: 45
+    activity: stargazing
+    beats:
+      - look: {who: all, at: UP, seconds: 5}
+      - say: {trigger: stargazing}
+      - hold: 20
+
+  snack_break:
+    category: activity
+    cooldown: 50
+    activity: having a snack
+    beats:
+      - say: {trigger: snacks}
+
+  little_race:
+    category: activity
+    when: {region_tag: [open, fields]}
+    cooldown: 60
+    activity: racing each other a few steps
+    beats:
+      - say: {trigger: race_start}
+      - gesture: {who: all, type: hop}
+      - say: {trigger: race_end}
+
+  frog_magic:
+    category: activity
+    when: {visible: [frog]}
+    cooldown: 90
+    activity: trying a spell on the frog
+    beats:
+      - look: {who: all, at: "object:frog", seconds: 3}
+      - say: {trigger: frog_magic_before}
+      - magic: {target: frog}
+      - wait: 1.0
+      - say: {trigger: frog_vanished}
+      - set: {flags: [frog_vanished]}
+
+  # ---- discoveries --------------------------------------------------------
+  trail_marker:
+    category: discovery
+    when: {region_tag: [forest], not_discovered: [trail_marker]}
+    cooldown: 40
+    note: they found a glowing trail marker stone
+    beats:
+      - sfx: {name: discover, from: RIGHT}
+      - spawn: {kind: glow_stone, id: marker_stone, zone: right, state: glowing}
+      - look: {who: all, at: "object:marker_stone", seconds: 4}
+      - react: {who: luna, reaction: happy}
+      - say: {trigger: trail_marker}
+      - set: {discover: trail_marker}
+
+  glowing_mushrooms:
+    category: discovery
+    when: {region_tag: [forest, magical], not_discovered: [moon_mushrooms], time: [night]}
+    cooldown: 60
+    note: they found a patch of glowing moon mushrooms
+    beats:
+      - spawn: {kind: mushrooms, id: moon_mushrooms, zone: far_right, state: glowing}
+      - sfx: {name: discover, from: RIGHT}
+      - look: {who: all, at: "object:moon_mushrooms", seconds: 4}
+      - say: {trigger: mushrooms}
+      - set: {discover: moon_mushrooms}
+
+  star_crystal:
+    category: discovery
+    when: {region_tag: [mountain, ancient], not_discovered: [star_crystal]}
+    cooldown: 60
+    note: they found a small star crystal between the rocks
+    beats:
+      - sfx: {name: discover, from: RIGHT}
+      - spawn: {kind: crystal, id: found_crystal, zone: right, state: glowing}
+      - look: {who: all, at: "object:found_crystal", seconds: 4}
+      - react: {who: mika, reaction: celebrate}
+      - say: {trigger: found_crystal}
+      - set: {discover: star_crystal}
+
+  old_scroll:
+    category: discovery
+    when: {visible: [map_scroll], not_discovered: [old_map_piece]}
+    cooldown: 60
+    note: they unrolled an old scroll with half a map on it
+    beats:
+      - look: {who: all, at: "object:old_scroll", seconds: 3}
+      - object_state: {id: old_scroll, state: open, note: they opened the old scroll}
+      - sfx: {name: discover, from: LEFT}
+      - say: {trigger: found_scroll}
+      - set: {discover: old_map_piece}
+
+  # ---- obstacles and setbacks ------------------------------------------------
+  path_split:
+    category: obstacle
+    when: {region_tag: [forest, mountain, fields, ancient], flags_none: [path_argument]}
+    cooldown: 45
+    activity: arguing about which way to go
+    note: the path split in two and they argued about which way to go
+    beats:
+      - formation: apart
+      - say: {trigger: path_split}
+      - set: {flags: [path_argument], mood: {mika.annoyance: 1, luna.annoyance: 1}}
+      - formation: home
+
+  wrong_turn:
+    category: setback
+    when: {flags: [path_argument]}
+    cooldown: 60
+    activity: backtracking after a wrong turn
+    note: they took a wrong turn and had to backtrack
+    beats:
+      - react: {who: mika, reaction: lose}
+      - say: {trigger: wrong_turn}
+      - set: {unset: [path_argument], flags: [luna_wrong_turn], mood: {mika.annoyance: 1}, delay: 4}
+
+  fog_rolls_in:
+    category: obstacle
+    when: {region_tag: [mountain, magical], not_weather: [fog]}
+    cooldown: 60
+    note: fog rolled in and swallowed the trail
+    beats:
+      - weather: fog
+      - formation: gather
+      - say: {trigger: fog}
+      - set: {delay: 3}
+      - formation: home
+
+  storm_shelter:
+    category: obstacle
+    when: {weather: [rain, storm]}
+    cooldown: 60
+    activity: sheltering from the rain
+    note: they huddled together to wait out the rain
+    beats:
+      - formation: gather
+      - say: {trigger: shelter}
+      - hold: 30
+      - formation: home
+
+  wobbly_bridge:
+    category: obstacle
+    when: {visible: [rope_bridge]}
+    cooldown: 40
+    activity: testing the wobbly bridge
+    note: the rope bridge creaked and swayed under them
+    beats:
+      - sfx: {name: creak, from: LEFT}
+      - gesture: {who: mika, type: stumble}
+      - say: {trigger: bridge}
+
+  # ---- rests ----------------------------------------------------------------
+  campfire_rest:
+    category: rest
+    when: {visible: [campfire]}
+    cooldown: 60
+    activity: resting by the campfire
+    beats:
+      - sfx: {name: crackle, from: LEFT}
+      - say: {trigger: campfire}
+      - hold: 70
+      - say: {trigger: rest}
+        chance: 0.7
+      - hold: 45
+
+  short_rest:
+    category: rest
+    cooldown: 40
+    activity: taking a short break
+    beats:
+      - say: {trigger: rest}
+      - hold: 60
+
+  # ---- milestones -------------------------------------------------------------
+  journey_start:
+    category: milestone
+    once: true
+    activity: setting off on the journey
+    note: they set off from the rooftop with the star chart
+    beats:
+      - look: {who: all, at: EACH_OTHER, seconds: 2}
+      - say: {trigger: journey_start}
+
+  city_gate:
+    category: milestone
+    activity: leaving the city behind
+    note: they left the city behind them
+    beats:
+      - look: {who: all, at: LEFT, seconds: 3}
+      - say: {trigger: city_gate}
+
+  frog_by_pond:
+    category: milestone
+    activity: watching a frog by the moon pond
+    note: a frog croaked by the moon pond and hopped out onto a stone
+    beats:
+      - sfx: {name: frog, from: RIGHT}
+      - look: {who: all, at: RIGHT, seconds: 2}
+        wait: 0.8
+      - spawn: {kind: frog, id: frog, zone: pond, state: croaking, seconds: 900}
+      - look: {who: all, at: "object:frog", seconds: 3}
+      - say: {trigger: after_frog}
+
+  clear_log:
+    category: milestone
+    activity: getting past the fallen log
+    note: they found a way past the fallen log blocking the trail
+    beats:
+      - look: {who: all, at: "object:trail_log", seconds: 3}
+      - say: {trigger: obstacle_log}
+      - object_state: {id: trail_log, state: moved, note: they squeezed past the fallen log}
+      - react: {who: luna, reaction: happy}
+
+  cross_bridge:
+    category: milestone
+    activity: crossing the rope bridge
+    note: they crossed the rope bridge one careful step at a time
+    beats:
+      - sfx: {name: creak, from: RIGHT}
+      - say: {trigger: bridge_cross}
+      - object_state: {id: rope_bridge, state: steady}
+
+  light_crystal:
+    category: milestone
+    activity: lighting the crystal to find the way
+    note: Mika lit the fog crystal and its glow showed the way through
+    beats:
+      - look: {who: all, at: "object:fog_crystal", seconds: 3}
+      - say: {trigger: crystal_before}
+      - magic: {target: fog_crystal}
+      - say: {trigger: crystal_lit}
+      - weather: clear
+      - set: {discover: path_through_fog}
+
+  reach_ruins:
+    category: milestone
+    activity: celebrating at the Astral Ruins
+    note: they reached the Astral Ruins at last
+    beats:
+      - sfx: {name: discover, from: LEFT}
+      - look: {who: all, at: UP, seconds: 4}
+      - say: {trigger: arrive_ruins}
+      - gesture: {who: all, type: dance}
+      - say: {trigger: epilogue}

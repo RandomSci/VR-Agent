@@ -10,3 +10,6 @@ import tempfile  # noqa: E402
 # Trivia keeps its question rotation and AI questions in cache/. Tests use a
 # throwaway folder so runs stay repeatable and never touch the real history.
 os.environ.setdefault("VR_AGENT_CACHE_DIR", tempfile.mkdtemp(prefix="vr-agent-test-cache-"))
+
+# The classic room unless a test turns the Adventure World on itself.
+os.environ.setdefault("VR_AGENT_ADVENTURE", "0")

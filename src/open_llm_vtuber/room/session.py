@@ -157,7 +157,46 @@ class RoomSession:
         from .director import ConversationDirector
 
         self.director = ConversationDirector(self, rng=self.rng, clock=clock)
+        self.adventure = self._build_adventure()
         self.traces: deque[dict[str, Any]] = deque(maxlen=300)
+
+    def _build_adventure(self):
+        """The persistent Adventure World, when room.yaml turns it on.
+
+        VR_AGENT_ADVENTURE=0 turns it off (the classic room), =1 forces it on.
+        Any problem here leaves the classic room running.
+        """
+        import os
+        from pathlib import Path
+
+        spec = self.room.adventure or {}
+        env = os.environ.get("VR_AGENT_ADVENTURE")
+        enabled = bool(spec.get("enabled", False)) if env is None else env == "1"
+        if not enabled or not self.room.characters:
+            return None
+        try:
+            from ..adventure import AdventureDirector, StateStore, load_library
+            from ..adventure.dialogue import VoiceClips
+
+            root = Path(spec.get("content_dir") or "room/adventures")
+            library = load_library(root, [c.id for c in self.room.characters])
+            voices = Path(spec.get("voice_dir") or "frontend/vr-agent/voices/adventure")
+            director = AdventureDirector(
+                self,
+                library,
+                adventure_id=str(spec.get("adventure") or ""),
+                store=StateStore(spec["state_file"]) if spec.get("state_file") else StateStore.default(),
+                clips=VoiceClips(voices if spec.get("voice", True) else None),
+                settings=spec.get("pacing") if isinstance(spec.get("pacing"), dict) else None,
+                clock=self.clock,
+            )
+            self.bus.subscribe(ev.GAME_FINISHED, director.on_game_finished)
+            if not director.start():
+                return None
+            return director
+        except Exception as exc:
+            logger.error(f"VR Room: adventure unavailable ({exc}); the classic room keeps running")
+            return None
 
     def trace(self, name: str, **data: Any) -> None:
         """Observability: where time goes in each interaction (developer only)."""
@@ -245,6 +284,8 @@ class RoomSession:
         ops = self.world.expire()
         ops += self.timeline.run()
         ops += self.show.tick()
+        if self.adventure is not None:
+            ops += self.adventure.tick()
         return ops
 
     # ------------------------------------------------------------------
@@ -511,11 +552,15 @@ class RoomSession:
         )
 
     def begin_conversation(self) -> None:
+        if self.adventure is not None:
+            self.adventure.request_pause("conversation")
         if self.show.engine.playing and not self.show.engine.active.paused:
             self._push_soon(self.show.apply(self.show.engine.pause("conversation")))
             self._conversation_paused_game = True
 
     def end_conversation(self) -> None:
+        if self.adventure is not None:
+            self.adventure.release_pause("conversation")
         if self._conversation_paused_game:
             self._conversation_paused_game = False
             self._push_soon(self.show.apply(self.show.engine.resume()))
@@ -584,6 +629,7 @@ class RoomSession:
             "snapshot": self.state.snapshot(),
             # A page that reconnects mid game redraws the board from this.
             "board": self.show.engine.view(),
+            "adventure": self.adventure.hud() if self.adventure else None,
         }
 
     async def _send(self, client_uid: str, payload: dict[str, Any]) -> None:
@@ -697,4 +743,7 @@ class RoomSession:
             "clients": {uid: self._client_models.get(uid, {}) for uid in self._clients},
             "state": self.state.snapshot(),
             "events": self.bus.recent(40),
+            "adventure": self.adventure.status() if self.adventure else None,
+            "world": self.world.describe(),
+            "stage": self.stage.describe(),
         }

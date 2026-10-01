@@ -19,7 +19,7 @@ from typing import Any, Deque, Optional
 
 from loguru import logger
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 MAX_FLAGS = 64
 MAX_DISCOVERED = 48
 MAX_RECENT = 12
@@ -37,15 +37,18 @@ class AdventureState:
 
     region_index: int = 0
     objective_index: int = 0
-    objective_distance: float = 0.0
-    phase: str = "travel"  # travel | event | rest | transition | arrived
+    place_index: int = 0
+    place_arrived: float = 0.0  # active minutes when they arrived at this place
+    place_stay: float = 12.0  # active minutes they will spend here
+    places_done: int = 0  # places completed in this run
+    phase: str = "place"  # place | event | traversing | arrived
     activity: str = "setting off"
+    objective_finishing: bool = False
 
     weather: str = "clear"
     weather_since: float = 0.0  # active minutes
 
     active_minutes: float = 0.0  # running (not paused) time, across sessions
-    travel_minutes: float = 0.0
     region_started: float = 0.0
     last_rest: float = 0.0
 
@@ -55,7 +58,7 @@ class AdventureState:
         default_factory=lambda: deque(maxlen=MAX_RECENT)
     )
     event_last: dict[str, float] = field(default_factory=dict)
-    region_counts: dict[str, int] = field(default_factory=dict)
+    place_counts: dict[str, int] = field(default_factory=dict)  # events run at this place
     once_done: list[str] = field(default_factory=list)
     dialogue_last: dict[str, float] = field(default_factory=dict)
     dialogue_history: Deque[str] = field(
@@ -135,9 +138,7 @@ class AdventureState:
     def prune(self, event_ids: set[str], exchange_ids: set[str]) -> None:
         """Forget ids that no longer exist in the content (keeps state bounded)."""
         self.event_last = {k: v for k, v in self.event_last.items() if k in event_ids}
-        self.region_counts = {
-            k: v for k, v in self.region_counts.items() if k in event_ids
-        }
+        self.place_counts = {k: v for k, v in self.place_counts.items() if k in event_ids}
         self.once_done = [e for e in self.once_done if e in event_ids]
         self.dialogue_last = {
             k: v for k, v in self.dialogue_last.items() if k in exchange_ids

@@ -1,0 +1,109 @@
+# Weather changes (only ever picked right after the weather really changed)
+# and coming back to the adventure after chat or a game.
+
+exchanges:
+  - id: w_rain_1
+    trigger: weather_rain
+    lines:
+      - [mika, "Rain! It's raining!", surprised]
+      - [luna, "Of course it is. We're in the middle of nowhere."]
+  - id: w_rain_2
+    trigger: weather_rain
+    lines:
+      - [luna, "It's starting to rain. Hood up, everyone."]
+      - [mika, "My hat has no hood. Only style."]
+  - id: w_drizzle_1
+    trigger: weather_drizzle
+    lines:
+      - [luna, "A little drizzle."]
+      - [mika, "It's like the sky is sneezing on us."]
+  - id: w_drizzle_2
+    trigger: weather_drizzle
+    lines:
+      - [mika, "Tiny raindrops. Cute ones."]
+  - id: w_storm_1
+    trigger: weather_storm
+    lines:
+      - [luna, "That's a storm coming in. A real one."]
+      - [mika, "Okay. Okay. We're brave. We're very brave.", surprised]
+  - id: w_fog_1
+    trigger: weather_fog
+    lines:
+      - [mika, "Where did all this fog come from?"]
+      - [luna, "Cold air over warm ground. Stay close."]
+  - id: w_fog_2
+    trigger: weather_fog
+    lines:
+      - [luna, "Fog's rolling in. Visibility is dropping."]
+  - id: w_wind_1
+    trigger: weather_wind
+    lines:
+      - [mika, "The wind picked up! Hold on to something!"]
+      - [luna, "There's nothing to hold on to."]
+      - [mika, "Then hold on to me!"]
+  - id: w_wind_2
+    trigger: weather_wind
+    lines:
+      - [luna, "It's getting windy."]
+  - id: w_fireflies_1
+    trigger: weather_fireflies
+    lines:
+      - [mika, "The fireflies are coming out!", happy]
+      - [luna, "It must be warm enough for them now."]
+  - id: w_clear_1
+    trigger: weather_clear
+    lines:
+      - [luna, "The sky is clearing up."]
+      - [mika, "Yay! Weather, you're forgiven."]
+  - id: w_clear_2
+    trigger: weather_clear
+    when: {time: [night]}
+    lines:
+      - [mika, "Look, the stars are back!", happy]
+  - id: w_snow_1
+    trigger: weather_snow
+    lines:
+      - [mika, "Is that snow? It's snowing!", happy]
+      - [luna, "It's cold enough up here."]
+
+  # ---- back to the journey after chat or a game ----------------------------------
+  - id: after_chat_1
+    trigger: after_chat
+    lines:
+      - [mika, "Okay! Where were we? Oh right, adventuring!"]
+  - id: after_chat_2
+    trigger: after_chat
+    lines:
+      - [luna, "Right. Back to the chart."]
+  - id: after_chat_3
+    trigger: after_chat
+    lines:
+      - [mika, "Chat is the best. Now, onward!"]
+  - id: after_game_1
+    trigger: after_game
+    when: {last_game: [chat_won]}
+    lines:
+      - [mika, "Chat won that one. I'll get my revenge on the road.", pout]
+      - [luna, "Good game, everyone. Now, back to the journey."]
+  - id: after_game_2
+    trigger: after_game
+    when: {last_game: [mika_won]}
+    lines:
+      - [mika, "Victory! Winning makes the walk feel shorter.", happy]
+      - [luna, "Please don't gloat the whole way there."]
+  - id: after_game_3
+    trigger: after_game
+    when: {last_game: [luna_won]}
+    lines:
+      - [luna, "I won. Quietly. Let's keep going."]
+      - [mika, "I let you win. For morale."]
+  - id: after_game_4
+    trigger: after_game
+    when: {last_game: [draw]}
+    lines:
+      - [mika, "A draw? Nobody wins? That's so unsatisfying."]
+      - [luna, "We'll settle it at the ruins."]
+  - id: after_game_5
+    trigger: after_game
+    lines:
+      - [luna, "That was a nice break. Back to the adventure."]

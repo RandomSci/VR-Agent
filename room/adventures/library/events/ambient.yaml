@@ -1,0 +1,188 @@
+# Ambient events: the world does something and the characters really react.
+# A sound has a direction (sfx from LEFT or RIGHT pans the audio and turns
+# heads that way), creatures that appear are real world objects, and every
+# event leaves a line in the causal history so viewers can ask about it.
+# when: prerequisites (see adventure/conditions.py). cooldown: active minutes.
+
+events:
+  owl_hoot:
+    category: ambient
+    when: {time: [night], region_tag: [forest]}
+    cooldown: 35
+    note: an owl hooted somewhere in the trees
+    beats:
+      - sfx: {name: owl, from: RIGHT}
+      - look: {who: all, at: RIGHT, seconds: 3}
+        wait: 0.6
+      - react: {who: luna, reaction: surprised}
+      - say: {trigger: after_owl}
+        chance: 0.8
+
+  owl_appears:
+    category: ambient
+    when: {time: [night], region_tag: [forest], not_visible: [owl], min_region_minutes: 20}
+    cooldown: 80
+    note: an owl landed on a branch nearby and watched them
+    beats:
+      - sfx: {name: owl, from: RIGHT}
+      - spawn: {kind: owl, id: owl, zone: right, seconds: 150, state: perched}
+      - look: {who: all, at: "object:owl", seconds: 4}
+        wait: 0.8
+      - react: {who: mika, reaction: happy}
+      - say: {trigger: owl_visit}
+
+  bird_song:
+    category: ambient
+    when: {time: [dawn, day, dusk]}
+    cooldown: 25
+    note: a bird sang from the left
+    beats:
+      - sfx: {name: bird, from: LEFT}
+      - look: {who: all, at: LEFT, seconds: 2.5}
+        wait: 0.5
+      - say: {trigger: after_bird}
+        chance: 0.6
+
+  bush_rustle:
+    category: ambient
+    when: {region_tag: [forest, fields], not_visible: [rabbit]}
+    cooldown: 45
+    note: a bush rustled on the right, and a little rabbit popped out
+    beats:
+      - spawn: {kind: bush, id: rustle_bush, zone: far_right, state: rustling, seconds: 120}
+      - sfx: {name: rustle, from: RIGHT}
+      - look: {who: all, at: "object:rustle_bush", seconds: 3}
+        wait: 0.8
+      - react: {who: luna, reaction: suspicious}
+        wait: 1.2
+      - spawn: {kind: rabbit, id: wild_rabbit, zone: right, seconds: 90, state: hopping}
+      - object_state: {id: rustle_bush, state: still}
+      - react: {who: mika, reaction: happy}
+      - say: {trigger: rabbit_appears}
+
+  twig_snap:
+    category: ambient
+    when: {region_tag: [forest, wild], time: [night, dusk]}
+    cooldown: 40
+    note: a twig snapped somewhere to the left
+    beats:
+      - sfx: {name: twig, from: LEFT}
+      - look: {who: all, at: LEFT, seconds: 3}
+        wait: 0.6
+      - react: {who: mika, reaction: surprised}
+      - say: {trigger: after_twig}
+
+  distant_howl:
+    category: ambient
+    when: {time: [night], region_tag: [forest, mountain, wild]}
+    cooldown: 70
+    note: a long howl echoed far away
+    beats:
+      - sfx: {name: howl, from: LEFT}
+      - look: {who: all, at: LEFT, seconds: 4}
+        wait: 0.8
+      - formation: gather
+      - say: {trigger: after_howl}
+      - formation: home
+
+  frog_croak:
+    category: ambient
+    when: {place_tag: [water, pond], not_visible: [frog], not_recent: [frog_by_pond]}
+    cooldown: 40
+    note: a frog croaked by the water and hopped into view
+    beats:
+      - sfx: {name: frog, from: RIGHT}
+      - look: {who: all, at: RIGHT, seconds: 2.5}
+        wait: 0.6
+      - spawn: {kind: frog, id: frog, zone: right, seconds: 240, state: croaking}
+      - look: {who: all, at: "object:frog", seconds: 3}
+      - say: {trigger: after_frog}
+
+  wind_gust:
+    category: ambient
+    when: {region_tag: [open, mountain, fields, dry]}
+    cooldown: 30
+    note: a strong gust of wind swept past
+    beats:
+      - sfx: {name: wind_gust, from: LEFT}
+      - react: {who: all, reaction: surprised}
+      - say: {trigger: wind_gust}
+        chance: 0.8
+
+  city_bell:
+    category: ambient
+    when: {region_tag: [city]}
+    cooldown: 40
+    note: the old clock tower bell rang across the city
+    beats:
+      - sfx: {name: bell, from: LEFT}
+      - look: {who: all, at: LEFT, seconds: 3}
+      - say: {trigger: city_bell}
+
+  shooting_star:
+    category: ambient
+    when: {time: [night], weather: [clear, fireflies]}
+    cooldown: 60
+    note: a shooting star crossed the sky
+    beats:
+      - look: {who: all, at: UP, seconds: 3.5}
+        wait: 0.4
+      - sfx: {name: chime, from: RIGHT}
+      - react: {who: all, reaction: happy}
+      - say: {trigger: shooting_star}
+
+  firefly_swirl:
+    category: ambient
+    when: {weather: [fireflies]}
+    cooldown: 35
+    note: fireflies swirled around them
+    beats:
+      - look: {who: all, at: UP, seconds: 3}
+      - say: {trigger: fireflies}
+
+  river_splash:
+    category: ambient
+    when: {place_tag: [water]}
+    cooldown: 30
+    note: something splashed in the river
+    beats:
+      - sfx: {name: splash, from: RIGHT}
+      - look: {who: all, at: RIGHT, seconds: 2.5}
+        wait: 0.5
+      - react: {who: luna, reaction: surprised}
+      - say: {trigger: river_splash}
+
+  falling_rocks:
+    category: ambient
+    when: {region_tag: [mountain]}
+    cooldown: 45
+    note: small rocks tumbled down the slope above them
+    beats:
+      - sfx: {name: rocks, from: LEFT}
+      - look: {who: all, at: UP, seconds: 3}
+        wait: 0.4
+      - react: {who: all, reaction: surprised}
+      - formation: gather
+      - say: {trigger: falling_rocks}
+      - formation: home
+
+  thunder_rumble:
+    category: ambient
+    when: {weather: [storm, rain]}
+    cooldown: 20
+    note: thunder rumbled overhead
+    beats:
+      - sfx: {name: thunder, from: RIGHT}
+      - react: {who: mika, reaction: surprised}
+      - say: {trigger: thunder}
+        chance: 0.8
+
+  ruins_chime:
+    category: ambient
+    when: {region_tag: [ancient, magical]}
+    cooldown: 35
+    note: a soft chime rang from the old stones
+    beats:
+      - sfx: {name: chime, from: LEFT}
+      - look: {who: all, at: LEFT, seconds: 3}
+      - say: {trigger: ruins_chime}

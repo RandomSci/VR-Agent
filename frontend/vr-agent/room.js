@@ -83,6 +83,22 @@
     return node;
   }
 
+  function renderJourney(hud, paused) {
+    if (!ui.journey) return;
+    if (!hud || typeof hud !== "object" || !hud.title) {
+      ui.journey.hidden = true;
+      return;
+    }
+    ui.journey.hidden = false;
+    ui.journeyTitle.textContent = safeText(hud.title, 48);
+    ui.journeyWhere.textContent = safeText(`${hud.region || ""} · ${hud.place || ""}`, 80);
+    ui.journeyGoal.textContent = safeText(hud.objective, 90);
+    const pct = clamp(Number(hud.progress) || 0, 0, 1);
+    ui.journeyBar.style.width = `${(pct * 100).toFixed(1)}%`;
+    ui.journeyPct.textContent = `${Math.round(pct * 100)}%`;
+    ui.journey.classList.toggle("vrw-paused", !!paused);
+  }
+
   function buildOverlay() {
     ui.root = el("div", "", document.body);
     ui.root.id = "vr-agent-overlay";
@@ -100,6 +116,17 @@
     el("i", "", dots);
     el("i", "", dots);
     if (!FLAGS.status) ui.status.style.display = "none";
+
+    ui.journey = el("div", "vrw-journey", ui.root);
+    ui.journey.hidden = true;
+    const jHead = el("div", "vrw-journey-head", ui.journey);
+    ui.journeyTitle = el("span", "vrw-journey-title", jHead);
+    ui.journeyPct = el("span", "vrw-journey-pct", jHead);
+    ui.journeyWhere = el("div", "vrw-journey-where", ui.journey);
+    ui.journeyGoal = el("div", "vrw-journey-goal", ui.journey);
+    const track = el("div", "vrw-journey-track", ui.journey);
+    ui.journeyBar = el("div", "vrw-journey-bar", track);
+    if (!FLAGS.status) ui.journey.style.display = "none";
 
     ui.card = el("div", "vra-card", ui.root);
     const head = el("div", "vra-card-head", ui.card);
@@ -1000,6 +1027,9 @@
     const character = (id && room.characters.get(id)) || primaryCharacter();
     speech.queue.push({
       character,
+      source: payload.source === "adventure" ? "adventure" : "conversation",
+      url: typeof payload.clip === "string" && /^\/vr-agent\/voices\/[\w./-]+\.mp3$/.test(payload.clip) && !payload.clip.includes("..") ? payload.clip : null,
+      captionMs: Number(payload.ms) || 0,
       audio: typeof payload.audio === "string" ? payload.audio : null,
       volumes: Array.isArray(payload.volumes) ? payload.volumes : [],
       slice: Number(payload.slice_length) || 20,
@@ -1029,7 +1059,9 @@
         if (speech.pendingAction && character.primary) flushPendingAction();
       }
       showCaption(character, item.text);
-      sendToServer({ type: "audio-play-start", display_text: item.text ? { text: item.text } : null, forwarded: true });
+      if (item.source !== "adventure") {
+        sendToServer({ type: "audio-play-start", display_text: item.text ? { text: item.text } : null, forwarded: true });
+      }
     };
     const finish = () => {
       if (speech.current !== current) return;
@@ -1044,12 +1076,12 @@
       playNext();
     };
 
-    if (!item.audio) {
+    if (!item.audio && !item.url) {
       begin();
-      current.watchdog = setTimeout(finish, Math.min(6000, 800 + (item.text || "").length * 45));
+      current.watchdog = setTimeout(finish, item.captionMs || Math.min(6000, 800 + (item.text || "").length * 45));
       return;
     }
-    const audio = new Audio("data:audio/wav;base64," + item.audio);
+    const audio = new Audio(item.url || "data:audio/wav;base64," + item.audio);
     current.audio = audio;
     audio.volume = 1;
     audio.addEventListener("ended", finish, { once: true });
@@ -1191,6 +1223,7 @@
     }
     if (ui.title) ui.title.textContent = safeText(spec.title, 40) || "VR AGENT";
     if (board) board.render(payload.board && typeof payload.board === "object" ? payload.board : null);
+    renderJourney(payload.adventure, false);
     if (room.booted && signature === room.signature) {
       reportModels();
       applySnapshot(payload.snapshot);
@@ -1398,6 +1431,30 @@
         const extra = pickIdle(c, now());
         if (extra) c.play(extra.name, "idle");
       }
+    },
+    speak(op) {
+      // A local adventure line: a pre-rendered clip (no TTS request) or a
+      // caption, through the same queue, so voices never overlap.
+      if (room.paused || typeof op.text !== "string") return;
+      const c = room.characters.get(op.character);
+      if (!c) return;
+      enqueueAudio({
+        character: c.id,
+        source: "adventure",
+        clip: op.clip,
+        ms: op.ms,
+        volumes: Array.isArray(op.volumes) ? op.volumes : [],
+        slice_length: Number(op.slice) || 40,
+        display_text: { text: safeText(op.text, 200), name: c.name },
+        emotion_mode: "profile",
+      });
+    },
+    adventure(op) {
+      if (op.state === "paused") {
+        // viewers and games come first: queued adventure lines are dropped
+        speech.queue = speech.queue.filter((item) => item.source !== "adventure");
+      }
+      renderJourney(op.hud, op.state === "paused");
     },
     scene(op) {
       if (scene && op.scene && typeof op.scene === "object") scene.apply(op.scene);

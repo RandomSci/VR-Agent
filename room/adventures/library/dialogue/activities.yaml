@@ -1,0 +1,306 @@
+# Activities, discoveries, obstacles, rests and milestones.
+
+exchanges:
+  # ---- magic ---------------------------------------------------------------
+  - id: practice_before_1
+    trigger: magic_practice_before
+    lines:
+      - [mika, "Time for spell practice. Watch the stone."]
+      - [luna, "From a safe distance."]
+  - id: practice_before_2
+    trigger: magic_practice_before
+    when: {flags: [mika_spell_failed]}
+    lines:
+      - [mika, "This time it's going to work. I can feel it."]
+      - [luna, "You said that last time."]
+  - id: practice_after_1
+    trigger: magic_practice_after
+    lines:
+      - [mika, "It's glowing! It actually worked!", happy]
+      - [luna, "Okay, that was genuinely impressive."]
+  - id: practice_after_2
+    trigger: magic_practice_after
+    lines:
+      - [luna, "The stone is glowing now. Nice work."]
+      - [mika, "Say it louder, for the viewers."]
+  - id: lantern_1
+    trigger: lantern_magic
+    lines:
+      - [mika, "Let's make the lantern extra bright for the road."]
+  - id: shrine_1
+    trigger: shrine
+    lines:
+      - [luna, "Maybe we should light it. For good luck."]
+      - [mika, "Leave it to me. One tiny, respectful spell."]
+  - id: boast_1
+    trigger: spell_boast
+    lines:
+      - [mika, "I learned a new spell. It's super fancy. Watch."]
+      - [luna, "I have a bad feeling about this."]
+  - id: boast_2
+    trigger: spell_boast
+    lines:
+      - [mika, "Viewers, prepare to be amazed!"]
+  - id: boast_3
+    trigger: spell_boast
+    when: {mood: {luna.annoyance: ">=1"}}
+    lines:
+      - [mika, "You want to see real talent? Here."]
+      - [luna, "I'll just stand over here."]
+  - id: fizzled_1
+    trigger: spell_fizzled
+    lines:
+      - [luna, "That was smoke, Mika. Just smoke."]
+      - [mika, "It was artistic smoke.", pout]
+  - id: fizzled_2
+    trigger: spell_fizzled
+    lines:
+      - [mika, "Okay, that one needs a little work."]
+      - [luna, "A little."]
+  - id: fizzled_3
+    trigger: spell_fizzled
+    when: {flags: [luna_wrong_turn]}
+    lines:
+      - [luna, "Wow. And you teased me about one wrong turn."]
+      - [mika, "That was a very different kind of failure!", pout]
+  - id: summon_before_1
+    trigger: summon_before
+    lines:
+      - [mika, "I miss my rabbit. Let's call her!"]
+  - id: summon_after_1
+    trigger: summon_after
+    lines:
+      - [mika, "There she is! Hello, sweetie!", happy]
+      - [luna, "Your rabbit gets to travel for free."]
+  - id: summon_after_2
+    trigger: summon_after
+    lines:
+      - [luna, "She always looks so surprised to be summoned."]
+      - [mika, "It's her happy surprised face."]
+  # ---- chart, stars, snacks ---------------------------------------------------
+  - id: map_1
+    trigger: map_reading
+    lines:
+      - [luna, "According to the chart, we're still on track."]
+      - [mika, "The chart and I agree. We're amazing."]
+  - id: map_2
+    trigger: map_reading
+    lines:
+      - [luna, "These old star charts are hard to read. The stars have moved a little since."]
+      - [mika, "Stars move? Rude."]
+  - id: map_3
+    trigger: map_reading
+    when: {flags: [luna_wrong_turn]}
+    lines:
+      - [mika, "Are you sure you're holding it the right way up this time?"]
+      - [luna, "Yes. Mostly. Yes."]
+  - id: map_4
+    trigger: map_reading
+    when: {min_progress: 0.6}
+    lines:
+      - [luna, "Look how much of the chart we've crossed off already."]
+      - [mika, "We're basically legends now."]
+  - id: stargaze_1
+    trigger: stargazing
+    lines:
+      - [luna, "That bright one is Vega. And that's the Summer Triangle."]
+      - [mika, "That one looks like a bunny."]
+      - [luna, "That's not a constellation."]
+      - [mika, "It is now."]
+  - id: stargaze_2
+    trigger: stargazing
+    lines:
+      - [mika, "Luna, do you ever feel really tiny looking up there?"]
+      - [luna, "Always. It's nice, somehow."]
+  - id: stargaze_3
+    trigger: stargazing
+    when: {region_tag: [ancient, magical]}
+    lines:
+      - [luna, "The people who built this place mapped every one of these stars."]
+      - [mika, "Without phones? Wow."]
+  - id: snacks_1
+    trigger: snacks
+    lines:
+      - [mika, "Snack break! I brought strawberry candy.", happy]
+      - [luna, "That's not food, that's just sugar."]
+      - [mika, "Sugar is adventure fuel."]
+  - id: snacks_2
+    trigger: snacks
+    lines:
+      - [luna, "I brought tea. It's still warm."]
+      - [mika, "Can I put candy in it?"]
+      - [luna, "No."]
+  - id: snacks_3
+    trigger: snacks
+    when: {min_progress: 0.5}
+    lines:
+      - [mika, "Uh oh. I'm down to my last three candies."]
+      - [luna, "You started with forty."]
+  - id: race_start_1
+    trigger: race_start
+    lines:
+      - [mika, "Race you to that bush! Ready, go!"]
+  - id: race_end_1
+    trigger: race_end
+    lines:
+      - [luna, "We both hopped once. Nobody moved."]
+      - [mika, "It was a tie. A glorious tie."]
+  # ---- discoveries --------------------------------------------------------------
+  - id: marker_1
+    trigger: trail_marker
+    lines:
+      - [luna, "There! A trail marker. It's glowing, just like the chart said."]
+      - [mika, "We found it! We're real explorers!", happy]
+  - id: marker_2
+    trigger: trail_marker
+    lines:
+      - [mika, "That stone is glowing blue. Is that one of the markers?"]
+      - [luna, "It is. We're on the right path."]
+  - id: shrooms_1
+    trigger: mushrooms
+    lines:
+      - [mika, "Glowing mushrooms! Can I eat one?"]
+      - [luna, "Absolutely not."]
+  - id: shrooms_2
+    trigger: mushrooms
+    lines:
+      - [luna, "Moon mushrooms. They only glow deep in old forests."]
+  - id: crystal_found_1
+    trigger: found_crystal
+    lines:
+      - [mika, "A star crystal! It's so pretty!", happy]
+      - [luna, "Those form where starlight hits the same rock for centuries."]
+  - id: scroll_1
+    trigger: found_scroll
+    lines:
+      - [luna, "It's half of a map. The other half must have crumbled away."]
+      - [mika, "Half a map is still a map. It points at the ruins!"]
+  # ---- obstacles and setbacks -------------------------------------------------------
+  - id: split_1
+    trigger: path_split
+    lines:
+      - [luna, "The path splits. The chart says left."]
+      - [mika, "My heart says right."]
+      - [luna, "Your heart has no sense of direction."]
+  - id: split_2
+    trigger: path_split
+    lines:
+      - [mika, "Two paths. I pick the sparkly one!"]
+      - [luna, "Neither of them is sparkly. We're going left."]
+  - id: wrong_turn_1
+    trigger: wrong_turn
+    lines:
+      - [mika, "Luna. This is a dead end."]
+      - [luna, "The chart was upside down. We'll go back."]
+      - [mika, "The great navigator strikes again."]
+  - id: wrong_turn_2
+    trigger: wrong_turn
+    lines:
+      - [luna, "Okay, that was the wrong way. Let's turn around."]
+      - [mika, "I'm telling everyone about this.", happy]
+  - id: fog_1
+    trigger: fog
+    lines:
+      - [mika, "Luna? The fog is so thick. I can barely see you."]
+      - [luna, "Stay right next to me. We'll wait for it to thin out."]
+  - id: fog_2
+    trigger: fog
+    lines:
+      - [luna, "The fog is swallowing the trail. Careful."]
+  - id: shelter_1
+    trigger: shelter
+    lines:
+      - [luna, "Let's wait under here until the rain eases."]
+      - [mika, "Cozy rain shelter! This is kind of nice."]
+  - id: shelter_2
+    trigger: shelter
+    lines:
+      - [mika, "My hat is a very good umbrella. Get under."]
+      - [luna, "Your hat is dripping on me."]
+  - id: bridge_1
+    trigger: bridge
+    lines:
+      - [mika, "Whoa! Whoa! It's wobbling!", surprised]
+      - [luna, "Don't bounce. Why are you bouncing?"]
+  - id: bridge_2
+    trigger: bridge
+    lines:
+      - [luna, "The ropes are old, but they'll hold. Probably."]
+      - [mika, "I don't like probably."]
+  # ---- rest -------------------------------------------------------------------------------
+  - id: campfire_1
+    trigger: campfire
+    lines:
+      - [mika, "The fire is so warm. I could stay here forever."]
+      - [luna, "Just for a little while. Then we keep going."]
+  - id: campfire_2
+    trigger: campfire
+    lines:
+      - [luna, "Listen to it crackle. It's calming."]
+      - [mika, "It sounds like tiny popcorn."]
+  - id: rest_1
+    trigger: rest
+    lines:
+      - [luna, "Let's rest a minute. It's a long way still."]
+  - id: rest_2
+    trigger: rest
+    lines:
+      - [mika, "Break time. My legs need a pep talk."]
+  - id: rest_3
+    trigger: rest
+    when: {min_region_minutes: 40}
+    lines:
+      - [luna, "We've been walking this region for ages."]
+      - [mika, "And we're still having fun. Mostly."]
+  - id: rest_4
+    trigger: rest
+    when: {time: [night]}
+    lines:
+      - [mika, "It's so quiet at night out here."]
+      - [luna, "That's the best part."]
+  # ---- milestones -------------------------------------------------------------------------
+  - id: start_1
+    trigger: journey_start
+    lines:
+      - [mika, "Tonight we find the Astral Ruins! Are you ready?", happy]
+      - [luna, "I've been ready since I found the chart."]
+  - id: city_gate_1
+    trigger: city_gate
+    lines:
+      - [luna, "That's the last street light. From here, it's just us and the road."]
+      - [mika, "Goodbye, city! We'll bring you back a souvenir!"]
+  - id: log_1
+    trigger: obstacle_log
+    lines:
+      - [mika, "Can I blast it with magic?"]
+      - [luna, "No. There's a gap under this side. We can squeeze through."]
+  - id: log_2
+    trigger: obstacle_log
+    lines:
+      - [luna, "The log is too big to move. Let's go around through the ferns."]
+      - [mika, "Ferns are just nature's carpet."]
+  - id: bridge_cross_1
+    trigger: bridge_cross
+    lines:
+      - [luna, "One step at a time. Don't look down."]
+      - [mika, "I looked down. Why did I look down."]
+  - id: crystal_before_1
+    trigger: crystal_before
+    lines:
+      - [luna, "The chart says light shows the way. This crystal might be it."]
+      - [mika, "Then let's light it up!"]
+  - id: crystal_lit_1
+    trigger: crystal_lit
+    lines:
+      - [luna, "Look, the glow is cutting right through the fog."]
+      - [mika, "I did that! Well, the crystal helped.", happy]
+  - id: ruins_1
+    trigger: arrive_ruins
+    lines:
+      - [mika, "We made it! We actually made it!", happy]
+      - [luna, "The Astral Ruins. Just like the chart promised."]
+  - id: epilogue_1
+    trigger: epilogue
+    lines:
+      - [luna, "Thank you for coming all this way with me."]
+      - [mika, "Always. Now, where do we go next?"]
