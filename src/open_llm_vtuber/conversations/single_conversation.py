@@ -88,7 +88,13 @@ async def process_single_conversation(
         if skip_history:
             logger.debug("Skipping storing user input to history (proactive speak)")
 
-        logger.info(f"User input: {input_text}")
+        # The room prompt is several KB: printing it every turn lags the
+        # terminal on stream. Show a short preview; the full text is DEBUG.
+        preview = " ".join(str(input_text).split())
+        logger.info(
+            f"User input: {preview[:160]}{'...' if len(preview) > 160 else ''}"
+        )
+        logger.debug(f"User input (full): {input_text}")
         if images:
             logger.info(f"With {len(images)} images")
 

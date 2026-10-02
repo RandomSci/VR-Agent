@@ -118,7 +118,9 @@ class RoomSession:
         interesting = {
             k: v for k, v in entry.items() if k not in ("trace", "at", "turns")
         }
-        logger.info(f"VR Room {name} {interesting}")
+        # Idle fidgets and camera moves fire every few seconds: DEBUG only.
+        noisy = name in ("character_action_started", "camera_transition_started")
+        (logger.debug if noisy else logger.info)(f"VR Room {name} {interesting}")
 
     def configure_voices(self, base_tts_config: Any, base_engine: Any) -> None:
         """Called by the server with conf.yaml's TTS so 'inherit' voices work."""
