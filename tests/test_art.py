@@ -64,22 +64,3 @@ def test_only_real_picture_changes_paint_again():
     assert art.needs_new_art("make it a busy street with taxis")
     assert art.needs_new_art("now draw a dragon")
 
-
-def test_pollinations_is_tried_first_when_it_has_a_key(monkeypatch, tmp_path):
-    monkeypatch.setattr(art, "GENERATED_DIR", tmp_path)
-    monkeypatch.setenv("POLLINATIONS_API_KEY", "sk_poll")
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    seen = []
-
-    def handler(request):
-        seen.append(str(request.url))
-        assert request.headers["Authorization"] == "Bearer sk_poll"
-        return httpx.Response(200, content=JPEG, headers={"content-type": "image/jpeg"})
-
-    async def go():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            return await art.generate_art("pelicans on a bicycle", "p1", client)
-
-    assert asyncio.run(go()) == "/stage-assets/generated/p1.jpg"
-    assert seen[0].startswith("https://gen.pollinations.ai/image/") and "model=flux" in seen[0]
-    assert art.art_enabled()

@@ -5,9 +5,6 @@ few rectangles. Now the picture itself is generated, saved where the Stage
 can load it (/stage-assets/generated/), and Mika codes a living scene around
 it on stream: slow camera moves, particles, light, title text.
 
-    POLLINATIONS_API_KEY        use Pollinations (open source, FLUX and more;
-                                key from enter.pollinations.ai). Tried first.
-    VR_POLLINATIONS_MODEL       default flux
     VR_ART=0                    turn it off (the scene is drawn in code instead)
     VR_IMAGE_MODEL              first model to try (default gpt-image-1-mini)
     VR_IMAGE_QUALITY            low | medium | high (default low, the cheapest)
@@ -75,37 +72,9 @@ EFFECT_WORDS = re.compile(
 
 def art_enabled() -> bool:
     return os.environ.get("VR_ART", "1").strip().lower() not in ("0", "false", "no") and bool(
-        os.environ.get("POLLINATIONS_API_KEY", "").strip()
-        or os.environ.get("OPENAI_API_KEY", "").strip()
+        os.environ.get("OPENAI_API_KEY", "").strip()
     )
 
-
-POLLINATIONS = "https://gen.pollinations.ai/image/"
-
-
-async def _pollinations(client: httpx.AsyncClient, prompt: str) -> bytes:
-    """One picture from Pollinations (open source; FLUX by default)."""
-    from urllib.parse import quote
-
-    key = os.environ.get("POLLINATIONS_API_KEY", "").strip()
-    if not key:
-        return b""
-    model = os.environ.get("VR_POLLINATIONS_MODEL", "").strip() or "flux"
-    try:
-        response = await client.get(
-            POLLINATIONS + quote(prompt[:1500], safe=""),
-            params={"model": model, "width": 1536, "height": 864, "nologo": "true",
-                    "seed": secrets.randbelow(10**6)},
-            headers={"Authorization": f"Bearer {key}"},
-        )
-    except httpx.HTTPError as exc:
-        logger.warning(f"Art: Pollinations unreachable: {exc}")
-        return b""
-    kind = response.headers.get("content-type", "")
-    if response.status_code >= 400 or not kind.startswith("image/"):
-        logger.warning(f"Art: Pollinations refused ({response.status_code}): {response.text[:200]}")
-        return b""
-    return response.content
 
 
 def needs_new_art(instruction: str) -> bool:
@@ -178,19 +147,12 @@ def new_art_url() -> tuple[str, str]:
 async def generate_art(prompt: str, stem: str, client: Optional[httpx.AsyncClient] = None) -> str:
     """Make the picture and save it as <stem>.jpg. Returns its URL, or ""."""
     key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not key:
+        return ""
     owns = client is None
     client = client or httpx.AsyncClient(timeout=120)
     started = time.perf_counter()
     try:
-        data = await _pollinations(client, prompt)
-        if data:
-            data, _ext = _shrink(data)
-            GENERATED_DIR.mkdir(parents=True, exist_ok=True)
-            (GENERATED_DIR / f"{stem}.jpg").write_bytes(data)
-            logger.info(f"Art made with Pollinations in {time.perf_counter() - started:.1f}s")
-            return f"{URL_PREFIX}{stem}.jpg"
-        if not key:
-            return ""
         for model in _models():
             try:
                 response = await client.post(
