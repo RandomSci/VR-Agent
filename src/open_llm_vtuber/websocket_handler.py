@@ -70,6 +70,9 @@ class WSMessage(TypedDict, total=False):
     display_text: Optional[dict]
 
 
+ROOM_INTERACTION_KEY = "vr-room-interaction"
+
+
 class WebSocketHandler:
     """Handles WebSocket connections and message routing"""
 
@@ -444,7 +447,9 @@ class WebSocketHandler:
         await session.speech.lock.acquire()
         session.begin_conversation()
         task = asyncio.create_task(session.director.run(plan))
-        self.current_conversation_tasks[client_uid] = task
+        # Not keyed by the page: an OBS refresh or source switch closes that
+        # page, and a disconnect must not cancel a build that is half done.
+        self.current_conversation_tasks[ROOM_INTERACTION_KEY] = task
 
         def on_done(finished: asyncio.Task) -> None:
             timing.finished_at = time.time()
