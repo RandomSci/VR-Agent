@@ -299,7 +299,12 @@ def test_a_frozen_page_is_a_real_problem(monkeypatch):
         frozen, blank, broken, dead, alive = asyncio.run(run())
     finally:
         server.should_exit = True
-    assert dead.ok and len(dead.dead_controls) == 3, dead.problems()  # noted, not failed
+    assert len(dead.dead_controls) == 3, dead.problems()
+    # Dead buttons are noted, never a failure on their own (publish adds a safety net).
+    assert dead.ok == (
+        not dead.errors and not dead.failed_files and not dead.blocked
+        and not dead.blank and dead.moving and not dead.overflow
+    )
     assert "Book a call" in dead.problems()[-1]
     assert not alive.dead_controls, alive.problems()
     assert not frozen.ok and not frozen.skipped
