@@ -1,0 +1,195 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Math Dash</title>
+<style>
+  :root { --night: #0b1530; --card: #13254a; --line: #2c4677; --lamp: #ffb55e; --rose: #ff6f9c;
+          --sky: #9cc2ff; --mint: #5fe3c8; --paper: #f4ead8; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { display: grid; place-items: center; color: var(--paper);
+         font-family: Nunito, Quicksand, "Segoe UI", system-ui, sans-serif;
+         background: radial-gradient(1200px 700px at 20% 0%, #2a4a86 0%, transparent 60%),
+                     radial-gradient(900px 600px at 100% 100%, #3a1f5a 0%, transparent 60%), var(--night); }
+  .game { width: min(92vw, 1100px); }
+  .top { display: flex; align-items: center; gap: 2vw; margin-bottom: 2.2vh; }
+  .title { font-size: clamp(26px, 3.6vw, 52px); font-weight: 900; color: var(--lamp);
+           text-shadow: 0 0 24px rgba(255, 181, 94, .45); }
+  .stat { margin-left: auto; display: flex; gap: 1.6vw; font-size: clamp(16px, 1.8vw, 26px); font-weight: 800; }
+  .stat b { color: var(--mint); }
+  .card { position: relative; padding: 4.5vh 3vw; border-radius: 26px; background: rgba(19, 37, 74, .85);
+          border: 2px solid var(--line); box-shadow: 0 30px 80px rgba(0, 0, 0, .45); text-align: center; }
+  .count { color: var(--sky); font-weight: 800; letter-spacing: .08em; font-size: clamp(13px, 1.3vw, 18px); }
+  .question { margin: 1.5vh 0 4vh; font-size: clamp(44px, 7vw, 108px); font-weight: 900; line-height: 1.05; }
+  .question.pop { animation: pop .45s ease; }
+  @keyframes pop { from { transform: scale(.85); opacity: 0; } to { transform: none; opacity: 1; } }
+  .answers { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2vh 1.6vw; }
+  .answer { position: relative; padding: 2.4vh 1vw; border-radius: 18px; border: 2px solid var(--line);
+            background: #0f1d3a; color: var(--paper); font: inherit; font-size: clamp(24px, 3.4vw, 50px);
+            font-weight: 900; cursor: pointer; transition: transform .15s, border-color .15s, background .2s; }
+  .answer .key { position: absolute; left: 14px; top: 10px; font-size: 14px; color: var(--sky); opacity: .7; }
+  .answer:hover, .answer.hover { transform: translateY(-3px); border-color: var(--lamp); }
+  .answer.right { background: #134e4a; border-color: var(--mint); }
+  .answer.wrong { background: #4c1d2e; border-color: var(--rose); animation: shake .35s; }
+  @keyframes shake { 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+  .timer { height: 10px; margin-top: 3.5vh; border-radius: 99px; background: #0f1d3a; overflow: hidden; }
+  .timer i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, var(--mint), var(--lamp), var(--rose));
+             transform-origin: left; }
+  .who { margin-top: 1.6vh; min-height: 1.4em; color: var(--sky); font-weight: 700; font-size: clamp(14px, 1.5vw, 20px); }
+  .end { position: absolute; inset: 0; display: none; place-items: center; border-radius: 26px; background: rgba(11, 21, 48, .95); }
+  .end.show { display: grid; }
+  .end h2 { margin: 0 0 1vh; font-size: clamp(36px, 5vw, 72px); color: var(--lamp); }
+  .end button { margin-top: 2vh; padding: 14px 28px; border: 0; border-radius: 14px; font: inherit; font-weight: 900;
+                font-size: 22px; color: var(--night); background: var(--lamp); cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="game">
+  <div class="top">
+    <div class="title" id="title">Math Dash</div>
+    <div class="stat"><span>Score <b id="score">0</b></span><span>Streak <b id="streak">0</b></span></div>
+  </div>
+  <div class="card">
+    <div class="count" id="count">QUESTION 1 / 10</div>
+    <div class="question" id="question">?</div>
+    <div class="answers" id="answers"></div>
+    <div class="timer"><i id="bar"></i></div>
+    <div class="who" id="who"></div>
+    <div class="end" id="end"><div><h2 id="endTitle">Great run!</h2><div id="endText"></div>
+      <button type="button" id="again">Play again</button></div></div>
+  </div>
+</div>
+<script>
+// ===== SETTINGS: change these first =====
+const SETTINGS = {
+  title: "Math Dash",
+  rounds: 10,            // questions per game
+  seconds: 10,           // time for each question
+  aiName: "Luna",        // who answers on the stream
+  aiSkill: 0.8,          // stream: how often the AI is right (0 to 1)
+};
+
+// ===== QUESTIONS: return { text, answer, options } =====
+// Math by default. For trivia, return a fixed list item instead.
+function makeQuestion(round) {
+  const level = 1 + Math.floor(round / 4);
+  const ops = level === 1 ? ["+", "-"] : ["+", "-", "×"];
+  const op = ops[Math.floor(Math.random() * ops.length)];
+  let a = rand(2, 10 * level), b = rand(2, 10 * level);
+  if (op === "×") { a = rand(2, 12); b = rand(2, 12); }
+  if (op === "-" && b > a) [a, b] = [b, a];
+  const answer = op === "+" ? a + b : op === "-" ? a - b : a * b;
+  const options = new Set([answer]);
+  while (options.size < 4) options.add(Math.max(0, answer + rand(-9, 9)));
+  return { text: `${a} ${op} ${b}`, answer, options: shuffle([...options]) };
+}
+
+// The Stage plays the game by itself; the published page is played by a person.
+const PLAYER = window.GAME_MODE === "player";
+
+function rand(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
+function shuffle(list) { return list.map((v) => [Math.random(), v]).sort((x, y) => x[0] - y[0]).map((x) => x[1]); }
+const $ = (id) => document.getElementById(id);
+
+// ===== GAME STATE: one question at a time, never redrawn every frame =====
+const state = { round: 0, score: 0, streak: 0, current: null, locked: false, deadline: 0, aiTimer: 0 };
+
+function startGame() {
+  state.round = 0; state.score = 0; state.streak = 0;
+  $("end").classList.remove("show");
+  updateStats();
+  nextQuestion();
+}
+
+function nextQuestion() {
+  if (state.round >= SETTINGS.rounds) return endGame();
+  state.round += 1;
+  state.current = makeQuestion(state.round);
+  state.locked = false;
+  state.deadline = performance.now() + SETTINGS.seconds * 1000;
+  $("count").textContent = `QUESTION ${state.round} / ${SETTINGS.rounds}`;
+  const q = $("question");
+  q.textContent = state.current.text + " = ?";
+  q.classList.remove("pop"); void q.offsetWidth; q.classList.add("pop");
+  const box = $("answers");
+  box.replaceChildren();
+  state.current.options.forEach((value, i) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "answer";
+    button.innerHTML = `<span class="key">${i + 1}</span>${value}`;
+    button.addEventListener("click", () => choose(i));
+    box.appendChild(button);
+  });
+  $("who").textContent = PLAYER ? "Tap an answer or press 1 to 4" : `${SETTINGS.aiName} is thinking...`;
+  if (!PLAYER) {
+    clearTimeout(state.aiTimer);
+    state.aiTimer = setTimeout(aiAnswer, 1200 + Math.random() * 1800);
+  }
+}
+
+// ===== AUTOPILOT: the stream's AI player answers by itself =====
+function aiAnswer() {
+  if (state.locked) return;
+  const options = state.current.options;
+  const right = options.indexOf(state.current.answer);
+  const pick = Math.random() < SETTINGS.aiSkill ? right : (right + rand(1, 3)) % options.length;
+  const button = $("answers").children[pick];
+  if (button) { button.classList.add("hover"); setTimeout(() => choose(pick), 450); }
+}
+
+function choose(index) {
+  if (state.locked) return;
+  state.locked = true;
+  clearTimeout(state.aiTimer);
+  const buttons = $("answers").children;
+  const right = state.current.options.indexOf(state.current.answer);
+  const correct = index === right;
+  if (buttons[right]) buttons[right].classList.add("right");
+  if (!correct && buttons[index]) buttons[index].classList.add("wrong");
+  if (correct) { state.score += 10 + state.streak * 2; state.streak += 1; }
+  else state.streak = 0;
+  $("who").textContent = index < 0 ? "Time's up!" : correct ? "Correct!" : `It was ${state.current.answer}`;
+  updateStats();
+  setTimeout(nextQuestion, 1300);
+}
+
+function updateStats() {
+  $("score").textContent = state.score;
+  $("streak").textContent = state.streak;
+}
+
+function endGame() {
+  $("endTitle").textContent = state.score >= SETTINGS.rounds * 8 ? "Math wizard!" : "Nice run!";
+  $("endText").textContent = `Final score ${state.score}`;
+  $("end").classList.add("show");
+  // On the stream a new game starts by itself; a player chooses.
+  if (!PLAYER) setTimeout(startGame, 3500);
+}
+
+// ===== PLAYER CONTROLS (published page): tap, click or keys 1 to 4 =====
+if (PLAYER) {
+  document.addEventListener("keydown", (e) => {
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= 4) choose(n - 1);
+  });
+}
+$("again").addEventListener("click", startGame);
+
+// The timer bar is the only thing that moves every frame.
+function frame(now) {
+  if (!state.locked && state.current) {
+    const left = Math.max(0, state.deadline - now) / (SETTINGS.seconds * 1000);
+    $("bar").style.transform = `scaleX(${left})`;
+    if (left <= 0) choose(-1);
+  }
+  requestAnimationFrame(frame);
+}
+
+$("title").textContent = SETTINGS.title;
+document.title = SETTINGS.title;
+startGame();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

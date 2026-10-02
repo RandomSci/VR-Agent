@@ -431,6 +431,10 @@ class RoomRuntimes:
             else "a single headless Python file (matplotlib for anything visual)"
         )
         request: dict[str, Any] = {"what_to_build": str(instruction or "")[:2000]}
+        # "My name", "for me": the writer must know who asked.
+        asker = str(self.session.teaching.session.student_name or "").lstrip("@")[:40]
+        if asker:
+            request["requested_by"] = asker
         if existing:
             request["current_program"] = existing[:MAX_CODE_BYTES]
             request["instruction"] = (

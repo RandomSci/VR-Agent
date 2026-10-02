@@ -206,6 +206,26 @@ KINDS: dict[str, Kind] = {
             tier="normal",
         ),
         Kind(
+            "web_game_quiz",
+            "web",
+            "a quiz or question game: math game, trivia, guess the answer, "
+            "spelling or flag quiz, multiple choice",
+            "A MULTIPLE-CHOICE QUIZ GAME in plain HTML, CSS and JS (no library), "
+            "built from the starting template.\n"
+            "- Keep the template's machinery exactly: SETTINGS, makeQuestion(), "
+            "the state object, nextQuestion() that shows ONE question until it "
+            "is answered or time runs out, the AUTOPILOT aiAnswer() for the "
+            "stream, the PLAYER CONTROLS block (tap or keys 1 to 4), the timer "
+            "bar in frame() and the end screen.\n"
+            "- Never create or change a question inside frame() or a fast timer: "
+            "a question stays on screen until it is answered.\n"
+            "- Change the topic through makeQuestion() (math by default; for "
+            "trivia return items from a fixed list of 10 or more real, correct "
+            "questions), the title, colours and words.",
+            template="game-quiz",
+            tier="normal",
+        ),
+        Kind(
             "web_game",
             "web",
             "any other small 2D game: pong, snake, breakout, platformer, puzzle, "
