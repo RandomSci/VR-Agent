@@ -24,6 +24,9 @@ const SETTINGS = {
   accent: 0xffb55e,
 };
 
+// The Stage plays the game by itself; the published page is played by a person.
+const PLAYER = window.GAME_MODE === "player";
+
 class Play extends Phaser.Scene {
   constructor() { super("play"); }
 
@@ -83,6 +86,20 @@ class Play extends Phaser.Scene {
       fontFamily: font, fontSize: "130px", fontStyle: "900", color: "#ffb55e",
     }).setOrigin(0.5).setShadow(0, 0, "#ff6f9c", 30, true, true).setDepth(10);
     this.tweens.add({ targets: this.titleText, alpha: 0, scale: 1.15, delay: 1600, duration: 900 });
+
+    // ===== PLAYER CONTROLS (published page): tap, click, Space or Up =====
+    if (PLAYER) {
+      this.waiting = true;
+      this.hint = this.add.text(960, 650, "Tap or press Space to fly", { fontFamily: "Nunito, Quicksand, 'Segoe UI', system-ui, sans-serif", fontSize: "46px", fontStyle: "800", color: "#f4ead8", backgroundColor: "#0b1530cc", padding: { x: 28, y: 14 } }).setOrigin(0.5).setDepth(11);
+      const press = () => {
+        if (!this.alive) return;
+        if (this.waiting) { this.waiting = false; this.hint.setVisible(false); }
+        this.flap();
+      };
+      this.input.on("pointerdown", press);
+      this.input.keyboard.on("keydown-SPACE", press);
+      this.input.keyboard.on("keydown-UP", press);
+    }
   }
 
   // ===== AUTOPILOT: plays the game so viewers can just watch =====
@@ -141,6 +158,10 @@ class Play extends Phaser.Scene {
     this.alive = true;
     this.pipeTimer = 0.6;
     this.bestText.setText("best " + this.best);
+    if (PLAYER) {
+      this.waiting = true;
+      this.hint.setText("Tap or press Space to play again").setVisible(true);
+    }
   }
 
   update(_time, deltaMs) {
@@ -158,7 +179,11 @@ class Play extends Phaser.Scene {
       return;
     }
 
-    this.autopilot();
+    if (PLAYER && this.waiting) {
+      this.player.y = 500 + Math.sin(this.time.now / 300) * 18;
+      return;
+    }
+    if (!PLAYER) this.autopilot();
     this.vy += SETTINGS.gravity * dt;
     this.player.y += this.vy * dt;
     this.player.angle = Phaser.Math.Clamp(this.vy / 12, -25, 70);

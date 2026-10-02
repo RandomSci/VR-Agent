@@ -172,3 +172,59 @@ def test_live_chat_build_requests_start_and_hand_over_the_session():
     say("now make stars", "@bo")
     assert stage.session.teaching.owns("yt:@bo")
     assert "gold" in stage.source
+
+
+def test_our_own_channel_and_banned_names_are_never_read(monkeypatch):
+    from datetime import datetime, timezone
+
+    from open_llm_vtuber.live.youtube_live import YouTubeChatMessage, blocked_author_reason
+
+    def msg(author, text, author_type=""):
+        return YouTubeChatMessage(
+            message_id="x",
+            author_channel_id="name:" + author.lower(),
+            author_display_name=author,
+            text=text,
+            timestamp=datetime.now(timezone.utc),
+            author_type=author_type,
+        )
+
+    monkeypatch.delenv("VR_IGNORE_OWNER", raising=False)
+    monkeypatch.setenv("VR_BANNED_AUTHORS", "@SelwynBuilds-j1s, spam bot")
+    assert blocked_author_reason(msg("@SelwynBuilds-j1s", "make a game")) == "banned"
+    assert blocked_author_reason(msg("@spambot", "hi")) == "banned"
+    assert blocked_author_reason(msg("@owner", "hi", "owner")) == "channel owner"
+    echo = "@ana your game is up 🎮 https://x.github.io/g/ (give it about 5 minutes)"
+    assert blocked_author_reason(msg("@someone", echo)) == "our own announcement"
+    assert blocked_author_reason(msg("@MathUnlockedYT", "build a snake game")) == ""
+    monkeypatch.setenv("VR_IGNORE_OWNER", "0")
+    assert blocked_author_reason(msg("@owner", "hi", "owner")) == ""
+
+
+def test_gallery_promo_waits_for_a_crowd_and_never_spams(monkeypatch):
+    from open_llm_vtuber.publishing.promo import GalleryPromoter
+
+    for name in ("VR_GALLERY_PROMO", "VR_PROMO_MIN_VIEWERS", "VR_PROMO_EVERY_MINUTES"):
+        monkeypatch.delenv(name, raising=False)
+    now = [1000.0]
+    posts = []
+
+    class Service:
+        def post_gallery_promo(self, template):
+            posts.append(template)
+            return {"ok": True}
+
+    p = GalleryPromoter(clock=lambda: now[0], service_factory=Service)
+    now[0] += 11 * 60  # past the quiet start
+    assert not p.note("@ana") and not p.note("@ana") and not p.note("@bo")
+    assert p.note("@cy")  # three different people are chatting
+    assert p.post()["ok"] and len(posts) == 1
+    now[0] += 5 * 60
+    assert not p.note("@dee")  # too soon after the last post
+    now[0] += 16 * 60
+    p.note("@ana")  # the earlier chatters have expired by now
+    for who in ("@e", "@f", "@g"):
+        p.note(who)
+    assert p.note("@h")
+    monkeypatch.setenv("VR_GALLERY_PROMO", "0")
+    assert not p.note("@i")

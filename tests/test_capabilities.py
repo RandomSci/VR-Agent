@@ -278,14 +278,30 @@ def test_a_frozen_page_is_a_real_problem(monkeypatch):
             broken = await qa.check(
                 "<html><body><canvas></canvas><script>missingFunction()</script></body></html>"
             )
-            return frozen, blank, broken
+            moving = (
+                "<style>h1{animation:s 1s infinite alternate}@keyframes s{to{transform:"
+                "translateX(80px)}}</style><h1>Hi</h1>"
+            )
+            dead = await qa.check(
+                f"<html><body>{moving}<a class=btn>Book a call</a>"
+                "<a href='#nowhere'>Pricing</a><button>Buy</button></body></html>"
+            )
+            alive = await qa.check(
+                f"<html><body>{moving}<a href='#x'>Go</a><div id=x>x</div>"
+                "<button onclick='1'>Buy</button><button class=d>Del</button>"
+                "<script>document.addEventListener('click',()=>{})</script></body></html>"
+            )
+            return frozen, blank, broken, dead, alive
         finally:
             await qa.close()
 
     try:
-        frozen, blank, broken = asyncio.run(run())
+        frozen, blank, broken, dead, alive = asyncio.run(run())
     finally:
         server.should_exit = True
+    assert not dead.ok and len(dead.dead_controls) == 3, dead.problems()
+    assert "Book a call" in dead.problems()[-1]
+    assert not alive.dead_controls, alive.problems()
     assert not frozen.ok and not frozen.skipped
     assert not blank.ok and blank.blank
     assert not broken.ok and any("missingFunction" in e for e in broken.errors)

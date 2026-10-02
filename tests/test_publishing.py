@@ -213,7 +213,7 @@ def test_dry_run_publishes_a_playable_folder_and_gallery(tmp_path):
     assert [g["slug"] for g in registry["games"]] == [slug]
     assert registry["games"][0]["requested_by"] == "@selwyn"
     gallery = (repo / "index.html").read_text()
-    assert "Luna Flappy" in gallery and "Requested by @selwyn" in gallery
+    assert "Luna Flappy" in gallery and "requested by <b>@selwyn</b>" in gallery
     assert service.store.get(job.job_id).status == PUBLISHED
 
     # Publishing the same job again never duplicates it.

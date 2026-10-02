@@ -1,6 +1,7 @@
 import asyncio
 import html
 import json
+import os
 import re
 import time
 from collections import Counter, OrderedDict, deque
@@ -308,6 +309,41 @@ class _BoundedSet:
         return len(self._items)
 
 
+# Our own channel posts "your game is up" links into chat. Reading those back
+# made Mika build games for herself. Owner messages are ignored unless
+# VR_IGNORE_OWNER=0, and VR_BANNED_AUTHORS (comma separated names) are never
+# read at all.
+OWN_ANNOUNCEMENT_RE = re.compile(
+    r"your (game|update) is (up|live|pushed)|every game mika and luna built", re.IGNORECASE
+)
+
+
+def _author_key(name: str) -> str:
+    return re.sub(r"\s+", "", str(name or "").strip().lstrip("@").lower())
+
+
+def banned_authors() -> set[str]:
+    raw = os.environ.get("VR_BANNED_AUTHORS", "")
+    return {_author_key(n) for n in raw.split(",") if _author_key(n)}
+
+
+def blocked_author_reason(message: "YouTubeChatMessage") -> str:
+    if _author_key(message.author_display_name) in banned_authors():
+        return "banned"
+    ignore_owner = os.environ.get("VR_IGNORE_OWNER", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+    if ignore_owner and str(getattr(message, "author_type", "") or "") == "owner":
+        return "channel owner"
+    if OWN_ANNOUNCEMENT_RE.search(message.text or "") and "github.io" in (
+        message.text or ""
+    ):
+        return "our own announcement"
+    return ""
+
+
 class YouTubeMessageBuffer:
     UNSAFE_RE = re.compile(
         r"\b(kill yourself|suicide|nazi|terrorist|rape|porn|onlyfans|slur)\b",
@@ -545,7 +581,23 @@ class YouTubeLiveChatService:
             )
         return consumed
 
+    def _maybe_promote_gallery(self, message: YouTubeChatMessage) -> None:
+        """Share the gallery link now and then when enough people are chatting."""
+        try:
+            from ..publishing.promo import promoter
+
+            if promoter.note(message.author_display_name):
+                asyncio.get_running_loop().run_in_executor(None, promoter.post)
+        except Exception as exc:  # never let promotion disturb chat reading
+            logger.debug(f"Gallery promo skipped: {exc}")
+
     def _accept(self, message: YouTubeChatMessage, source_label: str) -> bool:
+        blocked = blocked_author_reason(message)
+        if blocked:
+            logger.debug(
+                f"YouTube {source_label} ignored ({blocked}) from {message.author_display_name}"
+            )
+            return False
         accepted, reason = self.buffer.add(message)
         if accepted and self._observe(message):
             self._last_message_seen_at = time.time()
@@ -561,6 +613,7 @@ class YouTubeLiveChatService:
             logger.info(
                 f"YouTube {source_label} from {message.author_display_name}: {_truncate(message.text)}"
             )
+            self._maybe_promote_gallery(message)
         else:
             logger.debug(f"YouTube {source_label} filtered ({reason}): {_truncate(message.text, 60)}")
         return accepted

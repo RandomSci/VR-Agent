@@ -100,8 +100,8 @@
     <h1 class="reveal">Busywork out.<br><span>Momentum in.</span></h1>
     <p class="lead reveal">We connect your apps, add a little AI, and turn hours of copy and paste into workflows that run while you sleep.</p>
     <div class="actions reveal">
-      <a class="btn" data-hover>Book a call</a>
-      <a class="btn ghost" data-hover>See our work</a>
+      <a class="btn" href="#contact" data-hover>Book a call</a>
+      <a class="btn ghost" href="#work" data-hover>See our work</a>
     </div>
   </div>
   <!-- A small workflow that keeps running: data dots travel between steps. -->
@@ -159,13 +159,21 @@
 <section class="contact" id="contact" data-tour>
   <h2 class="reveal">Let's automate the boring part.</h2>
   <p class="lead reveal">Tell us one task you repeat every week. We will show you what it looks like on autopilot.</p>
-  <a class="btn reveal" data-hover>Start a project</a>
+  <a class="btn reveal" href="#contact" data-hover data-demo>Start a project</a>
+  <p class="lead" id="demo-note" hidden>Thanks! This site was built live on stream, so this button is a demo.</p>
 </section>
 
 <footer><span>© Lantern Labs</span><span>Made live on stream</span></footer>
 <div id="cursor"></div>
 
 <script>
+// ===== BUTTONS: every button does something real =====
+// Links scroll to their section; a demo action shows a friendly note.
+document.querySelectorAll("[data-demo]").forEach((el) => el.addEventListener("click", (e) => {
+  e.preventDefault();
+  document.getElementById("demo-note").hidden = false;
+}));
+
 // ===== SETTINGS =====
 const SETTINGS = {
   scrollMs: 1400,   // how long one scroll between sections takes

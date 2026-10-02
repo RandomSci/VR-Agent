@@ -35,7 +35,20 @@ So the program must:
 - if it is a game, play itself: an AI or scripted player makes the moves and
   the score keeps changing;
 - if it would normally react to the mouse, drive that motion yourself (a
-  path, orbit or wander) so it still looks alive."""
+  path, orbit or wander) so it still looks alive.
+
+THE SAME FILE IS LATER PUBLISHED FOR PEOPLE TO PLAY.
+- Games: const PLAYER = window.GAME_MODE === "player". When PLAYER is false
+  (the stream) the AI plays; when true (the published page) a person plays
+  with keyboard AND mouse or touch, and the AI is off for their character.
+  Keep the template's PLAYER CONTROLS block and its "if (PLAYER)" checks.
+  Show a short hint of the controls when PLAYER is true. Never show a
+  start button or wait for input when PLAYER is false.
+- Websites and pages: anything that looks clickable must work. Every nav
+  link and button scrolls to a section that exists (href="#id" with that
+  id on the page) or does something visible. No dead "#" links and no
+  decorative buttons that do nothing. A contact form shows a friendly
+  "Thanks, this is a demo" message instead of sending."""
 
 SCREEN_LAYOUT = """Layout: fill the whole viewport (100vw x 100vh, margin 0, overflow hidden),
   no scrollbars. One big focal element, centered or on a clear third.
@@ -158,6 +171,15 @@ AUTOPILOT_JS = r"""
   window.alert = function () {};
   window.confirm = function () { return true; };
   window.prompt = function (_m, d) { return d == null ? "" : String(d); };
+  // Remember which elements got click handlers, so the browser check can
+  // find buttons and links that do nothing.
+  var addListener = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function (type, fn, opts) {
+    if (/^(click|pointerdown|pointerup|mousedown|mouseup|touchstart|touchend|submit)$/.test(type)) {
+      try { this.__vrClick = true; } catch (_) {}
+    }
+    return addListener.call(this, type, fn, opts);
+  };
 
   function fire(target, type, x, y, extra) {
     if (!target) return;

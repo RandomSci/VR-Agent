@@ -83,8 +83,17 @@ def _library_folder_files(repo_path: str, resolved: Path) -> dict[str, Path]:
     }
 
 
+# The published copy is played by a person: games read this and turn on their
+# keyboard, mouse and touch controls (the Stage never sets it, so there the AI
+# plays). saved_code() strips it again when a game is reopened.
+PLAYER_MODE_TAG = '<script>window.GAME_MODE="player";</script>'
+
+
 def _add_policy(html: str) -> str:
-    meta = f'<meta http-equiv="Content-Security-Policy" content="{PUBLISHED_POLICY}">'
+    meta = (
+        f'<meta http-equiv="Content-Security-Policy" content="{PUBLISHED_POLICY}">'
+        + PLAYER_MODE_TAG
+    )
     match = re.search(r"<head(\s[^>]*)?>", html, re.I)
     if match:
         return html[: match.end()] + meta + html[match.end() :]

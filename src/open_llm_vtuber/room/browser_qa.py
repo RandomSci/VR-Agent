@@ -105,6 +105,8 @@ class BrowserReport:
     # One-screen programs only: the page is taller or wider than the screen,
     # so part of it is cut off on stream. "" when everything fits.
     overflow: str = ""
+    # Buttons and links that look clickable but do nothing.
+    dead_controls: list[str] = field(default_factory=list)
 
     def problems(self) -> list[str]:
         out = []
@@ -123,6 +125,14 @@ class BrowserReport:
             out.append(
                 f"Content is cut off: {self.overflow}. Everything must fit in one "
                 "screen: use fewer items, two columns or smaller type."
+            )
+        if self.dead_controls:
+            out.append(
+                "Buttons or links do nothing when clicked: "
+                + ", ".join(f"'{d}'" for d in self.dead_controls[:6])
+                + ". Every button and link must work: scroll to a section that "
+                "exists (href=\"#id\" and an element with that id) or do something "
+                "visible. A form shows a 'Thanks, this is a demo' message."
             )
         if not self.moving and not self.blank:
             out.append(
@@ -276,10 +286,15 @@ class BrowserQA:
                 [base64.b64encode(first).decode(), base64.b64encode(second).decode()],
             )
             overflow = ""
-            if not allow_scroll:
-                frame = await frame_el.content_frame()
-                if frame is not None:
+            dead: list[str] = []
+            frame = await frame_el.content_frame()
+            if frame is not None:
+                if not allow_scroll:
                     overflow = _describe_overflow(await frame.evaluate(_SIZE_JS))
+                try:
+                    dead = [str(d)[:60] for d in (await frame.evaluate(_DEAD_JS) or [])]
+                except Exception:  # a page that navigated away: nothing to judge
+                    dead = []
         finally:
             await context.close()
 
@@ -295,6 +310,7 @@ class BrowserQA:
             and not blank
             and moving
             and not overflow
+            and not dead
         )
         return BrowserReport(
             ok=ok,
@@ -306,7 +322,50 @@ class BrowserQA:
             stats=stats,
             screenshot_png=second,
             overflow=overflow,
+            dead_controls=_unique(dead),
         )
+
+
+# Buttons and links that look clickable but have nothing behind them. A
+# handler anywhere up the tree (or on document or window) counts, so
+# delegated click handling is never reported.
+_DEAD_JS = r"""
+() => {
+  const delegated = !!(window.__vrClick || document.__vrClick || window.onclick || document.onclick);
+  const handled = (el) => {
+    for (let n = el; n && n !== document; n = n.parentNode) {
+      if (n.__vrClick || n.onclick || (n.getAttribute && n.getAttribute("onclick"))) return true;
+    }
+    return delegated;
+  };
+  const name = (el) => (el.textContent || el.value || el.getAttribute("aria-label") || "")
+    .trim().replace(/\s+/g, " ").slice(0, 40);
+  const dead = [];
+  for (const a of document.querySelectorAll("a")) {
+    const label = name(a);
+    if (!label) continue;
+    const href = (a.getAttribute("href") || "").trim();
+    if (href.startsWith("#") && href.length > 1) {
+      let id = href.slice(1);
+      try { id = decodeURIComponent(id); } catch (_) {}
+      if (!document.getElementById(id) && !handled(a)) dead.push(label + " (nothing has id " + id + ")");
+      continue;
+    }
+    if (href && href !== "#" && !/^javascript:/i.test(href)) continue;
+    if (!handled(a)) dead.push(label);
+  }
+  for (const b of document.querySelectorAll("button, [role=button], input[type=button], input[type=submit]")) {
+    if (b.disabled) continue;
+    if (b.form && (b.type === "submit" || b.tagName === "BUTTON")) {
+      if (handled(b) || b.form.__vrClick || b.form.onsubmit) continue;
+      dead.push((name(b) || "a form button") + " (the form does nothing)");
+      continue;
+    }
+    if (!handled(b)) dead.push(name(b) || "a button");
+  }
+  return Array.from(new Set(dead)).slice(0, 8);
+}
+"""
 
 
 # How big the page really is, measured inside the program's own frame.

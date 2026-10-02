@@ -318,6 +318,31 @@ class PublicationService:
         logger.info(f"Removed {slug} from the gallery ({len(paths)} files)")
         return {"ok": True, "removed": slug, "files": len(paths)}
 
+    def post_gallery_promo(self, template: str) -> dict[str, Any]:
+        """One chat message with the gallery link (see promo.py for when)."""
+        s = self.settings
+        if not (s.enabled and s.youtube_enabled and s.youtube_chat_enabled):
+            return {"ok": False, "reason": "live chat posting is disabled"}
+        if not self.store.published():
+            return {"ok": False, "reason": "nothing published yet"}
+        text = template.format(url=self._base_url() + "/")
+        if s.dry_run:
+            self.dry_run_log.append({"action": "post_chat", "text": text})
+            logger.info(f"Dry run: would post: {text}")
+            return {"ok": True, "dry_run": True, "text": text}
+        if not s.youtube_ready:
+            return {"ok": False, "reason": "YouTube credentials are not configured"}
+        try:
+            client = self._youtube_factory()
+            video_id = self._video_id(client)
+            chat_id = client.active_live_chat_id(video_id) if video_id else ""
+            if not chat_id:
+                return {"ok": False, "reason": "the stream is not live"}
+            client.post_chat_message(chat_id, text)
+        except YouTubeError as exc:
+            return {"ok": False, "reason": str(exc)[:300]}
+        return {"ok": True, "text": text}
+
     # -- 2. announce --------------------------------------------------------
     def announcement_text(self, job: CreationJob) -> str:
         who = job.viewer_display_name.strip()
@@ -366,6 +391,7 @@ class PublicationService:
         page = re.sub(
             r'<meta http-equiv="Content-Security-Policy" content="[^"]*">', "", page, count=1
         )
+        page = page.replace('<script>window.GAME_MODE="player";</script>', "", 1)
         code = page.replace("../../libs/", "/stage-libs/").replace(
             "../../assets/", "/stage-assets/"
         )

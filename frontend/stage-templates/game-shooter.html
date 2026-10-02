@@ -26,6 +26,9 @@ const SETTINGS = {
   skill: 0.9,               // autopilot: 1 dodges everything, lower gets hit more
 };
 
+// The Stage plays the game by itself; the published page is played by a person.
+const PLAYER = window.GAME_MODE === "player";
+
 class Play extends Phaser.Scene {
   constructor() { super("play"); }
 
@@ -87,6 +90,15 @@ class Play extends Phaser.Scene {
       fontFamily: font, fontSize: "130px", fontStyle: "900", color: "#ffb55e",
     }).setOrigin(0.5).setShadow(0, 0, "#ff6f9c", 30, true, true).setDepth(10);
     this.tweens.add({ targets: title, alpha: 0, y: 380, delay: 1600, duration: 900 });
+
+    // ===== PLAYER CONTROLS (published page): mouse, finger or arrow keys =====
+    if (PLAYER) {
+      this.keys = this.input.keyboard.addKeys("LEFT,RIGHT,A,D");
+      this.input.on("pointermove", (p) => { if (p.isDown || p.pointerType === "mouse") this.targetX = p.x; });
+      this.input.on("pointerdown", (p) => { this.targetX = p.x; });
+      const hint = this.add.text(960, 760, "Move with the mouse, a finger or the arrow keys", { fontFamily: "Nunito, Quicksand, 'Segoe UI', system-ui, sans-serif", fontSize: "46px", fontStyle: "800", color: "#f4ead8", backgroundColor: "#0b1530cc", padding: { x: 28, y: 14 } }).setOrigin(0.5).setDepth(11);
+      this.tweens.add({ targets: hint, alpha: 0, delay: 3500, duration: 800 });
+    }
   }
 
   drawLives() {
@@ -160,7 +172,13 @@ class Play extends Phaser.Scene {
     }
     this.invincible = Math.max(0, this.invincible - dt);
 
-    this.autopilot();
+    if (PLAYER) {
+      if (this.keys.LEFT.isDown || this.keys.A.isDown) this.targetX = this.player.x - 160;
+      if (this.keys.RIGHT.isDown || this.keys.D.isDown) this.targetX = this.player.x + 160;
+      this.targetX = Phaser.Math.Clamp(this.targetX, 100, 1820);
+    } else {
+      this.autopilot();
+    }
     this.player.x += (this.targetX - this.player.x) * Math.min(1, 6 * dt);
     this.player.angle = (this.targetX - this.player.x) * 0.03;
 
