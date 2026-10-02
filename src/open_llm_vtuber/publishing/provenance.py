@@ -107,6 +107,7 @@ class CreationJob:
     published_at: float = 0.0
     publish_error: str = ""
     announced_chat: bool = False
+    announced_version: str = ""
     announced_comment: bool = False
     in_description: bool = False
     code_sha256: str = ""

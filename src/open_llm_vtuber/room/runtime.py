@@ -961,8 +961,27 @@ class RoomRuntimes:
                 self.publish_task = asyncio.get_running_loop().create_task(
                     self.publish_current(announce=True, speaker=job.speaker)
                 )
+            elif settings.enabled and settings.auto_publish and lesson.language == "web":
+                # Never silent: the viewer is waiting for a link.
+                problems = (lesson.last_check.get("problems") or ["it did not pass the check"])[:2]
+                logger.warning(f"Not published (browser check failed): {problems}")
+                who = str(lesson.student_name or "").lstrip("@") or "chat"
+                self.publish_task = asyncio.get_running_loop().create_task(
+                    self._say_later(
+                        job.speaker or self.session.teaching.session.teacher,
+                        f"{who}, this one still has a bug, so I didn't put it on the "
+                        "games page yet. Say fix it and I'll try again!",
+                    )
+                )
         except Exception as exc:  # publishing must never break a build
             logger.warning(f"Could not record the creation: {exc}")
+
+    async def _say_later(self, character_id: str, text: str) -> None:
+        from .speech import INSIDE_INTERACTION
+
+        INSIDE_INTERACTION.set(False)
+        if self.session.speech_target():
+            await self.session.speech.say(character_id, text)
 
     async def publish_current(
         self, announce: bool = True, speaker: str = ""

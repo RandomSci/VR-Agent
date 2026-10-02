@@ -439,10 +439,14 @@ class PublicationService:
             )
         if not (s.youtube_enabled and s.youtube_chat_enabled):
             return {"ok": False, "reason": "live chat posting is disabled"}
-        if job.announced_chat:
+        # Each new version is announced once (an update gets its own message).
+        version = job.code_sha256 or "x"
+        if job.announced_chat and job.announced_version == version:
             return {"ok": True, "reason": "already announced"}
+        if job.announced_chat:
+            text = text.replace(" your game is up", " your update is up", 1)
         return self._youtube_action(
-            job, "post_chat", "", text, mark={"announced_chat": True}
+            job, "post_chat", "", text, mark={"announced_chat": True, "announced_version": version}
         )
 
     # -- 3. description -------------------------------------------------------
