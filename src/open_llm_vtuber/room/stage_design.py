@@ -43,7 +43,10 @@ THE SAME FILE IS LATER PUBLISHED FOR PEOPLE TO PLAY.
   with keyboard AND mouse or touch, and the AI is off for their character.
   Keep the template's PLAYER CONTROLS block and its "if (PLAYER)" checks.
   Show a short hint of the controls when PLAYER is true. Never show a
-  start button or wait for input when PLAYER is false.
+  start button or wait for input when PLAYER is false. Keep the template's
+  control code as it is (inputDirection returns a ready unit vector):
+  never divide by a length that can be 0, or the player turns into NaN,
+  vanishes and the game breaks only for real players.
 - Websites and pages: anything that looks clickable must work. Every nav
   link and button scrolls to a section that exists (href="#id" with that
   id on the page) or does something visible. No dead "#" links and no

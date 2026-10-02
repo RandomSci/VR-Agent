@@ -92,24 +92,29 @@ class Play extends Phaser.Scene {
     }
   }
 
+  // Where the person wants to go: a unit vector, or {x: 0, y: 0} when idle.
+  inputDirection(from) {
+    const k = this.keys;
+    let x = (k.RIGHT.isDown || k.D.isDown ? 1 : 0) - (k.LEFT.isDown || k.A.isDown ? 1 : 0);
+    let y = (k.DOWN.isDown || k.S.isDown ? 1 : 0) - (k.UP.isDown || k.W.isDown ? 1 : 0);
+    if (!x && !y && this.pointerTarget) {
+      const d = Phaser.Math.Distance.Between(from.x, from.y, this.pointerTarget.x, this.pointerTarget.y);
+      if (d > 20) {
+        const a = Phaser.Math.Angle.Between(from.x, from.y, this.pointerTarget.x, this.pointerTarget.y);
+        return { x: Math.cos(a), y: Math.sin(a) };
+      }
+    }
+    const len = Math.hypot(x, y);
+    return len > 0 ? { x: x / len, y: y / len } : { x: 0, y: 0 };
+  }
+
   // The person's player: same smooth movement as the AI, steered by input.
   control(p, dt) {
     if (p.stunned > 0) { p.stunned -= dt; p.sprite.angle += 720 * dt; return; }
     p.sprite.angle *= 0.9;
-    const k = this.keys;
-    let ax = (k.RIGHT.isDown || k.D.isDown ? 1 : 0) - (k.LEFT.isDown || k.A.isDown ? 1 : 0);
-    let ay = (k.DOWN.isDown || k.S.isDown ? 1 : 0) - (k.UP.isDown || k.W.isDown ? 1 : 0);
-    if (!ax && !ay && this.pointerTarget) {
-      const d = Phaser.Math.Distance.Between(p.sprite.x, p.sprite.y, this.pointerTarget.x, this.pointerTarget.y);
-      if (d > 20) {
-        const a = Phaser.Math.Angle.Between(p.sprite.x, p.sprite.y, this.pointerTarget.x, this.pointerTarget.y);
-        ax = Math.cos(a); ay = Math.sin(a);
-      }
-    }
-    const len = Math.hypot(ax, ay);
-    const wantX = len ? (ax / len) * p.speed : 0, wantY = len ? (ay / len) * p.speed : 0;
-    p.vx += (wantX - p.vx) * Math.min(1, dt * 8);
-    p.vy += (wantY - p.vy) * Math.min(1, dt * 8);
+    const dir = this.inputDirection(p.sprite);
+    p.vx += (dir.x * p.speed - p.vx) * Math.min(1, dt * 8);
+    p.vy += (dir.y * p.speed - p.vy) * Math.min(1, dt * 8);
     p.sprite.x = Phaser.Math.Clamp(p.sprite.x + p.vx * dt, 80, W - 80);
     p.sprite.y = Phaser.Math.Clamp(p.sprite.y + p.vy * dt, 160, H - 80);
     if (Math.abs(p.vx) > 5) p.sprite.setFlipX(p.vx < 0);
@@ -190,6 +195,10 @@ class Play extends Phaser.Scene {
     for (const p of this.players) {
       if (PLAYER && p === this.players[0]) this.control(p, dt);
       else this.steer(p, dt);
+      // Safety: a bad number must never make a player vanish and eat every star.
+      if (!Number.isFinite(p.sprite.x) || !Number.isFinite(p.sprite.y)) {
+        p.sprite.setPosition(W / 2, H / 2); p.vx = 0; p.vy = 0;
+      }
       const r = SETTINGS.playerSize * 0.45;
       this.coins = this.coins.filter((coin) => {
         if (Phaser.Math.Distance.Between(coin.x, coin.y, p.sprite.x, p.sprite.y) > r + 30) return true;
