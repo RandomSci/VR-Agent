@@ -200,3 +200,91 @@ def art_exists(url: str) -> bool:
     if not url.startswith(URL_PREFIX):
         return False
     return (GENERATED_DIR / Path(url[len(URL_PREFIX):]).name).is_file()
+
+
+# ---------------------------------------------------------------------------
+# Game characters: a cut-out sprite with a transparent background
+# ---------------------------------------------------------------------------
+SPRITE_STYLE = (
+    "as a single cute 2D video game character sprite: full body, centred, "
+    "facing right, bold clean outline, bright cel shading, transparent "
+    "background, nothing else in the picture, no text."
+)
+GAME_CHARACTER = re.compile(
+    r"\b(as (a|the|our) (character|player|hero)|play as|character|hero|player is|"
+    r"you are a|starring)\b",
+    re.IGNORECASE,
+)
+
+
+def sprite_prompt(request: str, earlier: str = "") -> str:
+    """Who the character is: the request, plus the earlier picture when the
+    viewer says "that cat" or "this dragon"."""
+    text = " ".join(str(request or "").split())[:500]
+    if earlier and re.search(r"\b(that|this|the same|it)\b", text, re.IGNORECASE):
+        text = f"{text} (the character from this picture: {earlier[:300]})"
+    for key, description in CHARACTERS.items():
+        if re.search(rf"\b{key}\b", text, re.IGNORECASE):
+            text += f" ({description})"
+    return f"The main character of this game request: {text}. Draw it {SPRITE_STYLE}"
+
+
+async def generate_sprite(
+    prompt: str, stem: str, client: Optional[httpx.AsyncClient] = None
+) -> str:
+    """A transparent PNG character for a game. Returns its URL, or ""."""
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not key:
+        return ""
+    owns = client is None
+    client = client or httpx.AsyncClient(timeout=120)
+    started = time.perf_counter()
+    try:
+        # Only the gpt-image models can cut the background out.
+        for model in [m for m in _models() if not m.startswith("dall-e")]:
+            try:
+                response = await client.post(
+                    API,
+                    headers={"Authorization": f"Bearer {key}"},
+                    json={
+                        "model": model,
+                        "prompt": prompt[:3900],
+                        "size": "1024x1024",
+                        "quality": os.environ.get("VR_IMAGE_QUALITY", "low").strip() or "low",
+                        "background": "transparent",
+                        "output_format": "png",
+                        "n": 1,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                logger.warning(f"Sprite: {model} unreachable: {exc}")
+                continue
+            if response.status_code >= 400:
+                logger.warning(f"Sprite: {model} refused ({response.status_code}): {response.text[:200]}")
+                continue
+            try:
+                data = base64.b64decode(response.json()["data"][0]["b64_json"])
+            except Exception as exc:
+                logger.warning(f"Sprite: {model} returned no picture: {exc}")
+                continue
+            if len(data) > MAX_BYTES:
+                try:
+                    from io import BytesIO
+
+                    from PIL import Image
+
+                    image = Image.open(BytesIO(data))
+                    image.thumbnail((512, 512))
+                    out = BytesIO()
+                    image.save(out, "PNG", optimize=True)
+                    data = out.getvalue()
+                except Exception:
+                    continue
+            GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+            (GENERATED_DIR / f"{stem}.png").write_bytes(data)
+            logger.info(f"Sprite made with {model} in {time.perf_counter() - started:.1f}s")
+            return f"{URL_PREFIX}{stem}.png"
+        return ""
+    finally:
+        if owns:
+            await client.aclose()

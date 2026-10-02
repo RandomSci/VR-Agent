@@ -64,3 +64,28 @@ def test_only_real_picture_changes_paint_again():
     assert art.needs_new_art("make it a busy street with taxis")
     assert art.needs_new_art("now draw a dragon")
 
+
+
+def test_game_characters_become_transparent_sprites(monkeypatch, tmp_path):
+    monkeypatch.setattr(art, "GENERATED_DIR", tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("VR_IMAGE_MODEL", raising=False)
+    assert art.GAME_CHARACTER.search("Lets use that cat as a character for our game")
+    assert not art.GAME_CHARACTER.search("make a flappy bird game")
+    prompt = art.sprite_prompt("use that cat as a character", "a cat crying in front of a tower")
+    assert "cat crying" in prompt and "transparent" in prompt
+    png = b"\x89PNG" + b"0" * 500
+    seen = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        seen.append(body)
+        return httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(png).decode()}]})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await art.generate_sprite(prompt, "s1", client)
+
+    assert asyncio.run(go()) == "/stage-assets/generated/s1.png"
+    assert seen[0]["background"] == "transparent" and seen[0]["output_format"] == "png"
+    assert (tmp_path / "s1.png").read_bytes() == png
