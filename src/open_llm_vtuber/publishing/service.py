@@ -37,6 +37,7 @@ from .provenance import (
     PUBLISH_FAILED,
     PUBLISHED,
     PUBLISHING,
+    REMOVED,
     TESTING,
     CreationJob,
     JobStore,
@@ -268,6 +269,54 @@ class PublicationService:
             "slug": slug,
             "dry_run": s.dry_run,
         }
+
+    # -- admin: list and take down ------------------------------------------
+    def list_published(self) -> list[dict[str, Any]]:
+        """What the public gallery lists right now, read from the repository."""
+        target = self._target_factory()
+        raw = target.read("games.json")
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+        except (ValueError, UnicodeDecodeError):
+            data = {}
+        return [g for g in data.get("games", []) if isinstance(g, dict)]
+
+    def unpublish(self, slug: str) -> dict[str, Any]:
+        """Remove one game from the gallery and delete its files. Admin only."""
+        s = self.settings
+        slug = str(slug or "").strip()
+        if not slug or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,80}", slug):
+            return {"ok": False, "reason": "bad game id"}
+        if not s.dry_run and not s.github_ready:
+            return {"ok": False, "reason": "GitHub publishing is not configured"}
+        try:
+            target = self._target_factory()
+            raw = target.read("games.json")
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+            games = [g for g in data.get("games", []) if isinstance(g, dict)]
+            remaining = [g for g in games if g.get("slug") != slug]
+            paths = target.list_paths(f"games/{slug}/")
+            if len(remaining) == len(games) and not paths:
+                return {"ok": False, "reason": "no such game in the gallery"}
+            registry = {
+                "title": data.get("title") or "Games built live by Mika and Luna",
+                "games": remaining,
+            }
+            files = {
+                "games.json": json.dumps(registry, indent=1, ensure_ascii=False).encode(
+                    "utf-8"
+                ),
+                "index.html": render_gallery(registry, s.live_url).encode("utf-8"),
+            }
+            target.commit(files, f"Remove {slug} (admin)", delete=tuple(paths))
+        except (PublishTargetError, OSError, ValueError) as exc:
+            logger.warning(f"Removing {slug} failed: {exc}")
+            return {"ok": False, "reason": str(exc)[:300]}
+        for job in self.store.all():
+            if job.project_slug == slug and job.status == PUBLISHED:
+                self.store.update(job.job_id, status=REMOVED)
+        logger.info(f"Removed {slug} from the gallery ({len(paths)} files)")
+        return {"ok": True, "removed": slug, "files": len(paths)}
 
     # -- 2. announce --------------------------------------------------------
     def announcement_text(self, job: CreationJob) -> str:

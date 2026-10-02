@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gallery Admin</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#0b1220; color:#e6edf7; font:15px/1.5 system-ui,sans-serif; }
+  main { max-width:860px; margin:0 auto; padding:28px 16px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:#93a4bd; margin:0 0 22px; }
+  form { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px; }
+  input { flex:1; min-width:200px; background:#121b2c; border:1px solid #2b3a55; color:inherit; border-radius:8px; padding:10px 12px; font:inherit; }
+  button { background:#2563eb; color:#fff; border:0; border-radius:8px; padding:10px 16px; font:inherit; font-weight:600; cursor:pointer; }
+  button.del { background:#3b1420; color:#ffb4c0; border:1px solid #7a2638; padding:7px 12px; }
+  button:disabled { opacity:.5; cursor:default; }
+  #msg { min-height:22px; color:#fbbf77; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { text-align:left; padding:10px 8px; border-bottom:1px solid #1e2a40; vertical-align:top; }
+  th { color:#93a4bd; font-weight:600; font-size:13px; }
+  .t { font-weight:600; } .m { color:#93a4bd; font-size:13px; }
+  a { color:#7dd3fc; }
+  input#q { margin:0 0 12px; width:100%; box-sizing:border-box; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gallery Admin</h1>
+  <p class="sub">Take games down from the public gallery. Only this computer can open this page.</p>
+  <form id="login">
+    <input id="pw" type="password" placeholder="Admin password (PASS_W in .env)" autocomplete="current-password">
+    <button type="submit">Load games</button>
+  </form>
+  <div id="msg"></div>
+  <input id="q" type="search" placeholder="Search by title or username" hidden>
+  <table id="list" hidden>
+    <thead><tr><th>Game</th><th>Requested by</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let password = "", games = [], gallery = "";
+async function call(path, body) {
+  const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(Object.assign({password}, body || {}))});
+  return r.json().catch(() => ({ok:false, reason:"Server error"}));
+}
+function render() {
+  const q = $("q").value.trim().toLowerCase();
+  const body = $("list").querySelector("tbody");
+  body.replaceChildren();
+  for (const g of games) {
+    const hay = [g.title, g.requested_by, g.built_by, g.slug].join(" ").toLowerCase();
+    if (q && !hay.includes(q)) continue;
+    const tr = document.createElement("tr");
+    const a = document.createElement("td");
+    const link = document.createElement("a");
+    link.href = gallery + "games/" + g.slug + "/"; link.target = "_blank"; link.rel = "noopener";
+    link.textContent = g.title || g.slug; link.className = "t";
+    const slug = document.createElement("div"); slug.className = "m"; slug.textContent = g.slug + (g.built_by ? " · built by " + g.built_by : "");
+    a.append(link, slug);
+    const who = document.createElement("td"); who.textContent = g.requested_by || "";
+    const act = document.createElement("td");
+    const del = document.createElement("button"); del.className = "del"; del.textContent = "Delete";
+    del.onclick = async () => {
+      if (!confirm("Delete \"" + (g.title || g.slug) + "\" from the public gallery? This removes its files from GitHub.")) return;
+      del.disabled = true; $("msg").textContent = "Deleting " + g.slug + "…";
+      const res = await call("/vr-agent/admin/delete", {slug: g.slug});
+      if (res.ok) { games = games.filter((x) => x.slug !== g.slug); render(); $("msg").textContent = "Deleted " + g.slug + ". GitHub Pages updates in a few minutes."; }
+      else { del.disabled = false; $("msg").textContent = res.reason || "Delete failed"; }
+    };
+    act.append(del);
+    tr.append(a, who, act);
+    body.append(tr);
+  }
+}
+$("login").onsubmit = async (e) => {
+  e.preventDefault();
+  password = $("pw").value; $("msg").textContent = "Loading…";
+  const res = await call("/vr-agent/admin/games");
+  if (!res.ok) { $("msg").textContent = res.reason || "Could not load"; return; }
+  games = res.games; gallery = res.gallery;
+  $("msg").textContent = games.length + " games in the gallery.";
+  $("list").hidden = false; $("q").hidden = false; render();
+};
+$("q").oninput = render;
+</script>
+</body>
+</html>

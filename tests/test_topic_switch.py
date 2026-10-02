@@ -187,3 +187,21 @@ def test_parse_decision_reads_fresh_and_brief():
     assert d.fresh is False and d.brief == ""
     # A string "true" from a sloppy model still counts.
     assert parse_decision('{"action":"create","fresh":"true"}').fresh is True
+
+
+def test_create_and_a_different_template_always_start_fresh():
+    # "make a snake game" while the shooter is on screen is a new program.
+    assert resolve_program_target(
+        CodingDecision(action="create", kind="web_game"), "web", "web_game_shooter"
+    ) == ("web", True)
+    assert resolve_program_target(
+        CodingDecision(action="modify", kind="web_game", fresh=False),
+        "web",
+        "web_game_shooter",
+    ) == ("web", True)
+    # Same template: a change stays a change.
+    assert resolve_program_target(
+        CodingDecision(action="modify", kind="web_game_shooter", fresh=False),
+        "web",
+        "web_game_shooter",
+    ) == ("web", False)

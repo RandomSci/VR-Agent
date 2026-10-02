@@ -146,7 +146,11 @@ KINDS: dict[str, Kind] = {
             "'#ffb55e', '#9cc2ff', '#ff6f9c', '#5fe3c8'.\n"
             "- 36 to 60 frames, update(frame) changes the artists, blit=True.\n"
             "- anim.save('output.gif', writer=PillowWriter(fps=16)); print how many "
-            "frames were saved. Keep it light: it must finish in under 10 seconds.",
+            "frames were saved. Keep it light: it must finish in under 10 seconds.\n"
+            "- Create the line or bars ONCE, then only call set_data or "
+            "set_height in update. Never clear and redraw the axes, never call "
+            "seaborn, kdeplot or savefig inside update or a loop: that runs out "
+            "of time and the run is killed.",
             python_packages=("matplotlib", "numpy", "pillow"),
             tier="normal",
         ),
@@ -214,7 +218,13 @@ KINDS: dict[str, Kind] = {
             "/stage-assets/characters/mika-head.png and luna-head.png.\n"
             "- Move things yourself with x, y and dt like the template (no arcade "
             "physics needed). Load art with this.load.svg(key, url, {width, "
-            "height}) or this.load.image(key, url) for PNG.",
+            "height}) or this.load.image(key, url) for PNG.\n"
+            "- Grid games (snake, tetris-like, mazes): draw the board as a grid "
+            "of cells with this.add.graphics(), move one cell per step on a "
+            "timer (every 100 to 150 ms), and let the AI pick the next cell. "
+            "A snake is a chain of cells that grows when it eats food.\n"
+            "- Make it look like the requested game, not like the template: "
+            "replace the template's title, sprites and background theme.",
             libraries=("phaser",),
             template="game-arena",
             uses_assets=True,

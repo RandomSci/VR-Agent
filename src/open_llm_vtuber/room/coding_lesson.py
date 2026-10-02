@@ -631,6 +631,11 @@ class RestrictedScriptRunner:
                     if timed_out
                     else "Output limit exceeded."
                     if exceeded_output.is_set()
+                    else "Killed: the script used its whole 15 seconds of CPU time. "
+                    "Make it much lighter: fewer frames (about 40), a smaller "
+                    "figure, draw once and update the data in each frame, and no "
+                    "seaborn or kde inside a loop."
+                    if proc.returncode in (-9, 137, -24, 152)
                     else ""
                 ),
             )

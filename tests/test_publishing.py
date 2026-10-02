@@ -564,3 +564,89 @@ def test_a_viewer_request_becomes_a_credited_published_game(tmp_path):
         / outcome["slug"]
         / "index.html"
     ).is_file()
+
+
+# ---------------------------------------------------------------------------
+# admin take-down
+# ---------------------------------------------------------------------------
+
+
+def test_admin_can_take_a_game_down(tmp_path):
+    service = PublicationService(settings(tmp_path))
+    keep = passed_job(service, name="@ana")
+    service.publish_project(keep.job_id, GAME)
+    gone = passed_job(service, code=GAME + "<!-- 2 -->", name="@bo")
+    service.publish_project(gone.job_id, GAME + "<!-- 2 -->")
+    slug = service.store.get(gone.job_id).project_slug
+    folder = tmp_path / "dry" / "mika-generated-games"
+    assert (folder / "games" / slug / "index.html").is_file()
+
+    assert {g["slug"] for g in service.list_published()} >= {slug}
+    result = service.unpublish(slug)
+    assert result["ok"] and result["files"] >= 1
+    assert not (folder / "games" / slug).exists() or not any(
+        (folder / "games" / slug).rglob("*.html")
+    )
+    left = json.loads((folder / "games.json").read_text())
+    assert slug not in {g["slug"] for g in left["games"]}
+    assert service.store.get(keep.job_id).project_slug in {g["slug"] for g in left["games"]}
+    assert slug not in (folder / "index.html").read_text()
+    assert service.store.get(gone.job_id).status == "removed"
+    assert not service.unpublish(slug)["ok"]  # already gone
+    assert not service.unpublish("../etc")["ok"]
+
+
+def test_github_delete_sends_null_shas():
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path, request.content))
+        path = request.url.path
+        if path.endswith("/git/ref/heads/main"):
+            return httpx.Response(200, json={"object": {"sha": "head"}})
+        if path.endswith("/git/commits/head"):
+            return httpx.Response(200, json={"tree": {"sha": "base"}})
+        if "/git/trees/base" in path:
+            return httpx.Response(
+                200,
+                json={"tree": [{"path": "games/x-1/index.html", "sha": "a", "type": "blob"}]},
+            )
+        if path.endswith("/git/blobs"):
+            return httpx.Response(201, json={"sha": "b"})
+        if path.endswith("/git/trees"):
+            return httpx.Response(201, json={"sha": "t"})
+        if path.endswith("/git/commits"):
+            return httpx.Response(201, json={"sha": "c"})
+        return httpx.Response(200, json={})
+
+    target = GitHubTarget(
+        "o/r", "main", TOKEN, client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert target.list_paths("games/x-1/") == ["games/x-1/index.html"]
+    target.commit({"games.json": b"{}"}, "Remove x-1", delete=("games/x-1/index.html",))
+    tree = [json.loads(c) for m, p, c in calls if m == "POST" and p.endswith("/git/trees")][0]
+    assert {"path": "games/x-1/index.html", "mode": "100644", "type": "blob", "sha": None} in tree["tree"]
+
+
+def test_admin_routes_need_the_password(monkeypatch, tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from open_llm_vtuber.publishing import admin
+
+    app = FastAPI()
+    app.include_router(admin.init_admin_routes())
+    client = TestClient(app)
+    monkeypatch.delenv("PASS_W", raising=False)
+    monkeypatch.delenv("pass_w", raising=False)
+    assert client.post("/vr-agent/admin/games", json={"password": "x"}).status_code == 403
+    monkeypatch.setenv("PASS_W", "hunter2")
+    admin._failures.clear()
+    assert client.post("/vr-agent/admin/games", json={"password": "nope"}).status_code == 401
+    seen = []
+    monkeypatch.setattr(
+        admin, "_service", lambda: type("S", (), {"unpublish": lambda self, s: seen.append(s) or {"ok": True}})()
+    )
+    r = client.post("/vr-agent/admin/delete", json={"password": "hunter2", "slug": "x-1"})
+    assert r.json()["ok"] and seen == ["x-1"]
+    admin._failures.clear()

@@ -12,6 +12,8 @@ makes no API call; only a turn does.
 
 from __future__ import annotations
 
+import re
+
 import asyncio
 import contextlib
 import json
@@ -59,7 +61,7 @@ def _program_preview(code: str, max_lines: int = 18, max_chars: int = 900) -> st
 
 
 def resolve_program_target(
-    decision: CodingDecision, existing_language: str
+    decision: CodingDecision, existing_language: str, existing_kind: str = ""
 ) -> tuple[str, bool]:
     """(language, fresh) for a coding decision, from structure only.
 
@@ -75,6 +77,23 @@ def resolve_program_target(
         else decision.language or existing_language or "python"
     )
     if decision.writes_code and existing_language and language != existing_language:
+        fresh = True
+    # "create" means a new program. Building it on top of the one on screen
+    # turned "make a snake game" into a re-skinned space shooter.
+    if existing_language and decision.action in ("create", "create_and_run"):
+        fresh = True
+    # A web program built from a different starting template is a different
+    # kind of thing (shooter -> snake): it cannot be an edit of this one.
+    if (
+        decision.writes_code
+        and existing_kind
+        and decision.kind
+        and decision.kind != existing_kind
+        and KINDS.get(decision.kind)
+        and KINDS.get(existing_kind)
+        and KINDS[decision.kind].language == "web"
+        and KINDS[decision.kind].template != KINDS[existing_kind].template
+    ):
         fresh = True
     return language, fresh
 
@@ -417,7 +436,11 @@ class RoomRuntimes:
         artifact = lesson.get("artifact") or {}
         has_code = bool(str(artifact.get("code") or "").strip())
         existing_language = str(artifact.get("language") or "") if has_code else ""
-        language, fresh = resolve_program_target(decision, existing_language)
+        language, fresh = resolve_program_target(
+            decision,
+            existing_language,
+            str(artifact.get("kind") or "") if has_code else "",
+        )
         decision.fresh = fresh
         self.last_decision = decision
         if decision.reopen and not self._can_reopen(decision.reopen):
@@ -439,6 +462,15 @@ class RoomRuntimes:
             kind = ""  # the reopened game keeps its own kind
         if kind and KINDS.get(kind) and KINDS[kind].language != language:
             kind = ""
+        # A Python picture is one still PNG. "Make it move" in Python must be
+        # the GIF animation kind, or the viewer sees nothing move.
+        if (
+            decision.writes_code
+            and language == "python"
+            and kind != "python_animation"
+            and re.search(r"\b(mov(e|es|ing)|animat\w*|wiggl\w*)\b", str(viewer_text or ""), re.I)
+        ):
+            kind = "python_animation"
         return {
             "intent": intent,
             "artifact_action": artifact_action,

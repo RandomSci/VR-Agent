@@ -32,6 +32,7 @@ FAILED = "failed"
 PUBLISHING = "publishing"
 PUBLISHED = "published"
 PUBLISH_FAILED = "publish_failed"
+REMOVED = "removed"  # taken down by the admin
 STATUSES = (
     REQUESTED,
     GENERATING,
@@ -41,6 +42,7 @@ STATUSES = (
     PUBLISHING,
     PUBLISHED,
     PUBLISH_FAILED,
+    REMOVED,
 )
 
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$")

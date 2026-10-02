@@ -55,11 +55,26 @@ class DryRunTarget:
     def has_same(self, repo_path: str, data: bytes) -> bool:
         return self.read(repo_path) == data
 
-    def commit(self, files: dict[str, bytes], message: str) -> None:
+    def list_paths(self, prefix: str) -> list[str]:
+        base = self._path(prefix) if prefix else self.folder
+        if not base.exists():
+            return []
+        root = self.folder.resolve()
+        return sorted(
+            str(p.resolve().relative_to(root)) for p in base.rglob("*") if p.is_file()
+        )
+
+    def commit(
+        self, files: dict[str, bytes], message: str, delete: tuple[str, ...] = ()
+    ) -> None:
         for repo_path, data in files.items():
             path = self._path(repo_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
+        for repo_path in delete:
+            path = self._path(repo_path)
+            if path.is_file():
+                path.unlink()
         self.commits.append(message)
 
 
@@ -136,9 +151,21 @@ class GitHubTarget:
         self._load()
         return self._tree.get(repo_path) == git_blob_sha(data)
 
-    def commit(self, files: dict[str, bytes], message: str) -> None:
+    def list_paths(self, prefix: str) -> list[str]:
+        self._load()
+        return sorted(p for p in self._tree if p.startswith(prefix))
+
+    def commit(
+        self, files: dict[str, bytes], message: str, delete: tuple[str, ...] = ()
+    ) -> None:
         self._load()
         entries = []
+        for repo_path in delete:
+            if repo_path in self._tree and repo_path not in files:
+                # A null sha removes the file from the new tree.
+                entries.append(
+                    {"path": repo_path, "mode": "100644", "type": "blob", "sha": None}
+                )
         for repo_path, data in files.items():
             blob = self._request(
                 "POST",

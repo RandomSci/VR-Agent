@@ -101,6 +101,11 @@ class WebSocketServer:
             f"http://127.0.0.1:{config.system_config.port}"
         )
 
+        # Gallery admin (local only): list and take down published games.
+        from .publishing.admin import init_admin_routes
+
+        self.app.include_router(init_admin_routes())
+
         # Include routes, passing the context instance
         # The context will be populated during the initialize step
         self.app.include_router(
