@@ -211,6 +211,75 @@ class RoomRuntimes:
     # so ordinary conversation never pays for code generation.
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Chat while a build runs: one short spoken line, never a silent void.
+    # ------------------------------------------------------------------
+    @property
+    def building(self) -> bool:
+        return self.coding_worker.busy
+
+    async def side_reply(self, viewer: str, text: str, wants_build: bool) -> bool:
+        """Answer a chat message while the code is being written or fixed.
+
+        The character who is NOT coding answers (Luna talks while Mika codes),
+        in one short line, without touching the build. A new build request is
+        told it is next in line; the message stays queued for after this one.
+        """
+        from .speech import INSIDE_INTERACTION
+
+        teaching = self.session.teaching.session
+        coder = teaching.teacher
+        cast = [c.id for c in self.session.room.characters]
+        speaker = next((c for c in cast if c != coder), coder)
+        profile = self.session.room.get(speaker)
+        coder_profile = self.session.room.get(coder)
+        if profile is None:
+            return False
+        name = profile.name
+        coder_name = coder_profile.name if coder_profile else coder.title()
+        who = str(viewer or "chat").lstrip("@")[:40]
+        what = (teaching.goal or "a program")[:120]
+        for_whom = (teaching.student_name or "a viewer").lstrip("@")[:40]
+        if speaker == coder:
+            situation = f"You are busy coding {what} for {for_whom} right now."
+        else:
+            situation = f"{coder_name} is busy coding {what} for {for_whom} right now, so you keep chat company."
+        rule = (
+            "They want something built: say warmly that theirs is next in line "
+            "right after this build."
+            if wants_build
+            else "Answer what they said directly."
+        )
+        system = (
+            f"You are {name}, a VTuber on a live coding stream.\n"
+            f"Your personality: {profile.persona[:700]}\n"
+            f"{situation}\n"
+            f"Reply to the viewer in ONE short spoken sentence, at most 22 words, "
+            f"in character. {rule} No emojis, no code, no lists, no questions back "
+            "unless they asked you one."
+        )
+        agent = self.agent(speaker)
+        llm = getattr(agent, "_llm", None)
+        if llm is None:
+            return False
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": f"{who} says: {str(text or '')[:300]}"},
+        ]
+        try:
+            line = await asyncio.wait_for(self._complete(llm, messages), timeout=10)
+        except Exception as exc:  # a slow or failed reply is skipped, never spoken as an error
+            logger.debug(f"Side reply skipped: {exc}")
+            return False
+        line = " ".join(str(line or "").split())[:240]
+        if not line or line.startswith(LLM_ERROR_PREFIX):
+            return False
+        # Inside the build's interaction: take only the voice, never the
+        # interaction lock the build is holding.
+        INSIDE_INTERACTION.set(True)
+        self.session.trace("side_reply", character=speaker, user=who, queued=wants_build)
+        return await self.session.speech.say(speaker, line, addressee=who)
+
     async def _complete(self, llm, messages: list[dict[str, Any]]) -> str:
         """One completion as plain text, whatever shape the client streams."""
         try:
@@ -378,7 +447,13 @@ class RoomRuntimes:
                 request[key] = value
         chosen = kind_for(kind, language)
         # Libraries, approved assets and (for a new program) the template.
-        request.update(writer_context(chosen, creating=not existing))
+        request.update(
+            writer_context(
+                chosen,
+                creating=not existing,
+                request_text=f"{instruction} {(notes or {}).get('project_summary') or ''}",
+            )
+        )
         messages = [
             {
                 "role": "system",

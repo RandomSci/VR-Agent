@@ -26,6 +26,7 @@ Content-Security-Policy blocks everything else).
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -500,14 +501,22 @@ def host_facts() -> str:
 # ---------------------------------------------------------------------------
 
 
-def writer_context(kind: Kind, creating: bool) -> dict[str, Any]:
+HOST_MENTION = re.compile(
+    r"\b(selwyn|selwynbuilds|the host|the streamer|your (owner|creator|boss|channel))\b",
+    re.IGNORECASE,
+)
+
+
+def writer_context(kind: Kind, creating: bool, request_text: str = "") -> dict[str, Any]:
     """Extra request fields for the code writer, for this kind.
 
     The template is only sent when creating: a change works on the program
-    already on screen.
+    already on screen. Facts about the host are only sent when the request is
+    about the host: otherwise every viewer's website came out as "Selwyn
+    Builds".
     """
     context: dict[str, Any] = {"kind": kind.name}
-    host = host_facts()
+    host = host_facts() if HOST_MENTION.search(str(request_text or "")) else ""
     if host:
         context["about_the_host"] = host
     if kind.libraries:

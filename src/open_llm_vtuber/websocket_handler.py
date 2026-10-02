@@ -318,6 +318,34 @@ class WebSocketHandler:
             return self.room_session.conversation_slot_available()
         return idle
 
+    def side_chat_ready(self) -> bool:
+        """A build is running in the room and nobody is answering chat yet."""
+        runtimes = getattr(self, "_room_runtimes", None)
+        task = getattr(self, "_side_task", None)
+        return bool(
+            runtimes is not None
+            and self._room_is_primary()
+            and runtimes.building
+            and (task is None or task.done())
+        )
+
+    def side_chat(self, message, wants_build: bool) -> None:
+        """Answer one chat message while the build keeps going (background)."""
+        runtimes = getattr(self, "_room_runtimes", None)
+        if runtimes is None:
+            return
+        self.room_session.note_viewer_activity()
+
+        async def go() -> None:
+            try:
+                await runtimes.side_reply(
+                    message.author_display_name, message.text, wants_build
+                )
+            except Exception as exc:
+                logger.warning(f"Side reply failed: {exc}")
+
+        self._side_task = asyncio.create_task(go())
+
     def _room_is_primary(self) -> bool:
         primary = self._get_primary_client()
         return bool(primary and primary[0] in self.room_client_uids)

@@ -88,11 +88,100 @@ def _library_folder_files(repo_path: str, resolved: Path) -> dict[str, Path]:
 # plays). saved_code() strips it again when a game is reopened.
 PLAYER_MODE_TAG = '<script>window.GAME_MODE="player";</script>'
 
+# Published pages get a safety net for buttons and links the program left
+# dead: they scroll to the section they name (Contact, Work...) or show a
+# friendly "this is a demo" note. Nothing changes for buttons that already
+# work, and the Stage copy never has this (viewers there cannot click), so
+# the live build is never slowed down by it.
+RESCUE_HEAD = (
+    "<!--vr-rescue--><script>(function(){var a=EventTarget.prototype.addEventListener;"
+    "EventTarget.prototype.addEventListener=function(t,f,o){if(/^(click|pointerdown|pointerup|"
+    "mousedown|mouseup|touchstart|touchend|submit)$/.test(t)){try{this.__vrClick=true}catch(e){}}"
+    "return a.call(this,t,f,o)};})();</script><!--/vr-rescue-->"
+)
+RESCUE_BODY = """<!--vr-rescue--><script>
+window.addEventListener("load", function () { setTimeout(function () {
+  if (window.__vrClick || document.__vrClick || window.onclick || document.onclick) return;
+  function handled(el) {
+    for (var n = el; n && n !== document; n = n.parentNode)
+      if (n.__vrClick || n.onclick || (n.getAttribute && n.getAttribute("onclick"))) return true;
+    return false;
+  }
+  var words = ["contact", "work", "project", "portfolio", "service", "pricing", "price", "plan",
+    "about", "team", "feature", "faq", "menu", "book", "start", "home"];
+  var sections = Array.prototype.filter.call(document.querySelectorAll("[id]"), function (e) {
+    return e.offsetHeight > 60 && e.tagName !== "svg" && !(e.closest && e.closest("svg"));
+  });
+  function sectionFor(label) {
+    label = (label || "").toLowerCase();
+    for (var i = 0; i < words.length; i++) {
+      if (label.indexOf(words[i]) === -1) continue;
+      var w = words[i] === "book" || words[i] === "start" ? "contact" : words[i];
+      for (var j = 0; j < sections.length; j++) {
+        var s = sections[j], h = s.querySelector("h1,h2,h3");
+        if (s.id.toLowerCase().indexOf(w) !== -1 || (h && h.textContent.toLowerCase().indexOf(w) !== -1)) return s;
+      }
+    }
+    return null;
+  }
+  var note;
+  function demo() {
+    if (!note) {
+      note = document.createElement("div");
+      note.textContent = "Thanks! This page was built live on stream by Mika and Luna, so this button is a demo.";
+      note.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99999;" +
+        "max-width:90vw;padding:12px 18px;border-radius:12px;background:#111827;color:#fff;" +
+        "font:600 15px system-ui,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.35);transition:opacity .3s";
+      document.body.appendChild(note);
+    }
+    note.style.opacity = "1";
+    clearTimeout(note.t); note.t = setTimeout(function () { note.style.opacity = "0"; }, 2600);
+  }
+  function rescue(el) {
+    el.addEventListener("click", function (e) {
+      e.preventDefault();
+      var s = sectionFor(el.textContent);
+      if (s) s.scrollIntoView({ behavior: "smooth", block: "start" }); else demo();
+    });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("a"), function (a) {
+    var href = (a.getAttribute("href") || "").trim();
+    if (href.charAt(0) === "#" && href.length > 1) {
+      var id = href.slice(1); try { id = decodeURIComponent(id); } catch (e) {}
+      if (document.getElementById(id)) return;
+    } else if (href && href !== "#" && !/^javascript:/i.test(href)) return;
+    if (!handled(a)) rescue(a);
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("form"), function (f) {
+    if (!handled(f) && !f.onsubmit) f.addEventListener("submit", function (e) { e.preventDefault(); demo(); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("button, [role=button], input[type=button]"), function (b) {
+    if (b.disabled || b.form || handled(b)) return;
+    rescue(b);
+  });
+}, 300); });
+</script><!--/vr-rescue-->"""
+
+
+def strip_published_extras(page: str) -> str:
+    """The Stage copy of a published page: no player switch, no safety net."""
+    page = page.replace(PLAYER_MODE_TAG, "", 1)
+    return re.sub(r"<!--vr-rescue-->.*?<!--/vr-rescue-->", "", page, flags=re.S)
+
+
+def _add_rescue(html: str) -> str:
+    match = re.search(r"</body\s*>", html, re.I)
+    if match:
+        return html[: match.start()] + RESCUE_BODY + html[match.start() :]
+    return html + RESCUE_BODY
+
 
 def _add_policy(html: str) -> str:
+    html = _add_rescue(html)
     meta = (
         f'<meta http-equiv="Content-Security-Policy" content="{PUBLISHED_POLICY}">'
         + PLAYER_MODE_TAG
+        + RESCUE_HEAD
     )
     match = re.search(r"<head(\s[^>]*)?>", html, re.I)
     if match:

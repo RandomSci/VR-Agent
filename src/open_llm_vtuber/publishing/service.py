@@ -23,7 +23,7 @@ from typing import Any, Callable, Optional
 from loguru import logger
 
 from . import description as desc
-from .bundle import BundleError, build_bundle
+from .bundle import BundleError, build_bundle, strip_published_extras
 from .gallery import (
     clean_title,
     entry_for,
@@ -391,7 +391,7 @@ class PublicationService:
         page = re.sub(
             r'<meta http-equiv="Content-Security-Policy" content="[^"]*">', "", page, count=1
         )
-        page = page.replace('<script>window.GAME_MODE="player";</script>', "", 1)
+        page = strip_published_extras(page)
         code = page.replace("../../libs/", "/stage-libs/").replace(
             "../../assets/", "/stage-assets/"
         )

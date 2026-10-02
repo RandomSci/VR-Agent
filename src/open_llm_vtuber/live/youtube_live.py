@@ -344,6 +344,13 @@ def blocked_author_reason(message: "YouTubeChatMessage") -> str:
     return ""
 
 
+BUILD_REQUEST_RE = re.compile(
+    r"\b(make|build|create|code|program|write|design|add|change|fix|update)\b.{0,60}?"
+    r"\b(game|site|website|page|app|chart|animation|program|script|portfolio|landing|it|this)\b",
+    re.IGNORECASE,
+)
+
+
 class YouTubeMessageBuffer:
     UNSAFE_RE = re.compile(
         r"\b(kill yourself|suicide|nazi|terrorist|rape|porn|onlyfans|slur)\b",
@@ -726,6 +733,7 @@ class YouTubeLiveChatService:
                     )
                     continue
                 if not self.connection_provider.is_idle():
+                    self._maybe_side_chat()
                     continue
                 cooldown_remaining = self.config.response_cooldown_seconds - (
                     time.time() - self._last_response_completed_at
@@ -774,6 +782,37 @@ class YouTubeLiveChatService:
                 logger.error(f"YouTube response loop error: {exc}")
                 runtime.set(VRAgentState.ERROR_RECOVERABLE, f"response loop: {exc}"[:200])
                 await asyncio.sleep(1.0)
+
+    def _maybe_side_chat(self) -> None:
+        """While Mika or Luna is coding, the other one still answers chat.
+
+        Each message gets at most one side reply. Plain chat is answered and
+        done; a new build request is told it is next and stays queued, so it
+        is built when the current build finishes.
+        """
+        ready = getattr(self.connection_provider, "side_chat_ready", None)
+        if not ready or not ready():
+            return
+        done = getattr(self, "_side_answered", None)
+        if done is None:
+            done = self._side_answered = _BoundedSet(500)
+        waiting = [
+            m
+            for m in self.buffer.get_eligible(self.config.selector_max_messages)
+            if m.message_id not in done
+        ]
+        if not waiting:
+            return
+        message = waiting[-1]  # the newest: it is what chat is looking at
+        done.add(message.message_id)
+        wants_build = bool(BUILD_REQUEST_RE.search(message.text or ""))
+        if not wants_build:
+            self.buffer.mark_answered(message)
+        logger.info(
+            f"YouTube side reply during a build to {message.author_display_name}"
+            f"{' (queued as next build)' if wants_build else ''}: {_truncate(message.text, 60)}"
+        )
+        self.connection_provider.side_chat(message, wants_build)
 
     async def _maybe_idle_banter(self) -> None:
         # Zero-activity rule: with no viewer messages the stream makes no LLM

@@ -650,3 +650,18 @@ def test_admin_routes_need_the_password(monkeypatch, tmp_path):
     r = client.post("/vr-agent/admin/delete", json={"password": "hunter2", "slug": "x-1"})
     assert r.json()["ok"] and seen == ["x-1"]
     admin._failures.clear()
+
+
+def test_published_pages_get_the_player_switch_and_button_safety_net():
+    from open_llm_vtuber.publishing.bundle import (
+        PLAYER_MODE_TAG,
+        strip_published_extras,
+    )
+
+    page = build_bundle(GAME, "luna-flappy-1234").files["games/luna-flappy-1234/index.html"]
+    page = page.decode() if isinstance(page, bytes) else page
+    assert PLAYER_MODE_TAG in page and page.count("<!--vr-rescue-->") == 2
+    head = page.index("<!--vr-rescue-->")
+    assert head < page.index("<script", head + 20) or head < page.lower().index("</head>")
+    back = strip_published_extras(page)
+    assert PLAYER_MODE_TAG not in back and "vr-rescue" not in back
