@@ -43,8 +43,8 @@
 // ===== SETTINGS: change these first =====
 const SETTINGS = {
   art: "/stage-assets/backgrounds/night-sky.svg",   // the picture (use generated_art when given)
-  title: "Night Over the City",
-  subtitle: "Painted live on stream",
+  title: "",             // leave empty: the picture speaks for itself (text only if the viewer asks)
+  subtitle: "",
   colors: ["#ffffff", "#ffd166", "#9cc2ff", "#ff9ecb"],   // particle colours that match the picture
   // Pick what fits the picture: sparkles, stars, fireflies, snow, rain, petals, bokeh, embers, bubbles
   effects: ["sparkles", "bokeh"],
@@ -153,6 +153,8 @@ requestAnimationFrame(frame);
 
 // ===== TITLE: letters rise in one by one =====
 const title = document.getElementById("title");
+// No words asked for: no title card, nothing covers the painting.
+if (!SETTINGS.title && !SETTINGS.subtitle) document.querySelector(".card").style.display = "none";
 Array.from(SETTINGS.title).forEach((ch, i) => {
   const span = document.createElement("span");
   span.textContent = ch === " " ? " " : ch;
@@ -160,7 +162,7 @@ Array.from(SETTINGS.title).forEach((ch, i) => {
   title.appendChild(span);
 });
 document.getElementById("subtitle").textContent = SETTINGS.subtitle;
-document.title = SETTINGS.title;
+document.title = SETTINGS.title || "Painted live on stream";
 
 // ===== PLAYER (published page): the picture follows the mouse, clicks sparkle =====
 if (PLAYER) {
