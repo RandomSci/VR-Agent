@@ -119,6 +119,8 @@ class RoomRuntimes:
         # Every change to the live source goes through this one worker, so
         # two comments can never write the file at the same time.
         self.coding_worker = CodingWorker(self._execute_job)
+        # Pictures and sprites painted on this stream ({url, kind, about}).
+        self.stream_art: list[dict[str, str]] = []
         self.last_decision: Optional[CodingDecision] = None
         self.last_decision_seconds = 0.0
         self.last_generation_seconds = 0.0
@@ -477,6 +479,42 @@ class RoomRuntimes:
                 request["generated_art"] = old_art.group(0)
             else:
                 request["generated_art"] = art_mod.fallback_art()
+        # Pictures painted earlier on this stream can be reused ("use that cat").
+        if language == "web" and self.stream_art:
+            request["art_from_this_stream"] = [
+                f"{a['url']}  ({a['kind']}: {a['about'][:90]})" for a in self.stream_art[-6:]
+            ]
+        # A game with a named character ("use that cat as a character"):
+        # paint the character as a cut-out sprite while the code is written.
+        sprite_url = ""
+        if (
+            chosen.name.startswith("web_game")
+            and chosen.name != "web_game_quiz"
+            and not (notes or {}).get("fix_these_problems")
+        ):
+            from . import art as art_mod
+
+            if art_mod.art_enabled() and art_mod.GAME_CHARACTER.search(str(instruction or "")):
+                stem, sprite_url = art_mod.new_art_url()
+                sprite_url = sprite_url[: -len(".jpg")] + ".png"
+                earlier = (
+                    self.stream_art[-1]["about"]
+                    if self.stream_art
+                    else self.session.teaching.session.goal or ""
+                )
+                art_task = asyncio.create_task(
+                    art_mod.generate_sprite(
+                        art_mod.sprite_prompt(str(instruction or ""), earlier), stem
+                    )
+                )
+                art_url = sprite_url
+                request["generated_sprite"] = sprite_url
+                request["sprite_instruction"] = (
+                    "generated_sprite is the requested main character (a transparent "
+                    "PNG). Use it as the player's image: this.load.image(key, "
+                    "generated_sprite), scaled to about 120px tall. Keep everything "
+                    "else from the template."
+                )
         # Libraries, approved assets and (for a new program) the template.
         request.update(
             writer_context(
@@ -522,7 +560,18 @@ class RoomRuntimes:
             if not made:
                 from . import art as art_mod
 
-                code = code.replace(art_url, art_mod.fallback_art())
+                fallback = (
+                    "/stage-assets/characters/mika-head.png"
+                    if art_url.endswith(".png")
+                    else art_mod.fallback_art()
+                )
+                code = code.replace(art_url, fallback)
+            else:
+                self._remember_art(
+                    made,
+                    "character sprite" if made.endswith(".png") else "painting",
+                    str(instruction or ""),
+                )
         self.last_generation_seconds = time.perf_counter() - started
         logger.info(
             f"Code generated: {language}, {len(code)} bytes, "
@@ -975,6 +1024,11 @@ class RoomRuntimes:
                 )
         except Exception as exc:  # publishing must never break a build
             logger.warning(f"Could not record the creation: {exc}")
+
+    def _remember_art(self, url: str, kind: str, about: str) -> None:
+        """Every picture painted on this stream, newest last, for reuse."""
+        self.stream_art.append({"url": url, "kind": kind, "about": " ".join(about.split())})
+        del self.stream_art[:-8]
 
     async def _say_later(self, character_id: str, text: str) -> None:
         from .speech import INSIDE_INTERACTION
