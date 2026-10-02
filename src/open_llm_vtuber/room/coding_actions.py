@@ -185,7 +185,11 @@ of program to build, from this list (it also decides the language):
 __KINDS__
 Pick by what the viewer wants to SEE, without asking them technical
 questions. Learning Python basics is python_lesson (never a chart). Anything
-in Python that should move is python_animation. A game is a web_game kind.
+in Python that should move is python_animation. A shape, drawing or
+art in Python (a heart, flower, spiral) is python_image, which animates.
+A picture, drawing, painting, portrait or scene of something (animals,
+places, people, Mika or Luna) is web_art, a real painting brought to life,
+unless the viewer says Python. A game is a web_game kind.
 For a change to the existing program keep its kind unless the change needs
 another (making a still chart move becomes python_animation). Empty for
 every other action.

@@ -158,13 +158,28 @@ KINDS: dict[str, Kind] = {
         Kind(
             "python_image",
             "python",
-            "generating or editing a picture with code (patterns, gradients, pixel art)",
-            "AN IMAGE WITH PILLOW.\n"
-            "- from PIL import Image, ImageDraw, ImageFilter; draw on a 1280x720 "
-            "canvas in the stream colors ('#0f1d3a', '#ffb55e', '#9cc2ff', '#ff6f9c', "
-            "'#5fe3c8').\n"
-            "- Save as output.png and print what was drawn.",
-            python_packages=("pillow", "numpy"),
+            "a picture, shape, drawing or art made with code: a heart, stars, "
+            "flowers, spirals, patterns, fractals, a logo or a scene",
+            "ANIMATED CODE ART WITH MATPLOTLIB, saved as a GIF (viewers love "
+            "motion; a still picture only if they ask for one).\n"
+            "- Real shapes come from maths, not hand-placed polygon points: a "
+            "heart is x = 16 sin(t)^3, y = 13 cos(t) - 5 cos(2t) - 2 cos(3t) - "
+            "cos(4t); spirals, roses (r = cos(k t)), stars and flowers are polar "
+            "curves; use np.linspace(0, 2*np.pi, 400). Draw ONLY what was asked.\n"
+            "- Make it beautiful: fig, ax = plt.subplots(figsize=(12.8, 7.2), "
+            "dpi=75); fig.set_facecolor('#0b1530'); ax.set_facecolor('#0b1530'); "
+            "ax.axis('off'); ax.set_aspect('equal'). Glow: draw the same line 3 "
+            "times (linewidth 14, 8, 3 with alpha 0.08, 0.2, 1) and fill with "
+            "alpha 0.85. Colours '#ff6f9c', '#ffb55e', '#9cc2ff', '#5fe3c8'. Add "
+            "a few small twinkling dots (ax.scatter) for sparkle.\n"
+            "- Animate it: from matplotlib.animation import FuncAnimation, "
+            "PillowWriter; 40 frames; the shape beats, grows, rotates or draws "
+            "itself in. Create the artists ONCE and only call set_data / "
+            "set_xy / set_sizes in update (never clear the axes). "
+            "anim.save('output.gif', writer=PillowWriter(fps=16)), then print "
+            "what was drawn. It must finish within 10 seconds.",
+            python_packages=("matplotlib", "numpy", "pillow"),
+            tier="normal",
         ),
         # --------------------------------------------------------------- Web
         Kind(
@@ -203,6 +218,27 @@ KINDS: dict[str, Kind] = {
             libraries=("phaser",),
             template="game-shooter",
             uses_assets=True,
+            tier="normal",
+        ),
+        Kind(
+            "web_art",
+            "web",
+            "a picture of anything: draw me, make an image, painting, portrait, "
+            "illustration, wallpaper, scene, poster art, fan art of Mika or Luna",
+            "A LIVING PAINTING, built from the starting template. A real picture "
+            "is painted for this request and given as generated_art: set "
+            "SETTINGS.art to exactly that URL.\n"
+            "- Keep the template's machinery: the drifting camera, the light "
+            "sweep, the particle EFFECTS, the title card, bursts, and the "
+            "PLAYER block.\n"
+            "- Make it fit the picture: a short title (2 to 5 words) and a "
+            "subtitle, colours that match the scene, and 1 to 3 effects that "
+            "belong in it (sparkles, stars, fireflies, snow, rain, petals, "
+            "bokeh, embers, bubbles). Add a new effect in KINDS when the scene "
+            "needs one (headlights streaking, falling leaves, glitter...).\n"
+            "- Never draw the subject yourself with shapes: the picture already "
+            "shows it.",
+            template="art-scene",
             tier="normal",
         ),
         Kind(
@@ -347,6 +383,35 @@ KINDS: dict[str, Kind] = {
             "(never switch items inside requestAnimationFrame, that flickers).",
             template="landing-page",
             uses_assets=True,
+        ),
+        Kind(
+            "web_illustration",
+            "web",
+            "a picture, drawing or scene of something: animals, people, places, a "
+            "city, a story moment, a card or poster picture. Choose this for any "
+            "request to draw or make an image unless they say Python",
+            "AN ANIMATED SVG ILLUSTRATION in plain HTML and CSS (no library).\n"
+            "- One inline <svg viewBox=\"0 0 1600 900\" preserveAspectRatio="
+            "\"xMidYMid slice\"> filling the whole screen.\n"
+            "- Build it in layers, back to front: a sky or wall with a linear or "
+            "radial gradient, far shapes (skyline, hills) in a muted tone, middle "
+            "details, then the main subject big and centred, then foreground.\n"
+            "- Draw subjects from grouped shapes with smooth paths (<path d=...> "
+            "with curves, ellipses, rounded rects), a darker outline (stroke-width "
+            "4 to 6, stroke-linejoin round), a soft shadow ellipse under them and "
+            "one highlight. Faces get eyes with a white shine dot. Everything in "
+            "the request must be clearly recognisable (a bicycle has two wheels "
+            "with spokes, a frame, pedals and handlebars; a pelican has a long "
+            "beak with a pouch).\n"
+            "- Bring it to life with CSS @keyframes on <g> groups (transform-box: "
+            "fill-box; transform-origin: center): wheels spin, things bob and "
+            "sway, lights blink, cars or clouds drift across and loop, windows "
+            "twinkle. At least four things move.\n"
+            "- Rich but tidy palette: deep navy night or warm daylight, accents "
+            "'#ffb55e', '#ff6f9c', '#9cc2ff', '#5fe3c8'. A short title in a "
+            "corner is fine.",
+            uses_assets=True,
+            tier="normal",
         ),
         Kind(
             "web_canvas",

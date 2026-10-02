@@ -86,3 +86,6 @@ data/publish-dry-run/
 
 # YouTube sign-in token (scripts/youtube_authorize.py)
 data/secrets/
+
+# Paintings made on stream (published copies live in the games repo)
+frontend/stage-assets/generated/

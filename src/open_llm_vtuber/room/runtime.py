@@ -450,6 +450,33 @@ class RoomRuntimes:
             if value:
                 request[key] = value
         chosen = kind_for(kind, language)
+        art_task = None
+        art_url = ""
+        if chosen.name == "web_art" and not (notes or {}).get("fix_these_problems"):
+            from . import art as art_mod
+
+            old_art = re.search(r"/stage-assets/generated/[A-Za-z0-9_.-]+", existing or "")
+            if art_mod.art_enabled() and (
+                not existing or not old_art or art_mod.needs_new_art(instruction)
+            ):
+                stem, art_url = art_mod.new_art_url()
+                goal = self.session.teaching.session.goal if existing else ""
+                art_task = asyncio.create_task(
+                    art_mod.generate_art(
+                        art_mod.art_prompt(str(instruction or ""), goal), stem
+                    )
+                )
+                request["generated_art"] = art_url
+                if existing:
+                    request["instruction"] = (
+                        "A new picture was painted for this change: set SETTINGS.art "
+                        "to generated_art, update the title and effects to match, "
+                        "and return the whole file."
+                    )
+            elif old_art:
+                request["generated_art"] = old_art.group(0)
+            else:
+                request["generated_art"] = art_mod.fallback_art()
         # Libraries, approved assets and (for a new program) the template.
         request.update(
             writer_context(
@@ -484,6 +511,18 @@ class RoomRuntimes:
                 logger.error(f"VR Room: code generation failed: {exc}")
                 return ""
         code = parse_code(reply)[:MAX_CODE_BYTES]
+        if art_task is not None:
+            # The writer and the painter work at the same time; the browser
+            # check needs the picture, so wait for it here.
+            try:
+                made = await asyncio.wait_for(art_task, timeout=150)
+            except Exception as exc:
+                logger.warning(f"Art failed: {exc}")
+                made = ""
+            if not made:
+                from . import art as art_mod
+
+                code = code.replace(art_url, art_mod.fallback_art())
         self.last_generation_seconds = time.perf_counter() - started
         logger.info(
             f"Code generated: {language}, {len(code)} bytes, "
@@ -506,6 +545,26 @@ class RoomRuntimes:
         decision = await self.decide_coding_action(
             character_id, viewer_text, lesson_context
         )
+        # A picture of something is drawn in the browser (animated SVG), not
+        # with Python's Pillow: Pillow scenes came out as a few coloured boxes.
+        # Only when the viewer names Python does Python draw it.
+        said = str(viewer_text or "")
+        if (
+            decision.writes_code
+            and not re.search(r"\bpython\b", said, re.I)
+            and (
+                decision.kind in ("python_image", "web_illustration")
+                or (
+                    re.search(r"\b(draw\w*|image|picture|painting|illustration|scene|poster|portrait|wallpaper)\b", said, re.I)
+                    and (decision.language == "python" or decision.kind.startswith("python"))
+                    and not re.search(r"\b(chart|graph|plot|data)\b", said, re.I)
+                )
+            )
+        ):
+            from .art import art_enabled
+
+            decision.kind = "web_art" if art_enabled() else "web_illustration"
+            decision.language = "web"
         intent, artifact_action = DIRECTOR_INTENT.get(
             decision.action, ("answer", "none")
         )
@@ -550,6 +609,10 @@ class RoomRuntimes:
             and re.search(r"\b(mov(e|es|ing)|animat\w*|wiggl\w*)\b", str(viewer_text or ""), re.I)
         ):
             kind = "python_animation"
+        # Python shows nothing until it runs: writing it always runs it, so
+        # nobody has to type "run it" to see the result.
+        if decision.writes_code and language == "python" and intent == "write_code":
+            intent = "write_and_run"
         return {
             "intent": intent,
             "artifact_action": artifact_action,

@@ -244,7 +244,7 @@ def test_matplotlib_produces_a_real_image():
     stage.start_session("luna")
     stage.decide("heart", '{"action":"create_and_run","language":"python"}')
     stage.code(HEART_PY % "crimson")
-    stage.say("draw me a heart")
+    stage.say("draw me a heart in python")
     result = stage.lesson.last_result
     assert result is not None and result.exit_code == 0, getattr(result, "error", "no result")
     artifacts = stage.runtimes._coding_runner.artifacts(stage.lesson)
