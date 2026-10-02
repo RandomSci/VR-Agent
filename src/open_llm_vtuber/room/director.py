@@ -932,6 +932,9 @@ class ConversationDirector:
                             "artifacts": action_result.get("artifacts", []),
                             "preview_html": action_result.get("preview_html", ""),
                             "preview_ready": bool(action_result.get("preview_ready")),
+                            # The source too, so a Stage that joined mid-build
+                            # (OBS switched or refreshed) shows the code.
+                            "code": str(action_result.get("code") or "")[:32000],
                             "error": action_result.get("error", ""),
                         }
                     ]

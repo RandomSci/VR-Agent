@@ -578,6 +578,16 @@
           setCodingLoading(false, op);
           return revealCode(op);
         }
+        // A Stage that joined mid-build missed the "writing" op: show the
+        // source from any later op that carries it, so the editor is never
+        // empty while the preview runs.
+        if (op.code && !typing && op.phase !== "writing") {
+          const latest = String(op.code).slice(0, 32000);
+          if (code.textContent !== latest) {
+            code.textContent = latest;
+            if (op.filename) editorFile.textContent = op.filename;
+          }
+        }
         if (
           op.language === "web" &&
           (op.preview_html || op.code) &&
