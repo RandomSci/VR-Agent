@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Gift Drop</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0f1d3a; }
+  canvas { display: block; }
+  h1 {
+    position: fixed; left: 5vw; top: 5vh; margin: 0; z-index: 2;
+    font: 800 clamp(40px, 5vw, 84px)/1 Nunito, Quicksand, "Segoe UI", system-ui, sans-serif;
+    color: #f4ead8; text-shadow: 0 0 24px rgba(255, 181, 94, 0.55);
+  }
+</style>
+<script src="/stage-libs/matter/0.20.0/matter.min.js"></script>
+</head>
+<body>
+<h1>Gift Drop</h1>
+<canvas id="c"></canvas>
+<script>
+// ===== SETTINGS: change these first =====
+const SETTINGS = {
+  dropEvery: 0.35,          // seconds between new objects
+  maxBodies: 90,            // older ones fade out after this
+  gravity: 1,
+  bounce: 0.45,
+  sprites: [                // pictures to drop (from the approved assets)
+    { url: "/stage-assets/sprites/star-coin.svg", radius: 34, shape: "circle" },
+    { url: "/stage-assets/sprites/heart.svg", radius: 34, shape: "circle" },
+    { url: "/stage-assets/sprites/slime.svg", radius: 44, shape: "box" },
+  ],
+};
+
+const { Engine, Bodies, Composite, Body } = Matter;
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const engine = Engine.create();
+engine.gravity.y = SETTINGS.gravity;
+
+const images = SETTINGS.sprites.map((s) => Object.assign(new Image(), { src: s.url }));
+let W = 0, H = 0, walls = [], pegs = [];
+
+function layout() {
+  const d = devicePixelRatio || 1;
+  W = innerWidth; H = innerHeight;
+  canvas.width = W * d; canvas.height = H * d;
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  Composite.remove(engine.world, [...walls, ...pegs]);
+  const opts = { isStatic: true, friction: 0.4 };
+  walls = [
+    Bodies.rectangle(W / 2, H + 30, W * 2, 60, opts),
+    Bodies.rectangle(-30, H / 2, 60, H * 2, opts),
+    Bodies.rectangle(W + 30, H / 2, 60, H * 2, opts),
+  ];
+  // A field of glowing pegs for things to bounce through.
+  pegs = [];
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 11; col++) {
+      const x = W * (0.08 + col * 0.084) + (row % 2) * W * 0.042;
+      const y = H * (0.3 + row * 0.1);
+      pegs.push(Bodies.circle(x, y, 9, { isStatic: true, restitution: 0.9 }));
+    }
+  }
+  Composite.add(engine.world, [...walls, ...pegs]);
+}
+addEventListener("resize", layout);
+layout();
+
+const drops = [];
+function drop(x) {
+  const i = Math.floor(Math.random() * SETTINGS.sprites.length);
+  const s = SETTINGS.sprites[i];
+  const opts = { restitution: SETTINGS.bounce, friction: 0.2, angle: Math.random() * 6 };
+  const body = s.shape === "circle"
+    ? Bodies.circle(x, -60, s.radius, opts)
+    : Bodies.rectangle(x, -60, s.radius * 2, s.radius * 1.76, opts);
+  Body.setVelocity(body, { x: (Math.random() - 0.5) * 6, y: 0 });
+  Composite.add(engine.world, body);
+  drops.push({ body, image: images[i], size: s.radius * 2, born: performance.now(), fade: 1 });
+}
+
+let last = performance.now(), dropTimer = 0, flash = 0, pour = 0;
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  Engine.update(engine, dt * 1000);
+
+  // Drop from a spout that sweeps across the top.
+  dropTimer -= dt;
+  pour += dt;
+  if (dropTimer <= 0) {
+    drop(W / 2 + Math.sin(pour * 0.7) * W * 0.38);
+    dropTimer = SETTINGS.dropEvery;
+  }
+  // The repeating moment: every 12 seconds the floor opens and all falls away.
+  if (pour % 12 < dt) {
+    flash = 1;
+    Composite.remove(engine.world, walls[0]);
+    setTimeout(() => Composite.add(engine.world, walls[0]), 1600);
+  }
+  // Too many objects: fade the oldest out, then remove it.
+  if (drops.length > SETTINGS.maxBodies) {
+    const oldest = drops[0];
+    oldest.fade -= dt * 2;
+    if (oldest.fade <= 0) {
+      Composite.remove(engine.world, oldest.body);
+      drops.shift();
+    }
+  }
+
+  // Draw: background, pegs, objects.
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#0f1d3a"); g.addColorStop(1, "#1b2f5c");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  for (const p of pegs) {
+    ctx.beginPath();
+    ctx.arc(p.position.x, p.position.y, 9, 0, Math.PI * 2);
+    ctx.fillStyle = "#9cc2ff";
+    ctx.shadowColor = "#9cc2ff"; ctx.shadowBlur = 18;
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  for (let i = drops.length - 1; i >= 0; i--) {
+    const d = drops[i];
+    if (d.body.position.y > H + 300) { Composite.remove(engine.world, d.body); drops.splice(i, 1); continue; }
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, d.fade);
+    ctx.translate(d.body.position.x, d.body.position.y);
+    ctx.rotate(d.body.angle);
+    if (d.image.complete && d.image.naturalWidth) ctx.drawImage(d.image, -d.size / 2, -d.size / 2, d.size, d.size);
+    ctx.restore();
+  }
+  if (flash > 0) {
+    ctx.fillStyle = `rgba(255, 181, 94, ${flash * 0.25})`;
+    ctx.fillRect(0, 0, W, H);
+    flash -= dt * 2;
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

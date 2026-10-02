@@ -1,0 +1,397 @@
+{
+ "base": "/stage-assets",
+ "assets": [
+  {
+   "key": "mika-head",
+   "url": "/stage-assets/characters/mika-head.png",
+   "kind": "characters",
+   "size": [
+    256,
+    217
+   ],
+   "about": "Mika's head (orange hair, witch hat), transparent PNG",
+   "tags": [
+    "mika",
+    "character",
+    "player",
+    "bird",
+    "pilot"
+   ]
+  },
+  {
+   "key": "luna-head",
+   "url": "/stage-assets/characters/luna-head.png",
+   "kind": "characters",
+   "size": [
+    225,
+    232
+   ],
+   "about": "Luna's head (long brown hair, red ribbons), transparent PNG",
+   "tags": [
+    "luna",
+    "character",
+    "player",
+    "bird",
+    "pilot"
+   ]
+  },
+  {
+   "key": "mika-full",
+   "url": "/stage-assets/characters/mika-full.png",
+   "kind": "characters",
+   "size": [
+    299,
+    512
+   ],
+   "about": "Mika standing, full body, transparent PNG",
+   "tags": [
+    "mika",
+    "character",
+    "player"
+   ]
+  },
+  {
+   "key": "luna-full",
+   "url": "/stage-assets/characters/luna-full.png",
+   "kind": "characters",
+   "size": [
+    117,
+    512
+   ],
+   "about": "Luna standing, full body, transparent PNG",
+   "tags": [
+    "luna",
+    "character",
+    "player"
+   ]
+  },
+  {
+   "key": "bird",
+   "url": "/stage-assets/sprites/bird.svg",
+   "kind": "sprites",
+   "size": [
+    128,
+    100
+   ],
+   "about": "round orange bird facing right",
+   "tags": [
+    "bird",
+    "player",
+    "flappy"
+   ]
+  },
+  {
+   "key": "pipe-body",
+   "url": "/stage-assets/sprites/pipe-body.svg",
+   "kind": "sprites",
+   "size": [
+    96,
+    64
+   ],
+   "about": "crystal pipe body, stretch it vertically",
+   "tags": [
+    "pipe",
+    "obstacle",
+    "flappy"
+   ]
+  },
+  {
+   "key": "pipe-cap",
+   "url": "/stage-assets/sprites/pipe-cap.svg",
+   "kind": "sprites",
+   "size": [
+    116,
+    44
+   ],
+   "about": "crystal pipe cap for the pipe opening",
+   "tags": [
+    "pipe",
+    "obstacle",
+    "flappy"
+   ]
+  },
+  {
+   "key": "ship",
+   "url": "/stage-assets/sprites/ship.svg",
+   "kind": "sprites",
+   "size": [
+    120,
+    132
+   ],
+   "about": "player rocket ship pointing up, with flame",
+   "tags": [
+    "ship",
+    "player",
+    "space",
+    "shooter"
+   ]
+  },
+  {
+   "key": "asteroid-1",
+   "url": "/stage-assets/sprites/asteroid-1.svg",
+   "kind": "sprites",
+   "size": [
+    128,
+    128
+   ],
+   "about": "purple asteroid",
+   "tags": [
+    "asteroid",
+    "rock",
+    "enemy",
+    "space"
+   ]
+  },
+  {
+   "key": "asteroid-2",
+   "url": "/stage-assets/sprites/asteroid-2.svg",
+   "kind": "sprites",
+   "size": [
+    128,
+    128
+   ],
+   "about": "purple asteroid, second shape",
+   "tags": [
+    "asteroid",
+    "rock",
+    "enemy",
+    "space"
+   ]
+  },
+  {
+   "key": "star-coin",
+   "url": "/stage-assets/sprites/star-coin.svg",
+   "kind": "sprites",
+   "size": [
+    80,
+    80
+   ],
+   "about": "gold star coin collectible",
+   "tags": [
+    "coin",
+    "star",
+    "pickup",
+    "score"
+   ]
+  },
+  {
+   "key": "heart",
+   "url": "/stage-assets/sprites/heart.svg",
+   "kind": "sprites",
+   "size": [
+    80,
+    76
+   ],
+   "about": "pink heart, life or pickup",
+   "tags": [
+    "heart",
+    "life",
+    "pickup",
+    "love"
+   ]
+  },
+  {
+   "key": "slime",
+   "url": "/stage-assets/sprites/slime.svg",
+   "kind": "sprites",
+   "size": [
+    100,
+    88
+   ],
+   "about": "mint slime enemy",
+   "tags": [
+    "slime",
+    "enemy",
+    "monster",
+    "platformer"
+   ]
+  },
+  {
+   "key": "ufo",
+   "url": "/stage-assets/sprites/ufo.svg",
+   "kind": "sprites",
+   "size": [
+    140,
+    76
+   ],
+   "about": "flying saucer enemy",
+   "tags": [
+    "ufo",
+    "enemy",
+    "alien",
+    "space"
+   ]
+  },
+  {
+   "key": "laser",
+   "url": "/stage-assets/sprites/laser.svg",
+   "kind": "sprites",
+   "size": [
+    20,
+    44
+   ],
+   "about": "pink laser bolt, vertical",
+   "tags": [
+    "laser",
+    "bullet",
+    "shot",
+    "shooter"
+   ]
+  },
+  {
+   "key": "platform",
+   "url": "/stage-assets/sprites/platform.svg",
+   "kind": "sprites",
+   "size": [
+    128,
+    40
+   ],
+   "about": "grass-topped platform tile",
+   "tags": [
+    "platform",
+    "ground",
+    "tile",
+    "platformer"
+   ]
+  },
+  {
+   "key": "cloud",
+   "url": "/stage-assets/sprites/cloud.svg",
+   "kind": "sprites",
+   "size": [
+    136,
+    76
+   ],
+   "about": "soft cloud",
+   "tags": [
+    "cloud",
+    "sky",
+    "decor"
+   ]
+  },
+  {
+   "key": "glow",
+   "url": "/stage-assets/particles/glow.svg",
+   "kind": "particles",
+   "size": [
+    64,
+    64
+   ],
+   "about": "soft white glow dot, tint it for particles and light",
+   "tags": [
+    "particle",
+    "glow",
+    "light"
+   ]
+  },
+  {
+   "key": "spark",
+   "url": "/stage-assets/particles/spark.svg",
+   "kind": "particles",
+   "size": [
+    32,
+    32
+   ],
+   "about": "four-point white spark, tint it",
+   "tags": [
+    "particle",
+    "spark",
+    "star",
+    "magic"
+   ]
+  },
+  {
+   "key": "smoke",
+   "url": "/stage-assets/particles/smoke.svg",
+   "kind": "particles",
+   "size": [
+    64,
+    64
+   ],
+   "about": "soft smoke puff",
+   "tags": [
+    "particle",
+    "smoke",
+    "dust"
+   ]
+  },
+  {
+   "key": "night-sky",
+   "url": "/stage-assets/backgrounds/night-sky.svg",
+   "kind": "backgrounds",
+   "size": [
+    1920,
+    1080
+   ],
+   "about": "1920x1080 night sky with stars and moon (back layer)",
+   "tags": [
+    "background",
+    "sky",
+    "night",
+    "stars"
+   ]
+  },
+  {
+   "key": "city-far",
+   "url": "/stage-assets/backgrounds/city-far.svg",
+   "kind": "backgrounds",
+   "size": [
+    1920,
+    1080
+   ],
+   "about": "far city skyline, transparent top (parallax layer)",
+   "tags": [
+    "background",
+    "city",
+    "parallax"
+   ]
+  },
+  {
+   "key": "city-near",
+   "url": "/stage-assets/backgrounds/city-near.svg",
+   "kind": "backgrounds",
+   "size": [
+    1920,
+    1080
+   ],
+   "about": "near city skyline with warm windows, transparent top (parallax layer)",
+   "tags": [
+    "background",
+    "city",
+    "parallax"
+   ]
+  },
+  {
+   "key": "hills",
+   "url": "/stage-assets/backgrounds/hills.svg",
+   "kind": "backgrounds",
+   "size": [
+    1920,
+    1080
+   ],
+   "about": "rolling hills, transparent top (parallax layer)",
+   "tags": [
+    "background",
+    "hills",
+    "ground",
+    "parallax"
+   ]
+  },
+  {
+   "key": "space-nebula",
+   "url": "/stage-assets/backgrounds/space-nebula.svg",
+   "kind": "backgrounds",
+   "size": [
+    1920,
+    1080
+   ],
+   "about": "1920x1080 deep space with pink and mint nebula",
+   "tags": [
+    "background",
+    "space",
+    "nebula",
+    "stars"
+   ]
+  }
+ ]
+}

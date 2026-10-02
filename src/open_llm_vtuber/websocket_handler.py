@@ -339,6 +339,12 @@ class WebSocketHandler:
             )
             self._room_runtimes = runtimes
             self.room_session.director.turn_runner = runtimes.run_turn
+            self.room_session.director.teaching_intent_classifier = (
+                runtimes.classify_teaching_intent
+            )
+            self.room_session.director.coding_action_runner = (
+                runtimes.run_coding_action
+            )
             self.room_session.director.pending_probe = self.pending_viewer_messages
         else:
             runtimes.retarget(client_uid, websocket.send_text)

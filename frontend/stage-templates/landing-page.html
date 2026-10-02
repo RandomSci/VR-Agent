@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Moonlit Ramen</title>
+<style>
+  /* ===== SETTINGS: colours and words live here and in the HTML below ===== */
+  :root { --night: #0f1d3a; --dusk: #2a4a86; --glass: #9cc2ff; --lamp: #ffb55e;
+          --paint: #ff6f9c; --mint: #5fe3c8; --paper: #f4ead8; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background:
+      radial-gradient(circle at 91.5% 11%, rgba(244, 234, 216, 0.16), transparent 16%),
+      linear-gradient(#0b1530, #1b2f5c 70%, #2a2f5c);
+    color: var(--paper);
+    font-family: Nunito, Quicksand, "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    display: grid; grid-template-columns: 1.15fr 1fr; align-items: center;
+    padding: 0 6vw; box-sizing: border-box; gap: 4vw;
+  }
+  .moon { position: fixed; right: 5vw; top: 5vh; width: 6.5vw; aspect-ratio: 1; border-radius: 50%; z-index: 0;
+          background: var(--paper); box-shadow: 0 0 80px 20px rgba(244, 234, 216, 0.25); }
+  .hero h1 { margin: 0; font-size: clamp(56px, 7.4vw, 140px); line-height: 0.95; font-weight: 900;
+             letter-spacing: -0.02em; }
+  .hero h1 span { display: block; color: var(--lamp); text-shadow: 0 0 40px rgba(255, 181, 94, 0.5); }
+  .hero p { margin: 3vh 0 4vh; font-size: clamp(22px, 1.9vw, 34px); line-height: 1.4;
+            max-width: 32ch; color: rgba(244, 234, 216, 0.82); }
+  .cta { display: inline-block; padding: 2.2vh 2.6vw; border-radius: 999px; font-size: clamp(22px, 1.7vw, 32px);
+         font-weight: 800; color: var(--night); background: var(--lamp);
+         box-shadow: 0 0 0 0 rgba(255, 181, 94, 0.6); animation: pulse 2.4s ease-out infinite; }
+  .menu { display: grid; gap: 2.4vh; position: relative; z-index: 1; margin-top: 8vh; }
+  .item { display: grid; grid-template-columns: auto 1fr auto; gap: 1.4vw; align-items: center;
+          padding: 2.6vh 1.8vw; border-radius: 20px; background: rgba(42, 74, 134, 0.3);
+          border: 1px solid rgba(156, 194, 255, 0.16); transition: transform 0.6s, background 0.6s, border-color 0.6s; }
+  .item .dot { width: 1.6vw; aspect-ratio: 1; border-radius: 50%; }
+  .item h3 { margin: 0; font-size: clamp(22px, 1.8vw, 34px); }
+  .item small { display: block; margin-top: 0.6vh; font-size: clamp(16px, 1.15vw, 22px); color: rgba(244, 234, 216, 0.65); }
+  .item b { font-size: clamp(22px, 1.8vw, 34px); color: var(--glass); }
+  /* The highlight that cycles through the menu (set by the script below). */
+  .item.on { transform: translateX(-1.2vw) scale(1.03); background: rgba(255, 181, 94, 0.16);
+             border-color: rgba(255, 181, 94, 0.6); }
+  /* One orchestrated entrance. */
+  .hero, .item { opacity: 0; animation: rise 0.9s cubic-bezier(.2, .8, .2, 1) forwards; }
+  .item:nth-child(1) { animation-delay: 0.35s; } .item:nth-child(2) { animation-delay: 0.5s; }
+  .item:nth-child(3) { animation-delay: 0.65s; } .item:nth-child(4) { animation-delay: 0.8s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(4vh); } to { opacity: 1; transform: none; } }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 2.2vw rgba(255, 181, 94, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 181, 94, 0); } }
+</style>
+</head>
+<body>
+<div class="moon"></div>
+<section class="hero">
+  <h1>Moonlit <span>Ramen</span></h1>
+  <p>Slow-simmered broth, open until the city sleeps. Pull up a stool by the window.</p>
+  <span class="cta">See tonight's bowls</span>
+</section>
+<section class="menu">
+  <div class="item"><span class="dot" style="background: var(--lamp)"></span><div><h3>Lantern tonkotsu</h3><small>18-hour pork broth, chashu, soft egg</small></div><b>₱420</b></div>
+  <div class="item"><span class="dot" style="background: var(--paint)"></span><div><h3>Spicy miso</h3><small>Red miso, chili oil, sweet corn</small></div><b>₱390</b></div>
+  <div class="item"><span class="dot" style="background: var(--mint)"></span><div><h3>Garden shoyu</h3><small>Mushroom dashi, bok choy, tofu</small></div><b>₱360</b></div>
+  <div class="item"><span class="dot" style="background: var(--glass)"></span><div><h3>Midnight gyoza</h3><small>Six crispy dumplings, black vinegar</small></div><b>₱220</b></div>
+</section>
+<script>
+// Gentle loop so the page is alive for viewers joining late.
+const items = [...document.querySelectorAll(".item")];
+let index = 0;
+setTimeout(function cycle() {
+  items.forEach((item, i) => item.classList.toggle("on", i === index));
+  index = (index + 1) % items.length;
+  setTimeout(cycle, 2200);
+}, 1500);
+</script>
+</body>
+</html>

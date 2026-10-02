@@ -77,3 +77,12 @@ private/
 mcp_servers.json
 
 .vscode/
+# Publishing: secrets and local state never go into git
+.env
+.env.*
+!.env.example
+data/creations/
+data/publish-dry-run/
+
+# YouTube sign-in token (scripts/youtube_authorize.py)
+data/secrets/

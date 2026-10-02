@@ -1,0 +1,103 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Firefly Currents</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0f1d3a; }
+  h1 {
+    position: fixed; left: 5vw; top: 5vh; margin: 0; z-index: 2;
+    font: 800 clamp(40px, 5vw, 84px)/1 Nunito, Quicksand, "Segoe UI", system-ui, sans-serif;
+    color: #f4ead8; text-shadow: 0 0 24px rgba(255, 181, 94, 0.55);
+  }
+</style>
+<script src="/stage-libs/p5/1.11.13/p5.min.js"></script>
+</head>
+<body>
+<h1>Firefly Currents</h1>
+<script>
+// ===== SETTINGS: change these first =====
+const SETTINGS = {
+  count: 900,                   // how many particles
+  palette: ["#ffb55e", "#9cc2ff", "#ff6f9c", "#5fe3c8"],
+  flow: 0.0022,                 // how twisty the currents are
+  speed: 2.4,
+  trail: 18,                    // 0 = long trails, 60 = short trails
+  burstEvery: 5,                // seconds between bursts (the repeating highlight)
+};
+
+let particles = [];
+let colours = [];
+let lastBurst = 0;
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(1);
+  colours = SETTINGS.palette.map((c) => color(c));
+  for (let i = 0; i < SETTINGS.count; i++) particles.push(newParticle(random(width), random(height)));
+  background(15, 29, 58);
+}
+
+function newParticle(x, y) {
+  return { pos: createVector(x, y), vel: createVector(0, 0), life: random(120, 420), c: random(colours) };
+}
+
+// Where the light gathers: the (virtual) mouse, or a slow orbit when idle.
+function attractor() {
+  const t = millis() / 1000;
+  const idle = mouseX === 0 && mouseY === 0;
+  return idle
+    ? createVector(width / 2 + cos(t * 0.4) * width * 0.25, height / 2 + sin(t * 0.6) * height * 0.22)
+    : createVector(mouseX, mouseY);
+}
+
+function draw() {
+  // Translucent background paints the trails.
+  blendMode(BLEND);
+  noStroke();
+  fill(15, 29, 58, SETTINGS.trail);
+  rect(0, 0, width, height);
+
+  blendMode(ADD);
+  const target = attractor();
+  const t = frameCount * 0.003;
+  for (const p of particles) {
+    const angle = noise(p.pos.x * SETTINGS.flow, p.pos.y * SETTINGS.flow, t) * TWO_PI * 2;
+    const flow = p5.Vector.fromAngle(angle).mult(0.35);
+    const pull = p5.Vector.sub(target, p.pos);
+    const d = max(pull.mag(), 60);
+    pull.setMag(min(30 / d, 0.25));
+    p.vel.add(flow).add(pull).limit(SETTINGS.speed);
+    p.pos.add(p.vel);
+    p.life -= 1;
+    if (p.life < 0 || p.pos.x < -10 || p.pos.x > width + 10 || p.pos.y < -10 || p.pos.y > height + 10) {
+      Object.assign(p, newParticle(random(width), random(height)));
+    }
+    const c = p.c;
+    fill(red(c), green(c), blue(c), 70);
+    circle(p.pos.x, p.pos.y, 6);
+    fill(255, 255, 255, 90);
+    circle(p.pos.x, p.pos.y, 1.6);
+  }
+
+  // The repeating moment: a bloom of light that pushes everything outward.
+  if (millis() - lastBurst > SETTINGS.burstEvery * 1000) {
+    lastBurst = millis();
+    for (const p of particles) {
+      const away = p5.Vector.sub(p.pos, target);
+      if (away.mag() < 360) p.vel.add(away.setMag(6));
+    }
+    for (let r = 0; r < 6; r++) {
+      fill(255, 181, 94, 40 - r * 6);
+      circle(target.x, target.y, 60 + r * 70);
+    }
+  }
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  background(15, 29, 58);
+}
+</script>
+</body>
+</html>

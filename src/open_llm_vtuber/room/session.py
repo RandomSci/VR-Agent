@@ -41,6 +41,8 @@ OP_KINDS = (
     "board",
     "line",
     "chat_seen",
+    "teaching",
+    "coding",
 )
 
 
@@ -95,6 +97,13 @@ class RoomSession:
         from .director import ConversationDirector
 
         self.director = ConversationDirector(self, rng=self.rng, clock=clock)
+
+        from .teaching import TeachingDirector
+
+        self.teaching = TeachingDirector(
+            [profile.id for profile in room.characters]
+        )
+
         self.traces: deque[dict[str, Any]] = deque(maxlen=300)
 
     def trace(self, name: str, **data: Any) -> None:
@@ -390,6 +399,7 @@ class RoomSession:
             "snapshot": self.state.snapshot(),
             # A page that reconnects mid game redraws the board from this.
             "board": self.show.engine.view(),
+            "teaching": self.teaching.session.snapshot(),
         }
 
     async def _send(self, client_uid: str, payload: dict[str, Any]) -> None:

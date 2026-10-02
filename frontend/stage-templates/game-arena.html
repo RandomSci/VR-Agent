@@ -1,0 +1,189 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Star Dash</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1530; }
+</style>
+<script src="/stage-libs/phaser/3.90.0/phaser.min.js"></script>
+</head>
+<body>
+<script>
+// ===== SETTINGS: change these first =====
+const SETTINGS = {
+  title: "Star Dash",
+  // Each player is steered by its own little AI. Add or remove entries freely.
+  players: [
+    { name: "Mika", image: "/stage-assets/characters/mika-head.png", color: 0xffb55e, speed: 430 },
+    { name: "Luna", image: "/stage-assets/characters/luna-head.png", color: 0x9cc2ff, speed: 410 },
+  ],
+  playerSize: 110,      // on-screen height of each player
+  coins: 6,             // stars on the field at once
+  enemies: 3,           // slimes that bounce around
+  enemySpeed: 260,
+  roundSeconds: 30,     // a new round starts after this
+  background: "/stage-assets/backgrounds/night-sky.svg",
+};
+
+const W = 1920, H = 1080, FONT = "Nunito, Quicksand, 'Segoe UI', system-ui, sans-serif";
+
+class Play extends Phaser.Scene {
+  constructor() { super("play"); }
+
+  preload() {
+    const svg = (key, url, w, h) => this.load.svg(key, url, { width: w, height: h });
+    svg("bg", SETTINGS.background, W, H);
+    svg("coin", "/stage-assets/sprites/star-coin.svg", 72, 72);
+    svg("slime", "/stage-assets/sprites/slime.svg", 100, 88);
+    svg("glow", "/stage-assets/particles/glow.svg", 64, 64);
+    svg("spark", "/stage-assets/particles/spark.svg", 32, 32);
+    SETTINGS.players.forEach((p, i) => this.load.image("player" + i, p.image));
+  }
+
+  create() {
+    this.add.image(0, 0, "bg").setOrigin(0, 0);
+    this.burst = this.add.particles(0, 0, "spark", {
+      speed: { min: 140, max: 480 }, lifespan: 650, scale: { start: 1, end: 0 },
+      tint: [0xffb55e, 0xff6f9c, 0x9cc2ff, 0x5fe3c8], blendMode: "ADD", emitting: false,
+    }).setDepth(8);
+
+    // Players: a sprite, a glow trail and a score each.
+    this.players = SETTINGS.players.map((p, i) => {
+      const sprite = this.add.image(500 + i * 900, 600, "player" + i).setDepth(5);
+      sprite.setScale(SETTINGS.playerSize / sprite.height);
+      const trail = this.add.particles(0, 0, "glow", {
+        follow: sprite, lifespan: 420, scale: { start: 0.5, end: 0 },
+        alpha: { start: 0.45, end: 0 }, tint: p.color, blendMode: "ADD", frequency: 28,
+      }).setDepth(4);
+      const label = this.add.text(140 + i * 420, 70, "", {
+        fontFamily: FONT, fontSize: "48px", fontStyle: "900", color: "#f4ead8",
+      }).setShadow(0, 0, "#" + p.color.toString(16), 20, true, true).setDepth(10);
+      return { ...p, sprite, trail, label, score: 0, vx: 0, vy: 0, stunned: 0 };
+    });
+
+    this.coins = [];
+    for (let i = 0; i < SETTINGS.coins; i++) this.addCoin();
+    this.enemies = [];
+    for (let i = 0; i < SETTINGS.enemies; i++) this.addEnemy();
+
+    this.timerText = this.add.text(W - 140, 70, "", {
+      fontFamily: FONT, fontSize: "48px", fontStyle: "800", color: "#9cc2ff",
+    }).setOrigin(1, 0).setDepth(10);
+    this.banner = this.add.text(W / 2, H / 2, SETTINGS.title, {
+      fontFamily: FONT, fontSize: "140px", fontStyle: "900", color: "#ffb55e",
+    }).setOrigin(0.5).setShadow(0, 0, "#ff6f9c", 30, true, true).setDepth(12);
+    this.tweens.add({ targets: this.banner, alpha: 0, scale: 1.15, delay: 1500, duration: 900 });
+
+    this.roundLeft = SETTINGS.roundSeconds;
+    this.updateLabels();
+  }
+
+  addCoin() {
+    const coin = this.add.image(Phaser.Math.Between(160, W - 160), Phaser.Math.Between(220, H - 120), "coin").setDepth(3);
+    this.tweens.add({ targets: coin, angle: 360, duration: 3000, repeat: -1 });
+    this.tweens.add({ targets: coin, scale: 1.15, yoyo: true, repeat: -1, duration: 500 });
+    this.coins.push(coin);
+  }
+
+  addEnemy() {
+    const slime = this.add.image(Phaser.Math.Between(300, W - 300), Phaser.Math.Between(300, H - 200), "slime").setDepth(4);
+    const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+    slime.vx = Math.cos(angle) * SETTINGS.enemySpeed;
+    slime.vy = Math.sin(angle) * SETTINGS.enemySpeed;
+    this.tweens.add({ targets: slime, scaleY: 0.86, yoyo: true, repeat: -1, duration: 380 });
+    this.enemies.push(slime);
+  }
+
+  updateLabels() {
+    this.players.forEach((p) => p.label.setText(`${p.name} ${p.score}`));
+  }
+
+  // ===== AI: each player chases the closest star and steers around slimes =====
+  steer(p, dt) {
+    if (p.stunned > 0) { p.stunned -= dt; p.sprite.angle += 720 * dt; return; }
+    p.sprite.angle *= 0.9;
+    const coin = this.coins.reduce((best, c) => {
+      const d = Phaser.Math.Distance.Between(c.x, c.y, p.sprite.x, p.sprite.y);
+      return d < best.d ? { c, d } : best;
+    }, { c: null, d: Infinity }).c;
+    let ax = 0, ay = 0;
+    if (coin) {
+      const a = Phaser.Math.Angle.Between(p.sprite.x, p.sprite.y, coin.x, coin.y);
+      ax += Math.cos(a); ay += Math.sin(a);
+    }
+    for (const e of this.enemies) {
+      const d = Phaser.Math.Distance.Between(e.x, e.y, p.sprite.x, p.sprite.y);
+      if (d < 260) {
+        const a = Phaser.Math.Angle.Between(e.x, e.y, p.sprite.x, p.sprite.y);
+        ax += Math.cos(a) * (260 - d) / 120; ay += Math.sin(a) * (260 - d) / 120;
+      }
+    }
+    // Smooth steering: velocity eases toward the wanted direction.
+    const len = Math.hypot(ax, ay) || 1;
+    p.vx += ((ax / len) * p.speed - p.vx) * Math.min(1, dt * 3);
+    p.vy += ((ay / len) * p.speed - p.vy) * Math.min(1, dt * 3);
+    p.sprite.x = Phaser.Math.Clamp(p.sprite.x + p.vx * dt, 80, W - 80);
+    p.sprite.y = Phaser.Math.Clamp(p.sprite.y + p.vy * dt, 160, H - 80);
+    p.sprite.setFlipX(p.vx < 0);
+  }
+
+  newRound() {
+    const winner = [...this.players].sort((a, b) => b.score - a.score)[0];
+    this.banner.setText(`${winner.name} wins!`).setAlpha(1).setScale(1);
+    this.tweens.add({ targets: this.banner, alpha: 0, scale: 1.15, delay: 1600, duration: 900 });
+    this.cameras.main.flash(250, 255, 181, 94);
+    this.burst.emitParticleAt(W / 2, H / 2, 60);
+    this.players.forEach((p) => { p.score = 0; });
+    this.roundLeft = SETTINGS.roundSeconds;
+    this.updateLabels();
+  }
+
+  update(_time, deltaMs) {
+    const dt = Math.min(deltaMs / 1000, 0.05);
+    this.roundLeft -= dt;
+    this.timerText.setText(Math.ceil(Math.max(0, this.roundLeft)) + "s");
+    if (this.roundLeft <= 0) this.newRound();
+
+    for (const e of this.enemies) {
+      e.x += e.vx * dt; e.y += e.vy * dt;
+      if (e.x < 60 || e.x > W - 60) e.vx *= -1;
+      if (e.y < 180 || e.y > H - 60) e.vy *= -1;
+    }
+
+    for (const p of this.players) {
+      this.steer(p, dt);
+      const r = SETTINGS.playerSize * 0.45;
+      this.coins = this.coins.filter((coin) => {
+        if (Phaser.Math.Distance.Between(coin.x, coin.y, p.sprite.x, p.sprite.y) > r + 30) return true;
+        this.burst.emitParticleAt(coin.x, coin.y, 16);
+        p.score += 1;
+        this.tweens.add({ targets: p.label, scale: 1.2, yoyo: true, duration: 120 });
+        coin.destroy();
+        this.time.delayedCall(400, () => this.addCoin());
+        return false;
+      });
+      for (const e of this.enemies) {
+        if (p.stunned <= 0 && Phaser.Math.Distance.Between(e.x, e.y, p.sprite.x, p.sprite.y) < r + 36) {
+          p.stunned = 0.8;
+          p.score = Math.max(0, p.score - 2);
+          this.cameras.main.shake(200, 0.008);
+          this.burst.emitParticleAt(p.sprite.x, p.sprite.y, 24);
+        }
+      }
+    }
+    this.updateLabels();
+  }
+}
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: W,
+  height: H,
+  backgroundColor: "#0b1530",
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  scene: Play,
+});
+</script>
+</body>
+</html>

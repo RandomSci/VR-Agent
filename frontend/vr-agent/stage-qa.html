@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Stage check</title>
+<style>
+  html, body { margin: 0; background: #000; }
+  iframe { display: block; width: 1280px; height: 720px; border: 0; }
+</style>
+<script src="./stage-preview.js"></script>
+</head>
+<body>
+<!-- The automated browser check runs a program here exactly like the Stage
+     preview does: same sandbox, same policy, same autopilot. -->
+<iframe id="preview" sandbox="allow-scripts" title="program"></iframe>
+<script>
+  window.loadProgram = function (source) {
+    document.getElementById("preview").srcdoc = window.StagePreview.previewDocument(source);
+  };
+</script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+{
+  "base": "/stage-libs",
+  "libraries": {
+    "p5": {
+      "version": "1.11.13",
+      "url": "/stage-libs/p5/1.11.13/p5.min.js",
+      "type": "classic",
+      "global": "p5",
+      "license": "LGPL-2.1",
+      "use_for": "creative coding, particles, generative art, math animation",
+      "files": {
+        "p5.min.js": "sha256-e9df7d05fd7c3ff028fc09a312a43101241f23c43143b387bf89d96b2e4e0849"
+      }
+    },
+    "phaser": {
+      "version": "3.90.0",
+      "url": "/stage-libs/phaser/3.90.0/phaser.min.js",
+      "type": "classic",
+      "global": "Phaser",
+      "license": "MIT",
+      "use_for": "2D games: sprites, arcade physics, collisions, particles, cameras, tweens",
+      "files": {
+        "phaser.min.js": "sha256-e92ddef111ba42e92d316979c732311757093688ea1810591cb7aa2858eba7a7"
+      }
+    },
+    "three": {
+      "version": "0.186.1",
+      "url": "/stage-libs/three/0.186.1/three.module.js",
+      "type": "module",
+      "global": "three",
+      "license": "MIT",
+      "use_for": "3D scenes (ES module, import from 'three' via the import map)",
+      "files": {
+        "three.core.js": "sha256-9edde002b066a9a05676a6127f67735b62baf399bdea529f2f7e31657da769e6",
+        "three.module.js": "sha256-9052042d676cb0fdc1ddfefe193053f34b7ac0513a616fdac4535d49987812ea"
+      }
+    },
+    "chartjs": {
+      "version": "4.5.1",
+      "url": "/stage-libs/chartjs/4.5.1/chart.umd.min.js",
+      "type": "classic",
+      "global": "Chart",
+      "license": "MIT",
+      "use_for": "animated charts: line, bar, doughnut, radar",
+      "files": {
+        "chart.umd.min.js": "sha256-48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a"
+      }
+    },
+    "matter": {
+      "version": "0.20.0",
+      "url": "/stage-libs/matter/0.20.0/matter.min.js",
+      "type": "classic",
+      "global": "Matter",
+      "license": "MIT",
+      "use_for": "2D rigid body physics: falling, stacking, collisions",
+      "files": {
+        "matter.min.js": "sha256-72d30be0f579eb02ce1e0b6f9d359a4f392e6837e5a26ba8be5dbee7f88e24ae"
+      }
+    }
+  }
+}

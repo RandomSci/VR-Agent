@@ -1,0 +1,239 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Star Patrol</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #070d22; }
+</style>
+<script src="/stage-libs/phaser/3.90.0/phaser.min.js"></script>
+</head>
+<body>
+<script>
+// ===== SETTINGS: change these first =====
+const SETTINGS = {
+  title: "Star Patrol",
+  player: "/stage-assets/sprites/ship.svg",   // or /stage-assets/characters/mika-head.png
+  playerHeight: 120,
+  enemies: [                                  // what falls from the top
+    { key: "rock1", url: "/stage-assets/sprites/asteroid-1.svg", size: 110, hp: 2, points: 10 },
+    { key: "rock2", url: "/stage-assets/sprites/asteroid-2.svg", size: 90, hp: 1, points: 10 },
+    { key: "ufo", url: "/stage-assets/sprites/ufo.svg", size: 130, hp: 3, points: 30 },
+  ],
+  lives: 3,
+  fireEvery: 0.16,          // seconds between shots
+  spawnEvery: 0.75,         // seconds between enemies (gets faster each wave)
+  skill: 0.9,               // autopilot: 1 dodges everything, lower gets hit more
+};
+
+class Play extends Phaser.Scene {
+  constructor() { super("play"); }
+
+  preload() {
+    const svg = (key, url, w, h) => this.load.svg(key, url, { width: w, height: h });
+    svg("space", "/stage-assets/backgrounds/space-nebula.svg", 1920, 1080);
+    svg("laser", "/stage-assets/sprites/laser.svg", 20, 44);
+    svg("heart", "/stage-assets/sprites/heart.svg", 56, 54);
+    svg("coin", "/stage-assets/sprites/star-coin.svg", 64, 64);
+    svg("glow", "/stage-assets/particles/glow.svg", 64, 64);
+    svg("spark", "/stage-assets/particles/spark.svg", 32, 32);
+    for (const e of SETTINGS.enemies) svg(e.key, e.url, e.size, e.size);
+    if (SETTINGS.player.endsWith(".svg")) svg("player", SETTINGS.player, 120, 132);
+    else this.load.image("player", SETTINGS.player);
+  }
+
+  create() {
+    // Background: two copies scroll down and wrap. Stars are particles.
+    this.bg = [0, -1080].map((y) => this.add.image(0, y, "space").setOrigin(0, 0));
+    this.add.particles(0, 0, "glow", {
+      x: { min: 0, max: 1920 }, y: -20, speedY: { min: 300, max: 900 },
+      scale: { min: 0.04, max: 0.12 }, alpha: { min: 0.4, max: 1 }, lifespan: 2500,
+      frequency: 40, blendMode: "ADD",
+    });
+
+    this.player = this.add.image(960, 900, "player").setDepth(5);
+    this.player.setScale(SETTINGS.playerHeight / this.player.height);
+    this.add.particles(0, 0, "glow", {
+      follow: this.player, followOffset: { y: 60 }, speedY: { min: 200, max: 400 },
+      scale: { start: 0.5, end: 0 }, alpha: { start: 0.8, end: 0 }, lifespan: 300,
+      tint: [0xffb55e, 0xff6f9c], blendMode: "ADD", frequency: 20,
+    }).setDepth(4);
+    this.explosion = this.add.particles(0, 0, "spark", {
+      speed: { min: 120, max: 620 }, lifespan: 800, scale: { start: 1.3, end: 0 },
+      tint: [0xffb55e, 0xff6f9c, 0x9cc2ff, 0xffffff], blendMode: "ADD", emitting: false,
+    }).setDepth(8);
+
+    this.shots = [];
+    this.enemies = [];
+    this.pickups = [];
+    this.score = 0;
+    this.lives = SETTINGS.lives;
+    this.wave = 1;
+    this.fireTimer = 0;
+    this.spawnTimer = 1.2;
+    this.invincible = 0;
+    this.targetX = 960;
+
+    const font = "Nunito, Quicksand, 'Segoe UI', system-ui, sans-serif";
+    this.scoreText = this.add.text(60, 40, "0", {
+      fontFamily: font, fontSize: "72px", fontStyle: "900", color: "#f4ead8",
+    }).setShadow(0, 0, "#ffb55e", 20, true, true).setDepth(10);
+    this.waveText = this.add.text(1860, 52, "wave 1", {
+      fontFamily: font, fontSize: "40px", color: "#9cc2ff",
+    }).setOrigin(1, 0).setDepth(10);
+    this.hearts = [];
+    this.drawLives();
+    const title = this.add.text(960, 440, SETTINGS.title, {
+      fontFamily: font, fontSize: "130px", fontStyle: "900", color: "#ffb55e",
+    }).setOrigin(0.5).setShadow(0, 0, "#ff6f9c", 30, true, true).setDepth(10);
+    this.tweens.add({ targets: title, alpha: 0, y: 380, delay: 1600, duration: 900 });
+  }
+
+  drawLives() {
+    this.hearts.forEach((h) => h.destroy());
+    this.hearts = [];
+    for (let i = 0; i < this.lives; i++) {
+      this.hearts.push(this.add.image(80 + i * 64, 160, "heart").setDepth(10));
+    }
+  }
+
+  spawnEnemy() {
+    const pool = SETTINGS.enemies.filter((e, i) => i < 2 || this.wave > 1);
+    const type = Phaser.Utils.Array.GetRandom(pool);
+    const sprite = this.add.image(Phaser.Math.Between(120, 1800), -80, type.key).setDepth(3);
+    this.enemies.push({
+      sprite, hp: type.hp, points: type.points, r: type.size * 0.42,
+      vx: Phaser.Math.Between(-80, 80), vy: Phaser.Math.Between(180, 300) + this.wave * 20,
+      spin: Phaser.Math.Between(-90, 90),
+    });
+  }
+
+  // ===== AUTOPILOT: dodges what is about to hit, otherwise hunts =====
+  autopilot() {
+    const px = this.player.x;
+    const danger = this.enemies.find((e) =>
+      e.sprite.y > 560 && e.sprite.y < 880 && Math.abs(e.sprite.x - px) < e.r + 70);
+    if (danger && Math.random() < SETTINGS.skill) {
+      this.targetX = danger.sprite.x > px ? px - 260 : px + 260;
+    } else {
+      const prey = this.enemies.filter((e) => e.sprite.y > 0 && e.sprite.y < 700)
+        .sort((a, b) => b.sprite.y - a.sprite.y)[0];
+      if (prey) this.targetX = prey.sprite.x;
+    }
+    this.targetX = Phaser.Math.Clamp(this.targetX, 100, 1820);
+  }
+
+  hit(enemy) {
+    this.explosion.emitParticleAt(enemy.sprite.x, enemy.sprite.y, 26);
+    this.cameras.main.shake(120, 0.004);
+    this.score += enemy.points;
+    this.scoreText.setText(String(this.score));
+    if (Math.random() < 0.25) {
+      const coin = this.add.image(enemy.sprite.x, enemy.sprite.y, "coin").setDepth(4);
+      this.pickups.push(coin);
+    }
+    enemy.sprite.destroy();
+    enemy.dead = true;
+    if (this.score >= this.wave * 200) {
+      this.wave += 1;
+      this.waveText.setText("wave " + this.wave);
+      this.cameras.main.flash(250, 156, 194, 255);
+    }
+  }
+
+  playerHit() {
+    if (this.invincible > 0) return;
+    this.lives -= 1;
+    this.invincible = 2;
+    this.drawLives();
+    this.cameras.main.shake(400, 0.014);
+    this.explosion.emitParticleAt(this.player.x, this.player.y, 50);
+    this.tweens.add({ targets: this.player, alpha: 0.2, yoyo: true, repeat: 7, duration: 120 });
+    if (this.lives <= 0) this.time.delayedCall(900, () => this.scene.restart());
+  }
+
+  update(_time, deltaMs) {
+    const dt = Math.min(deltaMs / 1000, 0.05);
+    for (const image of this.bg) {
+      image.y += 40 * dt;
+      if (image.y >= 1080) image.y -= 2160;
+    }
+    this.invincible = Math.max(0, this.invincible - dt);
+
+    this.autopilot();
+    this.player.x += (this.targetX - this.player.x) * Math.min(1, 6 * dt);
+    this.player.angle = (this.targetX - this.player.x) * 0.03;
+
+    this.fireTimer -= dt;
+    if (this.fireTimer <= 0) {
+      this.fireTimer = SETTINGS.fireEvery;
+      this.shots.push(this.add.image(this.player.x, this.player.y - 70, "laser").setDepth(4).setBlendMode("ADD"));
+    }
+    this.spawnTimer -= dt;
+    if (this.spawnTimer <= 0) {
+      this.spawnEnemy();
+      this.spawnTimer = Math.max(0.25, SETTINGS.spawnEvery - this.wave * 0.05);
+    }
+
+    for (const shot of this.shots) { shot.prevY = shot.y; shot.y -= 1400 * dt; }
+    for (const e of this.enemies) {
+      e.sprite.x += e.vx * dt;
+      e.sprite.y += e.vy * dt;
+      e.sprite.angle += e.spin * dt;
+      // Bounce off the sides so nothing drifts out of reach.
+      if (e.sprite.x < 90 || e.sprite.x > 1830) e.vx = -e.vx;
+      for (const shot of this.shots) {
+        // Swept test: a fast laser cannot skip past a rock between frames.
+        const crossed = e.sprite.y + e.r > shot.y && e.sprite.y - e.r < shot.prevY;
+        if (!shot.used && Math.abs(shot.x - e.sprite.x) < e.r && crossed) {
+          shot.used = true;
+          e.hp -= 1;
+          e.sprite.setTintFill(0xffffff);
+          this.time.delayedCall(60, () => e.sprite.active && e.sprite.clearTint());
+          if (e.hp <= 0) { this.hit(e); break; }
+        }
+      }
+      if (!e.dead && Phaser.Math.Distance.Between(e.sprite.x, e.sprite.y, this.player.x, this.player.y) < e.r + 40) {
+        this.hit(e);
+        this.playerHit();
+      }
+    }
+    for (const coin of this.pickups) {
+      coin.y += 220 * dt;
+      coin.angle += 180 * dt;
+      if (Phaser.Math.Distance.Between(coin.x, coin.y, this.player.x, this.player.y) < 80) {
+        coin.used = true;
+        this.score += 25;
+        this.scoreText.setText(String(this.score));
+        this.explosion.emitParticleAt(coin.x, coin.y, 12);
+        coin.destroy();
+      }
+    }
+    this.shots = this.shots.filter((s) => {
+      if (s.used || s.y < -60) { s.destroy(); return false; }
+      return true;
+    });
+    this.enemies = this.enemies.filter((e) => {
+      if (e.dead) return false;
+      if (e.sprite.y > 1200) { e.sprite.destroy(); return false; }
+      return true;
+    });
+    this.pickups = this.pickups.filter((c) => {
+      if (c.used) return false;
+      if (c.y > 1150) { c.destroy(); return false; }
+      return true;
+    });
+  }
+}
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: 1920,
+  height: 1080,
+  backgroundColor: "#070d22",
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  scene: Play,
+});
+</script>
+</body>
+</html>

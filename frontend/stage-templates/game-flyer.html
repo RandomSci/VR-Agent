@@ -1,0 +1,212 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Night Flyer</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1530; }
+</style>
+<script src="/stage-libs/phaser/3.90.0/phaser.min.js"></script>
+</head>
+<body>
+<script>
+// ===== SETTINGS: change these first =====
+const SETTINGS = {
+  title: "Night Flyer",
+  player: "/stage-assets/sprites/bird.svg",   // or /stage-assets/characters/luna-head.png
+  playerHeight: 92,                           // on-screen size of the player
+  gap: 300,                                   // space between the pipes
+  speed: 300,                                 // how fast the world scrolls
+  gravity: 1500,
+  flap: -560,
+  pipeEvery: 1.55,                            // seconds between pipes
+  skill: 0.93,                                // autopilot: 1 never crashes, lower crashes more
+  accent: 0xffb55e,
+};
+
+class Play extends Phaser.Scene {
+  constructor() { super("play"); }
+
+  preload() {
+    const svg = (key, url, w, h) => this.load.svg(key, url, { width: w, height: h });
+    svg("sky", "/stage-assets/backgrounds/night-sky.svg", 1920, 1080);
+    svg("far", "/stage-assets/backgrounds/city-far.svg", 1920, 1080);
+    svg("near", "/stage-assets/backgrounds/city-near.svg", 1920, 1080);
+    svg("pipe", "/stage-assets/sprites/pipe-body.svg", 96, 64);
+    svg("cap", "/stage-assets/sprites/pipe-cap.svg", 116, 44);
+    svg("coin", "/stage-assets/sprites/star-coin.svg", 64, 64);
+    svg("glow", "/stage-assets/particles/glow.svg", 64, 64);
+    svg("spark", "/stage-assets/particles/spark.svg", 32, 32);
+    if (SETTINGS.player.endsWith(".svg")) svg("player", SETTINGS.player, 128, 100);
+    else this.load.image("player", SETTINGS.player);
+  }
+
+  create() {
+    // Parallax background: two copies of each layer slide left at their own
+    // speed and wrap around (much cheaper to draw than tiled sprites).
+    this.layers = [["sky", 0.03], ["far", 0.15], ["near", 0.4]].map(([key, factor]) => ({
+      factor,
+      parts: [0, 1920].map((x) => this.add.image(x, 0, key).setOrigin(0, 0)),
+    }));
+
+    this.pipes = [];   // each: { top, bottom, x, gapY, scored }
+    this.coins = this.add.group();
+    this.score = 0;
+    this.best = 0;
+    this.alive = true;
+    this.pipeTimer = 0.6;
+
+    this.player = this.add.image(560, 500, "player");
+    this.player.setScale(SETTINGS.playerHeight / this.player.height);
+    this.vy = 0;
+
+    // Particles: a soft trail behind the player and bursts on events.
+    this.trail = this.add.particles(0, 0, "glow", {
+      follow: this.player, speedX: { min: -260, max: -160 }, lifespan: 500,
+      scale: { start: 0.45, end: 0 }, alpha: { start: 0.5, end: 0 },
+      tint: SETTINGS.accent, blendMode: "ADD", frequency: 30,
+    });
+    this.burst = this.add.particles(0, 0, "spark", {
+      speed: { min: 150, max: 520 }, lifespan: 700, scale: { start: 1.1, end: 0 },
+      tint: [0xffb55e, 0xff6f9c, 0x9cc2ff], blendMode: "ADD", emitting: false,
+    });
+    this.player.setDepth(5);
+
+    const font = "Nunito, Quicksand, 'Segoe UI', system-ui, sans-serif";
+    this.scoreText = this.add.text(960, 120, "0", {
+      fontFamily: font, fontSize: "120px", fontStyle: "900", color: "#f4ead8",
+    }).setOrigin(0.5).setShadow(0, 0, "#ffb55e", 24, true, true).setDepth(10);
+    this.bestText = this.add.text(960, 210, "", {
+      fontFamily: font, fontSize: "34px", color: "#9cc2ff",
+    }).setOrigin(0.5).setDepth(10);
+    this.titleText = this.add.text(960, 470, SETTINGS.title, {
+      fontFamily: font, fontSize: "130px", fontStyle: "900", color: "#ffb55e",
+    }).setOrigin(0.5).setShadow(0, 0, "#ff6f9c", 30, true, true).setDepth(10);
+    this.tweens.add({ targets: this.titleText, alpha: 0, scale: 1.15, delay: 1600, duration: 900 });
+  }
+
+  // ===== AUTOPILOT: plays the game so viewers can just watch =====
+  autopilot() {
+    const next = this.pipes.find((p) => p.x + 60 > this.player.x);
+    if (next && next.aim === undefined) {
+      // Now and then the pilot misjudges a gap: crashes are part of the show.
+      next.aim = Math.random() > SETTINGS.skill ? Phaser.Math.Between(-1, 1) * SETTINGS.gap * 0.8 : 0;
+    }
+    const target = next ? next.gapY + 40 + next.aim : 540;
+    if (this.player.y > target && this.vy > -80) this.flap();
+  }
+
+  flap() {
+    this.vy = SETTINGS.flap;
+    this.burst.emitParticleAt(this.player.x - 30, this.player.y + 10, 4);
+  }
+
+  addPipe() {
+    const gapY = Phaser.Math.Between(300, 780);
+    const x = 2050;
+    const top = this.add.container(x, 0);
+    const bottom = this.add.container(x, 0);
+    const half = SETTINGS.gap / 2;
+    const topBody = this.add.tileSprite(0, (gapY - half) / 2, 96, gapY - half, "pipe");
+    const topCap = this.add.image(0, gapY - half - 22, "cap");
+    const botH = 1080 - (gapY + half);
+    const botBody = this.add.tileSprite(0, gapY + half + botH / 2, 96, botH, "pipe");
+    const botCap = this.add.image(0, gapY + half + 22, "cap");
+    top.add([topBody, topCap]);
+    bottom.add([botBody, botCap]);
+    this.pipes.push({ top, bottom, x, gapY, scored: false });
+    if (Math.random() < 0.6) {
+      const coin = this.add.image(x, gapY, "coin").setDepth(4);
+      this.tweens.add({ targets: coin, scale: 1.18, yoyo: true, repeat: -1, duration: 420 });
+      this.coins.add(coin);
+    }
+  }
+
+  crash() {
+    this.alive = false;
+    this.cameras.main.shake(380, 0.012);
+    this.cameras.main.flash(200, 255, 111, 156);
+    this.burst.emitParticleAt(this.player.x, this.player.y, 40);
+    this.best = Math.max(this.best, this.score);
+    this.time.delayedCall(1300, () => this.restart());
+  }
+
+  restart() {
+    this.pipes.forEach((p) => { p.top.destroy(); p.bottom.destroy(); });
+    this.pipes = [];
+    this.coins.clear(true, true);
+    this.score = 0;
+    this.player.setPosition(560, 500).setAngle(0);
+    this.vy = 0;
+    this.alive = true;
+    this.pipeTimer = 0.6;
+    this.bestText.setText("best " + this.best);
+  }
+
+  update(_time, deltaMs) {
+    const dt = Math.min(deltaMs / 1000, 0.05);
+    for (const layer of this.layers) {
+      for (const part of layer.parts) {
+        part.x -= SETTINGS.speed * layer.factor * dt;
+        if (part.x <= -1920) part.x += 3840;
+      }
+    }
+    if (!this.alive) {
+      this.vy += SETTINGS.gravity * dt;
+      this.player.y = Math.min(1040, this.player.y + this.vy * dt);
+      this.player.angle = Math.min(90, this.player.angle + 300 * dt);
+      return;
+    }
+
+    this.autopilot();
+    this.vy += SETTINGS.gravity * dt;
+    this.player.y += this.vy * dt;
+    this.player.angle = Phaser.Math.Clamp(this.vy / 12, -25, 70);
+
+    this.pipeTimer -= dt;
+    if (this.pipeTimer <= 0) { this.addPipe(); this.pipeTimer = SETTINGS.pipeEvery; }
+
+    const r = SETTINGS.playerHeight * 0.38;
+    for (const p of this.pipes) {
+      p.x -= SETTINGS.speed * dt;
+      p.top.x = p.bottom.x = p.x;
+      const half = SETTINGS.gap / 2;
+      const overlapsX = Math.abs(p.x - this.player.x) < 48 + r;
+      if (overlapsX && (this.player.y - r < p.gapY - half || this.player.y + r > p.gapY + half)) {
+        this.crash();
+      }
+      if (!p.scored && p.x < this.player.x) {
+        p.scored = true;
+        this.score += 1;
+        this.scoreText.setText(String(this.score));
+        this.tweens.add({ targets: this.scoreText, scale: 1.25, yoyo: true, duration: 120 });
+      }
+    }
+    this.pipes = this.pipes.filter((p) => {
+      if (p.x > -120) return true;
+      p.top.destroy(); p.bottom.destroy(); return false;
+    });
+    this.coins.getChildren().forEach((coin) => {
+      coin.x -= SETTINGS.speed * dt;
+      if (Phaser.Math.Distance.Between(coin.x, coin.y, this.player.x, this.player.y) < r + 30) {
+        this.burst.emitParticleAt(coin.x, coin.y, 18);
+        this.score += 2;
+        this.scoreText.setText(String(this.score));
+        coin.destroy();
+      } else if (coin.x < -80) coin.destroy();
+    });
+    if (this.player.y > 1060 || this.player.y < -40) this.crash();
+  }
+}
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: 1920,
+  height: 1080,
+  backgroundColor: "#0b1530",
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  scene: Play,
+});
+</script>
+</body>
+</html>

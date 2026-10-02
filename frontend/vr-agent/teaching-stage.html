@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en" data-vr-mode="live" data-vr-room="1" data-vr-teaching-dev="1">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VR Agent Coding Stage</title>
+  <link rel="stylesheet" href="./vr-agent.css">
+  <link rel="stylesheet" href="./room.css">
+  <style>
+    :root { color-scheme: dark; font: 15px system-ui,sans-serif; }
+    html,body { margin:0!important; width:100%;height:100%;overflow:hidden;background:#0b0f16!important;color:#e6edf7; }
+    html[data-teaching-mode="teaching"] #vr-room-backdrop { display:none!important; }
+    #vr-room-world,#vr-room-canvas { position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;pointer-events:none!important;background:transparent!important; }
+    #vr-room-world { z-index:4!important; } #vr-room-canvas { z-index:5!important; }
+    #coding-workspace { position:fixed;left:3vw;top:4vh;width:min(78vw,1400px);height:88vh;z-index:2;display:none;background:#101722;border:1px solid #334155;border-radius:12px;box-shadow:0 18px 60px #0009;overflow:hidden; }
+    #editor-bar { height:42px;display:flex;align-items:center;gap:16px;padding:0 16px;background:#172130;border-bottom:1px solid #334155;color:#b9c7da;font:13px system-ui,sans-serif; }
+    #editor-file { color:#f5c86a;font-weight:700; } #editor-state { margin-left:auto;color:#9baec7; }
+    #code-panel { height:60%;overflow:auto;background:#0d131d;padding:18px 22px;box-sizing:border-box; }
+    #code-display { margin:0;white-space:pre;tab-size:4;color:#d6e2f1;font:15px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
+    #terminal-panel { height:40%;min-height:130px;border-top:1px solid #334155;background:#080c12;overflow:auto; }
+    #terminal-title { position:sticky;top:0;padding:10px 16px;background:#121a26;color:#a8bdd5;font:12px ui-monospace,monospace;letter-spacing:.08em; }
+    #terminal-output { margin:0;padding:12px 16px 20px;white-space:pre-wrap;overflow-wrap:anywhere;color:#d4e2d4;font:14px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }
+    #preview-panel {
+      display:none;
+      position:absolute;
+      right:0;
+      top:42px;
+      width:68%;
+      height:74%;
+      box-sizing:border-box;
+      border-left:1px solid #334155;
+      background:#070b11;
+      overflow:hidden;
+    }
+    #preview-bar {
+      height:34px;
+      box-sizing:border-box;
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:0 10px;
+      background:#121a26;
+      border-bottom:1px solid #334155;
+      color:#a8bdd5;
+      font:12px ui-monospace,SFMono-Regular,Consolas,monospace;
+    }
+    #preview-state { margin-left:auto;color:#7dd3fc; }
+    #web-preview {
+      display:block;
+      width:100%;
+      min-width:0;
+      height:calc(100% - 34px);
+      border:0;
+      background:#fff;
+    }
+    #coding-workspace.web-mode #code-panel {
+      width:32%;
+      height:74%;
+    }
+    #coding-workspace.web-mode #terminal-panel {
+      position:absolute;
+      left:0;
+      bottom:0;
+      width:100%;
+      height:26%;
+      min-height:0;
+      box-sizing:border-box;
+    }
+    #coding-workspace.web-mode #preview-panel {
+      display:block;
+    }
+    #artifact-preview {
+      display:none;
+      width:100%;
+      height:calc(100% - 34px);
+      box-sizing:border-box;
+      align-items:center;
+      justify-content:center;
+      overflow:auto;
+      padding:18px;
+      background:#070b11;
+    }
+
+    #artifact-preview img,
+    #artifact-preview video {
+      display:block;
+      max-width:100%;
+      max-height:100%;
+      object-fit:contain;
+      border:1px solid #53647a;
+      border-radius:8px;
+      background:#fff;
+      box-shadow:0 10px 30px #0008;
+    }
+
+    #artifact-preview video {
+      background:#000;
+    }
+
+    #coding-workspace.preview-mode #code-panel {
+      width:32%;
+      height:74%;
+    }
+
+    #coding-workspace.preview-mode #terminal-panel {
+      position:absolute;
+      left:0;
+      bottom:0;
+      width:100%;
+      height:26%;
+      min-height:0;
+      box-sizing:border-box;
+    }
+
+    #coding-workspace.preview-mode #preview-panel {
+      display:block;
+    }
+    #coding-loading {
+      display:none;
+      position:absolute;
+      inset:42px 0 26%;
+      z-index:12;
+      align-items:center;
+      justify-content:center;
+      flex-direction:column;
+      gap:14px;
+      background:rgba(7,11,17,.82);
+      backdrop-filter:blur(5px);
+      pointer-events:none;
+    }
+
+    #coding-loading.active {
+      display:flex;
+    }
+
+    #coding-spinner {
+      width:46px;
+      height:46px;
+      border-radius:50%;
+      border:4px solid rgba(255,255,255,.18);
+      border-top-color:#fff;
+      animation:coding-spin .8s linear infinite;
+    }
+
+    #coding-loading-text {
+      font:700 15px system-ui,sans-serif;
+      letter-spacing:.08em;
+      color:#e6edf7;
+    }
+
+    #coding-loading-subtext {
+      color:#9fb1c8;
+      font:13px system-ui,sans-serif;
+    }
+
+    @keyframes coding-spin {
+      to { transform:rotate(360deg); }
+    }
+
+    #stage-controls[hidden] { display:none !important; }
+    #stage-controls { position:fixed;top:14px;right:14px;z-index:20;display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;background:#0a0e17e8;color:white;font:13px system-ui,sans-serif; }
+    #stage-controls button { border:1px solid #596273;border-radius:7px;padding:8px 12px;background:#202735;color:white;cursor:pointer;font-weight:700; }
+    #stage-status { min-width:130px; }
+    :fullscreen #stage-controls { opacity:0;pointer-events:none; }
+  </style>
+</head>
+<body>
+  <main id="coding-workspace" aria-label="Coding lesson">
+    <header id="editor-bar"><span>●</span><span id="editor-file">main.py</span><span id="editor-state">Waiting for a lesson</span></header>
+    <section id="code-panel" aria-label="Code editor"><pre id="code-display">Code from the current lesson will appear here.</pre></section>
+    <section id="preview-panel" aria-label="Live browser preview">
+      <header id="preview-bar">
+        <span>RESULT PREVIEW</span>
+        <span id="preview-state">idle</span>
+      </header>
+      <iframe
+        id="web-preview"
+        title="Generated browser project preview"
+        sandbox="allow-scripts"
+        referrerpolicy="no-referrer"
+      ></iframe>
+
+      <div
+        id="artifact-preview"
+        aria-label="Generated result preview"
+      ></div>
+    </section>
+    <div id="coding-loading" aria-live="polite">
+      <div id="coding-spinner"></div>
+      <div id="coding-loading-text">LUNA IS COOKING…</div>
+      <div id="coding-loading-subtext">Rendering the current project</div>
+    </div>
+
+    <section id="terminal-panel" aria-label="Terminal output"><header id="terminal-title">TERMINAL · waiting</header><pre id="terminal-output">Viewer comments continue through the livestream chat.</pre></section>
+  </main>
+  <div id="vr-room-backdrop"></div>
+  <canvas id="vr-room-canvas"></canvas>
+  <div id="vr-room-world" aria-hidden="true"></div>
+  <!-- Operator buttons stay off the stream. Add ?controls=1 to the URL to see them. -->
+  <div id="stage-controls" hidden><span id="stage-status">ROOM • ready</span><button id="normal">Normal</button><button id="mika">Teach Mika</button><button id="luna">Teach Luna</button><button id="fullscreen">Fullscreen</button></div>
+  <script>if (new URLSearchParams(location.search).has("controls")) document.getElementById("stage-controls").hidden = false;</script>
+
+  <script src="../libs/live2dcubismcore.min.js"></script>
+  <script src="./vendor/pixi-6.5.10.min.js"></script>
+  <script src="./vendor/pixi-live2d-display-0.4.0-cubism4.min.js"></script>
+  <script src="./room-board.js"></script>
+  <script src="./room-audio.js"></script>
+  <script src="./teaching-dev-room.js"></script>
+  <script src="./stage-preview.js"></script>
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const workspace = $("coding-workspace");
+      const code = $("code-display");
+      const codePanel = $("code-panel");
+      const output = $("terminal-output");
+      const editorFile = $("editor-file");
+      const editorState = $("editor-state");
+      const terminalTitle = $("terminal-title");
+      const status = $("stage-status");
+      const artifacts = $("artifact-preview");
+      const previewFrame = $("web-preview");
+      const previewState = $("preview-state");
+      const codingLoading = $("coding-loading");
+      const codingLoadingText = $("coding-loading-text");
+      const codingLoadingSubtext = $("coding-loading-subtext");
+      let mode = "normal", teacher = "mika", typingToken = 0, typing = false, pendingResult = null;
+
+      function setStatus() {
+        status.textContent = mode === "normal" ? "ROOM • ready" : teacher.toUpperCase() + " • CODING";
+      }
+      function enterNormal() {
+        mode = "normal";
+        workspace.style.display = "none";
+        artifacts.replaceChildren();
+        artifacts.style.display = "none";
+        workspace.classList.remove("preview-mode");
+        if (window.vrRoom && window.vrRoom.normal) window.vrRoom.normal();
+        document.documentElement.dataset.teachingMode = "normal";
+        setStatus();
+      }
+      function enterTeaching(id) {
+        const chosen = id === "luna" ? "luna" : "mika";
+        if (!window.vrRoom || !window.vrRoom.teaching || !window.vrRoom.teaching(chosen)) {
+          status.textContent = chosen.toUpperCase() + " loading…";
+          return false;
+        }
+        mode = "teaching"; teacher = chosen; workspace.style.display = "block";
+        document.documentElement.dataset.teachingMode = "teaching";
+        document.documentElement.dataset.teacher = chosen;
+        setStatus();
+        return true;
+      }
+      function filenameFor(language) {
+        if (language === "web") return "index.html";
+        if (language === "javascript") return "main.js";
+        return "main.py";
+      }
+
+      function stopWebPreview() {
+        workspace.classList.remove("web-mode");
+        if (previewFrame) {
+          previewFrame.srcdoc = "";
+          previewFrame.style.display = "none";
+        }
+        if (previewState) previewState.textContent = "idle";
+      }
+
+      function renderWebPreview(html) {
+        const source = String(html || "").slice(0, 32000);
+
+        if (!source.trim()) {
+          stopWebPreview();
+          return;
+        }
+
+        workspace.classList.add("web-mode");
+        workspace.classList.add("preview-mode");
+        artifacts.style.display = "none";
+        previewFrame.style.display = "block";
+
+        // Locked-down preview (see stage-preview.js): scripts, images and data
+        // only from this server's approved /stage-libs and /stage-assets.
+        if (previewState) previewState.textContent = "running";
+        previewFrame.srcdoc = window.StagePreview.previewDocument(source);
+      }
+
+      function setCodingLoading(active, op = {}) {
+        if (!codingLoading) return;
+
+        codingLoading.classList.toggle("active", !!active);
+
+        if (!active) return;
+
+        const lang = String(op.language || "");
+
+        if (op.phase === "building" || op.phase === "fixing") {
+          // The code is being written (or repaired): say who is doing what, so
+          // a longer build reads as work in progress, never as a frozen stream.
+          const who = String(op.teacher || "");
+          const name = who ? who.charAt(0).toUpperCase() + who.slice(1) : "Mika";
+          if (codingLoadingText) {
+            codingLoadingText.textContent = op.phase === "fixing"
+              ? name + " found a bug, fixing it…"
+              : name + " is writing the code…";
+          }
+          if (codingLoadingSubtext) {
+            codingLoadingSubtext.textContent = String(op.subject || "").slice(0, 120) ||
+              "Viewer chat is still live while this finishes.";
+          }
+          return;
+        }
+
+        if (codingLoadingText) {
+          codingLoadingText.textContent =
+            lang === "python"
+              ? "RENDERING / RUNNING…"
+              : lang === "web"
+                ? "BUILDING LIVE PREVIEW…"
+                : "RUNNING CODE…";
+        }
+
+        if (codingLoadingSubtext) {
+          codingLoadingSubtext.textContent =
+            "Viewer chat is still live while this finishes.";
+        }
+      }
+
+      function showFailurePreview() {
+        setCodingLoading(false);
+
+        stopWebPreview();
+
+        artifacts.replaceChildren();
+
+        const img = document.createElement("img");
+        img.alt = "Code run failed";
+        img.src = "./assets/status/Run_failed.png";
+
+        artifacts.appendChild(img);
+
+        if (previewFrame) {
+          previewFrame.style.display = "none";
+        }
+
+        artifacts.style.display = "flex";
+
+        workspace.classList.remove("web-mode");
+        workspace.classList.add("preview-mode");
+
+        if (previewState) {
+          previewState.textContent = "failed";
+        }
+      }
+
+      function showResult(op) {
+        setCodingLoading(false, op);
+
+        const result = op.result || {};
+
+        const failed = Boolean(
+          result.timed_out ||
+          result.error ||
+          (
+            result.exit_code != null &&
+            result.exit_code !== 0
+          )
+        );
+        const lines = ["$ " + (op.filename || "main.py"), ""];
+        if (result.stdout) lines.push(String(result.stdout).replace(/\n$/, ""));
+        if (result.stderr) lines.push(String(result.stderr).replace(/\n$/, ""));
+        if (result.error) lines.push(String(result.error));
+        lines.push("", "[exit code " + (result.exit_code == null ? "unavailable" : result.exit_code) + "]");
+        output.textContent = lines.join("\n");
+        terminalTitle.textContent =
+          "TERMINAL · " +
+          (
+            result.timed_out
+              ? "TIMED OUT"
+              : failed
+                ? "ERROR"
+                : "COMPLETED"
+          );
+
+        editorState.textContent =
+          failed
+            ? "Run failed"
+            : "Run complete";
+
+        if (failed) {
+          showFailurePreview();
+          return;
+        }
+        artifacts.replaceChildren();
+
+        const artifactItems =
+          Array.isArray(op.artifacts)
+            ? op.artifacts.slice(0, 4)
+            : [];
+
+        let renderedArtifact = false;
+
+        for (const item of artifactItems) {
+          if (!item || !item.data_base64) continue;
+
+          const mime = String(item.mime || "");
+
+          if (/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(mime)) {
+            const img = document.createElement("img");
+            img.alt = item.name || "Lesson output";
+            img.src =
+              "data:" +
+              mime +
+              ";base64," +
+              item.data_base64;
+
+            artifacts.appendChild(img);
+            renderedArtifact = true;
+            continue;
+          }
+
+          if (/^video\/(mp4|webm)$/.test(mime)) {
+            const video = document.createElement("video");
+
+            video.controls = true;
+            video.autoplay = true;
+            video.loop = true;
+            video.muted = true;
+            video.playsInline = true;
+
+            video.src =
+              "data:" +
+              mime +
+              ";base64," +
+              item.data_base64;
+
+            artifacts.appendChild(video);
+            renderedArtifact = true;
+          }
+        }
+
+        if (renderedArtifact) {
+          stopWebPreview();
+          workspace.classList.add("preview-mode");
+          artifacts.style.display = "flex";
+          previewState.textContent = "result";
+        } else if (!workspace.classList.contains("web-mode")) {
+          artifacts.style.display = "none";
+          workspace.classList.remove("preview-mode");
+        }
+      }
+      function revealCode(op) {
+        if (op.language && !["python","javascript","web"].includes(op.language)) return;
+        if (mode !== "teaching") enterTeaching(teacher);
+        const source = String(op.code || "").slice(0,32000);
+        const chars = Array.from(source);
+        const token = ++typingToken;
+        typing = true; pendingResult = null;
+
+        editorFile.textContent = op.filename || filenameFor(op.language);
+
+        const placeholder =
+          "Code from the current lesson will appear here.";
+
+        const previous =
+          code.textContent === placeholder ? "" : String(code.textContent || "");
+
+        let prefix = 0;
+        const maxPrefix = Math.min(previous.length, source.length);
+
+        while (
+          prefix < maxPrefix &&
+          previous[prefix] === source[prefix]
+        ) {
+          prefix++;
+        }
+
+        const editing = previous.length > 0;
+
+        editorState.textContent = editing ? "Editing…" : "Writing…";
+        terminalTitle.textContent = "TERMINAL · ready";
+        output.textContent =
+          "$ " + editorFile.textContent +
+          "\n\nCode is being " +
+          (editing ? "updated" : "written") +
+          " on screen.";
+
+        artifacts.replaceChildren();
+
+        code.textContent = source.slice(0, prefix);
+
+        let index = prefix;
+        let last = performance.now();
+
+        // Deliberately visible typing instead of dumping the whole script.
+        // Small examples look like an actual instructor typing.
+        const rate =
+          op.language === "web"
+            ? (chars.length > 12000 ? 1800 : 900)
+            : (chars.length > 1200 ? 70 : 16);
+        function tick(now) {
+          if (token !== typingToken) return;
+          index = Math.min(chars.length, index + Math.max(1, Math.floor((now-last)*rate/1000)));
+          code.textContent = chars.slice(0,index).join("");
+          codePanel.scrollTop = codePanel.scrollHeight;
+          last = now;
+          if (index < chars.length) requestAnimationFrame(tick);
+          else {
+            typing = false;
+            editorState.textContent = "Code ready";
+
+            if (op.language === "web") {
+              renderWebPreview(source);
+            } else {
+              stopWebPreview();
+            }
+            if (pendingResult) { const result = pendingResult; pendingResult = null; showResult(result); }
+          }
+        }
+        requestAnimationFrame(tick);
+      }
+      function onCoding(op) {
+        if (op.phase === "running") {
+          if (mode !== "teaching") enterTeaching(teacher);
+
+          stopWebPreview();
+
+          artifacts.replaceChildren();
+          artifacts.style.display = "none";
+
+          workspace.classList.remove("preview-mode");
+
+          editorState.textContent = "Running…";
+          terminalTitle.textContent = "TERMINAL · RUNNING";
+          output.textContent =
+            "$ " + (op.filename || editorFile.textContent || "main.py") +
+            "\n\nRunning the current project…";
+
+          setCodingLoading(true, op);
+          return;
+        }
+        if (op.phase === "restore") {
+          if (mode !== "teaching") enterTeaching(teacher);
+          editorFile.textContent = op.filename || filenameFor(op.language);
+          code.textContent = String(op.code || "").slice(0,32000);
+
+          if (op.language === "web") {
+            renderWebPreview(op.code || op.preview_html || "");
+          } else {
+            stopWebPreview();
+          }
+          editorState.textContent = op.code ? "Restored lesson" : "Waiting for a lesson";
+          if (op.result) showResult(op);
+          return;
+        }
+        if (op.phase === "building") {
+          if (mode !== "teaching") enterTeaching(op.teacher || teacher);
+          editorState.textContent = "Writing…";
+          setCodingLoading(true, op);
+          return;
+        }
+        if (op.phase === "checking") {
+          // Quiet: the code keeps typing while it is tested in a browser.
+          if (!typing) editorState.textContent = "Testing in a browser…";
+          return;
+        }
+        if (op.phase === "fixing") {
+          editorState.textContent = "Fixing…";
+          setCodingLoading(true, op);
+          return;
+        }
+        if (op.phase === "build_failed") {
+          setCodingLoading(false, op);
+          editorState.textContent = "Could not write it";
+          return;
+        }
+        if (op.phase === "writing") {
+          setCodingLoading(false, op);
+          return revealCode(op);
+        }
+        if (
+          op.language === "web" &&
+          (op.preview_html || op.code) &&
+          op.phase !== "writing"
+        ) {
+          renderWebPreview(op.preview_html || op.code);
+        }
+
+        if (op.phase === "run_result") {
+          if (typing) pendingResult = op;
+          else showResult(op);
+          return;
+        }
+        if (op.phase === "ready" && op.error) {
+          const failed = {filename: op.filename, result: {error: String(op.error), exit_code: null}};
+          if (typing) pendingResult = failed;
+          else showResult(failed);
+          return;
+        }
+        if (op.phase === "ready") {
+          const web = op.language === "web" || workspace.classList.contains("web-mode");
+          editorState.textContent = web ? "Live in the preview" : "Code ready; not run yet";
+          terminalTitle.textContent = web ? "TERMINAL · live" : "TERMINAL · ready";
+          output.textContent =
+            "$ " + (op.filename || editorFile.textContent || "main.py") +
+            (web
+              ? "\n\nRunning in the preview window."
+              : "\n\nCode ready. Waiting for a run request.");
+        }
+      }
+      $("normal").addEventListener("click", enterNormal);
+      $("mika").addEventListener("click", () => enterTeaching("mika"));
+      $("luna").addEventListener("click", () => enterTeaching("luna"));
+      $("fullscreen").addEventListener("click", async () => {
+        if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+        else await document.exitFullscreen();
+      });
+      window.teachingStage = {
+        normal: enterNormal,
+        teachMika: () => enterTeaching("mika"),
+        teachLuna: () => enterTeaching("luna"),
+        coding: onCoding,
+        state: () => ({mode, teacher: mode === "teaching" ? teacher : null}),
+      };
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", enterNormal, {once:true});
+      else enterNormal();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,217 @@
+"""The YouTube side: a live-chat message, a comment reply, a description section.
+
+What the YouTube Data API v3 actually supports (checked against the official
+reference, October 2026):
+
+* liveChatMessages.insert posts a plain text message to a live chat (50 quota
+  units). There is no reply or thread field and no mention field, so "@name"
+  is just text: YouTube may or may not notify that viewer.
+* comments.insert with snippet.parentId replies under an existing normal
+  video comment (50 units). Live chat and video comments are different
+  resources and are kept separate here.
+* videos.update replaces the whole snippet (50 units): any snippet field that
+  is not sent is deleted, so the current snippet is fetched first and sent
+  back with only the description changed. title and categoryId are required.
+* One OAuth scope covers all three: https://www.googleapis.com/auth/youtube.force-ssl
+* The default daily quota is 10,000 units.
+
+Credentials are an OAuth client (id and secret) plus a refresh token for the
+channel, exchanged here for short-lived access tokens. They never leave this
+module and are scrubbed from errors.
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Any, Callable, Optional
+
+import httpx
+
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+API = "https://www.googleapis.com/youtube/v3"
+SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
+CHAT_LIMIT = 200  # YouTube live chat messages are short; keep well within it
+
+
+class YouTubeError(RuntimeError):
+    pass
+
+
+class YouTubeClient:
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        refresh_token: str,
+        client: Optional[httpx.Client] = None,
+        on_refresh_token: Optional[Callable[[str], None]] = None,
+    ):
+        self._on_refresh_token = on_refresh_token
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._refresh_token = refresh_token
+        self._http = client or httpx.Client(timeout=20)
+        self._access_token = ""
+        self._expires_at = 0.0
+
+    def _scrub(self, text: str) -> str:
+        for secret in (self._client_secret, self._refresh_token, self._access_token):
+            if secret:
+                text = text.replace(secret, "***")
+        return text
+
+    def _token(self) -> str:
+        if self._access_token and time.time() < self._expires_at - 60:
+            return self._access_token
+        try:
+            response = self._http.post(
+                TOKEN_URL,
+                data={
+                    "client_id": self._client_id,
+                    "client_secret": self._client_secret,
+                    "refresh_token": self._refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise YouTubeError(
+                self._scrub(f"Google sign-in unreachable: {exc}")
+            ) from None
+        if response.status_code >= 400:
+            raise YouTubeError(
+                self._scrub(
+                    f"Google sign-in failed: {response.status_code} {response.text[:200]}"
+                )
+            )
+        data = response.json()
+        rotated = str(data.get("refresh_token") or "")
+        if rotated and rotated != self._refresh_token:
+            self._refresh_token = rotated
+            if self._on_refresh_token:
+                try:
+                    self._on_refresh_token(rotated)
+                except Exception:
+                    pass  # saving is best effort; the token still works now
+        self._access_token = data["access_token"]
+        self._expires_at = time.time() + int(data.get("expires_in", 3600))
+        return self._access_token
+
+    def _call(self, method: str, path: str, **kwargs) -> dict[str, Any]:
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        try:
+            response = self._http.request(method, API + path, headers=headers, **kwargs)
+        except httpx.HTTPError as exc:
+            raise YouTubeError(self._scrub(f"YouTube unreachable: {exc}")) from None
+        if response.status_code >= 400:
+            raise YouTubeError(
+                self._scrub(
+                    f"YouTube {method} {path} failed: {response.status_code} {response.text[:300]}"
+                )
+            )
+        return response.json() if response.content else {}
+
+    # -- finding the stream -------------------------------------------------
+    def find_active_broadcast_video_id(self) -> str:
+        """Your broadcast that is live right now (1 quota unit). Its id is the video id."""
+        data = self._call(
+            "GET",
+            "/liveBroadcasts",
+            params={
+                "part": "id,snippet",
+                "broadcastStatus": "active",
+                "broadcastType": "all",
+            },
+        )
+        items = data.get("items") or []
+        return str(items[0].get("id") or "") if items else ""
+
+    def find_live_video_by_channel(self, channel_id: str) -> str:
+        """Fallback: public search for a live video on the channel (100 units)."""
+        if not channel_id:
+            return ""
+        data = self._call(
+            "GET",
+            "/search",
+            params={
+                "part": "id",
+                "channelId": channel_id,
+                "eventType": "live",
+                "type": "video",
+                "maxResults": 1,
+            },
+        )
+        items = data.get("items") or []
+        return str((items[0].get("id") or {}).get("videoId") or "") if items else ""
+
+    # -- live chat ----------------------------------------------------------
+    def active_live_chat_id(self, video_id: str) -> str:
+        """The chat of a broadcast that is live right now, or "" if it ended."""
+        data = self._call(
+            "GET", "/videos", params={"part": "liveStreamingDetails", "id": video_id}
+        )
+        items = data.get("items") or []
+        if not items:
+            return ""
+        return str(
+            (items[0].get("liveStreamingDetails") or {}).get("activeLiveChatId") or ""
+        )
+
+    def post_chat_message(self, live_chat_id: str, text: str) -> dict[str, Any]:
+        text = " ".join(str(text or "").split())[:CHAT_LIMIT]
+        return self._call(
+            "POST",
+            "/liveChat/messages",
+            params={"part": "snippet"},
+            json={
+                "snippet": {
+                    "liveChatId": live_chat_id,
+                    "type": "textMessageEvent",
+                    "textMessageDetails": {"messageText": text},
+                }
+            },
+        )
+
+    # -- normal comments ----------------------------------------------------
+    def reply_to_comment(self, parent_comment_id: str, text: str) -> dict[str, Any]:
+        return self._call(
+            "POST",
+            "/comments",
+            params={"part": "snippet"},
+            json={
+                "snippet": {
+                    "parentId": parent_comment_id,
+                    "textOriginal": str(text)[:1000],
+                }
+            },
+        )
+
+    # -- description ----------------------------------------------------------
+    def get_snippet(self, video_id: str) -> dict[str, Any]:
+        data = self._call("GET", "/videos", params={"part": "snippet", "id": video_id})
+        items = data.get("items") or []
+        if not items:
+            raise YouTubeError("video not found or not yours")
+        return items[0]["snippet"]
+
+    def set_description(
+        self, video_id: str, snippet: dict[str, Any], description: str
+    ) -> dict[str, Any]:
+        """Send back the CURRENT snippet with only the description changed."""
+        keep = {
+            k: snippet[k]
+            for k in (
+                "title",
+                "categoryId",
+                "tags",
+                "defaultLanguage",
+                "defaultAudioLanguage",
+            )
+            if k in snippet
+        }
+        keep["description"] = description
+        return self._call(
+            "PUT",
+            "/videos",
+            params={"part": "snippet"},
+            json={"id": video_id, "snippet": keep},
+        )

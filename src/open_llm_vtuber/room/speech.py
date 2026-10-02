@@ -14,6 +14,8 @@ work. ``RoomSession.speech_allowed`` enforces that.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import json
 import time
 from typing import TYPE_CHECKING, Any, Callable, Optional
@@ -304,6 +306,15 @@ class CharacterVoices:
         }
 
 
+# True inside a viewer interaction (set by the director for its own task and
+# every task it starts). The live handler holds ``lock`` for the whole
+# interaction, so a line spoken from inside it (the build acknowledgment, a
+# bug reaction) must not wait for that same lock: it would wait forever.
+INSIDE_INTERACTION: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "vr_inside_interaction", default=False
+)
+
+
 class SpeakingCoordinator:
     """One voice at a time. Every line goes through ``say``."""
 
@@ -313,12 +324,28 @@ class SpeakingCoordinator:
         self.session = session
         self.voices = voices
         self.clock = clock
-        self.lock = asyncio.Lock()
+        self.lock = asyncio.Lock()  # held by a whole viewer interaction
+        self.voice_lock = asyncio.Lock()  # one line at a time, always
         self.lines_spoken = 0
+
+    @contextlib.asynccontextmanager
+    async def _turn(self):
+        if INSIDE_INTERACTION.get():
+            async with self.voice_lock:
+                yield
+        else:
+            async with self.lock:
+                async with self.voice_lock:
+                    yield
 
     @property
     def busy(self) -> bool:
         return self.lock.locked()
+
+    @property
+    def talking(self) -> bool:
+        """A line is being spoken right now (inside or outside an interaction)."""
+        return self.voice_lock.locked()
 
     async def say(
         self, character_id: str, text: str, addressee: Optional[str] = None
@@ -352,7 +379,7 @@ class SpeakingCoordinator:
                 payload = json.dumps(data)
             await send(payload)
 
-        async with self.lock:
+        async with self._turn():
             character = self.session.state.characters.get(character_id)
             if character:
                 character.speaking = True

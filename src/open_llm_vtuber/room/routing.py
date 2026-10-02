@@ -51,6 +51,17 @@ class RoutingDecision:
         return self.speakers[0] if self.speakers else None
 
 
+def _name_pattern(name: str) -> str:
+    """A name regex that tolerates how viewers really type it.
+
+    Chat stretches names ("Mikaaaa", "Luuuna", "mikka"), so every letter may
+    repeat. The word guards around it stay, so "mikado" still never matches.
+    """
+    return "".join(
+        (re.escape(ch) + "+") if ch.isalpha() else re.escape(ch) for ch in name
+    )
+
+
 def _mentions(
     text: str, room: RoomConfig, available: list[str]
 ) -> list[tuple[int, str]]:
@@ -61,7 +72,7 @@ def _mentions(
             continue
         best = None
         for name in profile.names:
-            match = re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", lowered)
+            match = re.search(rf"(?<![a-z0-9]){_name_pattern(name)}(?![a-z0-9])", lowered)
             if match and (best is None or match.start() < best):
                 best = match.start()
         if best is not None:
@@ -233,7 +244,7 @@ def _strip_names(text: str, room: RoomConfig) -> str:
     for profile in room.characters:
         for name in profile.names:
             out = re.sub(
-                rf"(?i)(?<![a-z0-9])@?{re.escape(name)}(?![a-z0-9])\s*[,:!]?\s*",
+                rf"(?i)(?<![a-z0-9])@?{_name_pattern(name)}(?![a-z0-9])\s*[,:!]?\s*",
                 " ",
                 out,
             )

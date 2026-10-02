@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Stream Pulse</title>
+<style>
+  :root { --night: #0f1d3a; --dusk: #2a4a86; --glass: #9cc2ff; --lamp: #ffb55e;
+          --paint: #ff6f9c; --mint: #5fe3c8; --paper: #f4ead8; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: linear-gradient(#0f1d3a, #1b2f5c); color: var(--paper);
+    font-family: Nunito, Quicksand, "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    display: grid; grid-template-columns: 1.6fr 1fr; grid-template-rows: auto 1fr 1fr;
+    gap: 2.2vh 2vw; padding: 5vh 4vw; box-sizing: border-box;
+  }
+  h1 { grid-column: 1 / -1; margin: 0; font-size: clamp(40px, 4.6vw, 80px); font-weight: 800;
+       text-shadow: 0 0 24px rgba(255, 181, 94, 0.45); }
+  .panel { background: rgba(42, 74, 134, 0.28); border: 1px solid rgba(156, 194, 255, 0.18);
+           border-radius: 22px; padding: 2.4vh 1.6vw; position: relative; min-height: 0; }
+  .panel h2 { margin: 0 0 1vh; font-size: clamp(20px, 1.6vw, 30px); font-weight: 700; color: var(--glass); }
+  .big { grid-row: 2 / 4; }
+  .panel canvas { position: absolute; inset: 7vh 1.6vw 2vh 1.6vw; }
+  .number { position: absolute; right: 1.6vw; top: 2vh; font-size: clamp(30px, 2.6vw, 52px);
+            font-weight: 800; color: var(--lamp); }
+</style>
+<script src="/stage-libs/chartjs/4.5.1/chart.umd.min.js"></script>
+</head>
+<body>
+<h1>Stream Pulse</h1>
+<section class="panel big"><h2>Chat messages per minute</h2><div class="number" id="now">0</div><canvas id="line"></canvas></section>
+<section class="panel"><h2>Favourite topics</h2><canvas id="bars"></canvas></section>
+<section class="panel"><h2>Who answered</h2><canvas id="ring"></canvas></section>
+<script>
+// ===== SETTINGS: change these first =====
+const SETTINGS = {
+  updateEvery: 1.6,                       // seconds between new data points
+  topics: ["n8n", "Python", "Games", "AI", "Music"],
+  people: ["Mika", "Luna"],
+};
+const C = { lamp: "#ffb55e", glass: "#9cc2ff", paint: "#ff6f9c", mint: "#5fe3c8", paper: "#f4ead8" };
+
+// Dark theme defaults for every chart.
+Chart.defaults.color = "rgba(244, 234, 216, 0.75)";
+Chart.defaults.borderColor = "rgba(156, 194, 255, 0.12)";
+Chart.defaults.font.family = "Nunito, Quicksand, 'Segoe UI', system-ui, sans-serif";
+Chart.defaults.font.size = 18;
+Chart.defaults.maintainAspectRatio = false;
+Chart.defaults.plugins.legend.display = false;
+Chart.defaults.plugins.tooltip.enabled = false;   // nobody hovers on a stream
+
+const labels = Array.from({ length: 20 }, (_, i) => `${i - 19}m`);
+let level = 40;
+const lineData = labels.map(() => Math.round((level += (Math.random() - 0.45) * 10)));
+
+const line = new Chart(document.getElementById("line"), {
+  type: "line",
+  data: { labels, datasets: [{ data: lineData, borderColor: C.lamp, borderWidth: 4, tension: 0.4,
+    pointRadius: 0, fill: true,
+    backgroundColor: (ctx) => {
+      const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
+      g.addColorStop(0, "rgba(255, 181, 94, 0.45)"); g.addColorStop(1, "rgba(255, 181, 94, 0)");
+      return g;
+    } }] },
+  options: { animation: { duration: 900 }, scales: { y: { beginAtZero: true } } },
+});
+
+const bars = new Chart(document.getElementById("bars"), {
+  type: "bar",
+  data: { labels: SETTINGS.topics, datasets: [{ data: SETTINGS.topics.map(() => 20 + Math.random() * 60),
+    backgroundColor: [C.lamp, C.glass, C.paint, C.mint, C.paper], borderRadius: 10 }] },
+  options: { indexAxis: "y", animation: { duration: 900 }, scales: { x: { beginAtZero: true, max: 100 } } },
+});
+
+const ring = new Chart(document.getElementById("ring"), {
+  type: "doughnut",
+  data: { labels: SETTINGS.people, datasets: [{ data: [55, 45], backgroundColor: [C.lamp, C.glass],
+    borderWidth: 0, hoverOffset: 0 }] },
+  options: { cutout: "68%", animation: { duration: 900 },
+    plugins: { legend: { display: true, position: "right", labels: { boxWidth: 18, font: { size: 20 } } } } },
+});
+
+// Keep the dashboard alive: new data every few seconds.
+setInterval(() => {
+  level = Math.max(5, level + (Math.random() - 0.45) * 12);
+  // Slide the line along without the new point growing up from zero.
+  line.data.datasets[0].data.push(Math.round(level));
+  line.data.datasets[0].data.shift();
+  line.update("none");
+  document.getElementById("now").textContent = Math.round(level);
+
+  bars.data.datasets[0].data = bars.data.datasets[0].data.map((v) =>
+    Math.round(Math.min(100, Math.max(5, v + (Math.random() - 0.5) * 18))));
+  bars.update();
+
+  const mika = Math.round(Math.min(80, Math.max(20, ring.data.datasets[0].data[0] + (Math.random() - 0.5) * 10)));
+  ring.data.datasets[0].data = [mika, 100 - mika];
+  ring.update();
+}, SETTINGS.updateEvery * 1000);
+</script>
+</body>
+</html>
