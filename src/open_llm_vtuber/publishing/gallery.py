@@ -232,7 +232,13 @@ def render_gallery(
   .shot img, .shot .ph {{ display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .5s ease; }}
   .shot .ph {{ background: radial-gradient(circle at 30% 30%, rgba(255, 181, 94, .35), transparent 50%),
                            radial-gradient(circle at 75% 70%, rgba(156, 194, 255, .3), transparent 55%), #0f1a35; }}
-  .card:hover .shot img {{ transform: scale(1.05); }}
+  .shot img {{ animation: drift 14s ease-in-out infinite alternate; }}
+  .card:nth-child(2n) .shot img {{ animation-delay: -5s; }}
+  .card:nth-child(3n) .shot img {{ animation-delay: -9s; }}
+  @keyframes drift {{ from {{ transform: scale(1.02) translate(0, 0); }} to {{ transform: scale(1.12) translate(-2%, -1.5%); }} }}
+  .shot iframe {{ position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; border: 0;
+                 pointer-events: none; opacity: 0; transition: opacity .35s ease; background: #0b1328; }}
+  .shot iframe.on {{ opacity: 1; }}
   .shot::after {{ content: ""; position: absolute; inset: 0; background: linear-gradient(transparent 55%, rgba(7, 11, 24, .75)); }}
   .go {{ position: absolute; z-index: 1; right: 12px; bottom: 12px; padding: 7px 13px; border-radius: 999px;
         font-weight: 600; font-size: 13px; color: #1a1206; background: var(--lamp);
@@ -323,6 +329,46 @@ def render_gallery(
   }});
   var q = new URLSearchParams(location.search).get("q");
   if (q) {{ search.value = q; filter(); }}
+
+  // Hover a card: the real game plays inside it (the AI plays, ?demo).
+  // Phones: the card in the middle of the screen plays.
+  var live = null;
+  function play(card) {{
+    if (live && live.card === card) return;
+    stop();
+    var link = card.querySelector(".play"), shot = card.querySelector(".shot");
+    if (!link || !shot) return;
+    var frame = document.createElement("iframe");
+    frame.src = link.getAttribute("href") + "?demo=1";
+    frame.setAttribute("tabindex", "-1");
+    frame.setAttribute("aria-hidden", "true");
+    frame.setAttribute("loading", "lazy");
+    frame.onload = function () {{ setTimeout(function () {{ frame.classList.add("on"); }}, 350); }};
+    shot.appendChild(frame);
+    live = {{ card: card, frame: frame }};
+  }}
+  function stop() {{
+    if (!live) return;
+    var f = live.frame; live = null;
+    f.classList.remove("on");
+    setTimeout(function () {{ f.remove(); }}, 350);
+  }}
+  var hover = window.matchMedia && matchMedia("(hover: hover)").matches;
+  cards.forEach(function (card) {{
+    if (hover) {{
+      card.addEventListener("mouseenter", function () {{ play(card); }});
+      card.addEventListener("mouseleave", function () {{ if (live && live.card === card) stop(); }});
+    }}
+  }});
+  if (!hover && "IntersectionObserver" in window) {{
+    var seen = new IntersectionObserver(function (entries) {{
+      entries.forEach(function (e) {{
+        if (e.isIntersecting && e.intersectionRatio > 0.8) play(e.target);
+        else if (live && live.card === e.target) stop();
+      }});
+    }}, {{ threshold: [0, 0.8] }});
+    cards.forEach(function (card) {{ seen.observe(card); }});
+  }}
 
   var now = Date.now() / 1000;
   Array.prototype.forEach.call(document.querySelectorAll("time[data-t]"), function (t) {{

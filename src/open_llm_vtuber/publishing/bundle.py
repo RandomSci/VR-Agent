@@ -86,7 +86,11 @@ def _library_folder_files(repo_path: str, resolved: Path) -> dict[str, Path]:
 # The published copy is played by a person: games read this and turn on their
 # keyboard, mouse and touch controls (the Stage never sets it, so there the AI
 # plays). saved_code() strips it again when a game is reopened.
-PLAYER_MODE_TAG = '<script>window.GAME_MODE="player";</script>'
+# ?demo in the link (the gallery's moving previews) keeps the AI playing.
+PLAYER_MODE_TAG = (
+    '<script>window.GAME_MODE=/[?&]demo\\b/.test(location.search)?"stream":"player";</script>'
+)
+OLD_PLAYER_MODE_TAG = '<script>window.GAME_MODE="player";</script>'
 
 # Published pages get a safety net for buttons and links the program left
 # dead: they scroll to the section they name (Contact, Work...) or show a
@@ -165,7 +169,7 @@ window.addEventListener("load", function () { setTimeout(function () {
 
 def strip_published_extras(page: str) -> str:
     """The Stage copy of a published page: no player switch, no safety net."""
-    page = page.replace(PLAYER_MODE_TAG, "", 1)
+    page = page.replace(PLAYER_MODE_TAG, "", 1).replace(OLD_PLAYER_MODE_TAG, "", 1)
     return re.sub(r"<!--vr-rescue-->.*?<!--/vr-rescue-->", "", page, flags=re.S)
 
 
