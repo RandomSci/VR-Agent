@@ -134,6 +134,21 @@ class TeachingDirector:
 
         return self.session
 
+    def hand_over(self, student_id: str, student_name: str) -> TeachingSession:
+        """Live chat: the viewer asking for the next build owns it now.
+
+        The program on screen stays; only who may change it moves.
+        """
+        if not self.session.active:
+            raise RuntimeError("no active lesson")
+        self.session.student_id = str(student_id)
+        self.session.student_name = str(student_name)
+        if self.coding_lesson is not None:
+            self.coding_lesson.student_id = self.session.student_id
+            self.coding_lesson.student_name = self.session.student_name
+        self.sync_coding_state()
+        return self.session
+
     def record_comment(self, student_id: str, student_name: str, text: str) -> bool:
         """Keep lesson comments in authoritative session state, not agent memory."""
         if not self.coding_lesson:

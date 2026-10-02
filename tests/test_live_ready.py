@@ -122,3 +122,53 @@ def test_client_is_built_with_the_right_arguments():
 
     assert asyncio.run(run()) == ["<html></html>"]
     assert seen["model"] == "gpt-5-mini" and seen["reasoning_effort"] == "minimal"
+
+
+def test_live_chat_build_requests_start_and_hand_over_the_session():
+    """On stream nobody says "start a lesson": a build request just works,
+    and the next viewer who asks for a build becomes the owner."""
+    import json as _json
+    import time as _time
+
+    from open_llm_vtuber.room.live_message import LiveMessage
+    from tests.test_code_in_public import HEART_WEB
+    from tests.test_topic_switch import RecordingStage
+
+    stage = RecordingStage()  # no session started on purpose
+    stage.decide(
+        "heart",
+        _json.dumps({"action": "create", "kind": "web_canvas", "subject": "heart"}),
+    )
+    stage.decide(
+        "stars",
+        _json.dumps(
+            {"action": "create", "kind": "web_canvas", "fresh": True, "subject": "stars"}
+        ),
+    )
+
+    def say(text, author):
+        message = LiveMessage(
+            platform="youtube",
+            message_id=f"m-{_time.time_ns()}",
+            username=author,
+            text=text,
+            timestamp=_time.time(),
+            author_id=f"yt:{author}",
+        )
+
+        async def go():
+            plan = stage.session.director.plan(message)
+            await stage.session.director.run(plan)
+
+        asyncio.run(go())
+
+    stage.code(HEART_WEB.replace("COLOUR", "red"))
+    say("make a heart page", "@ana")
+    assert stage.session.teaching.session.active
+    assert stage.session.teaching.owns("yt:@ana")
+    assert "red" in stage.source
+
+    stage.code(HEART_WEB.replace("COLOUR", "gold"))
+    say("now make stars", "@bo")
+    assert stage.session.teaching.owns("yt:@bo")
+    assert "gold" in stage.source

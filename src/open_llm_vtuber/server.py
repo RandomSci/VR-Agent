@@ -92,6 +92,15 @@ class WebSocketServer:
             allow_headers=["*"],
         )
 
+        # Code in Public: the Stage's sandboxed preview may load /stage-libs
+        # and /stage-assets, and the Stage page is never served stale.
+        from .room.capabilities import install_stage_headers
+
+        install_stage_headers(self.app)
+        self.ws_handler.stage_base_url = (
+            f"http://127.0.0.1:{config.system_config.port}"
+        )
+
         # Include routes, passing the context instance
         # The context will be populated during the initialize step
         self.app.include_router(

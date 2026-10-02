@@ -798,6 +798,11 @@ class RoomRuntimes:
         The only publishing entry point on Mika's side. It passes a job id and
         the checked source; the service decides whether that is allowed.
         """
+        # The "your game is live" line must wait for the viewer interaction
+        # that started this publish to finish, never talk over the next one.
+        from .speech import INSIDE_INTERACTION
+
+        INSIDE_INTERACTION.set(False)
         lesson = self.session.teaching.coding_lesson
         if self.publisher is None or lesson is None or not lesson.creation_job_id:
             return {"ok": False, "reason": "nothing to publish"}

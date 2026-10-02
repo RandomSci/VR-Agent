@@ -138,6 +138,11 @@ def run(console_log_level: str):
     atexit.register(WebSocketServer.clean_cache)
 
     # Load configurations from yaml file
+    # .env first, so ${OPENAI_API_KEY} in conf.yaml and the publishing
+    # settings come from it. Values already set in the environment still win.
+    from src.open_llm_vtuber.publishing.settings import load_dotenv
+
+    load_dotenv()
     config: Config = validate_config(read_yaml("conf.yaml"))
     server_config = config.system_config
 

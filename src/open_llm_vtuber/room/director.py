@@ -566,6 +566,62 @@ class ConversationDirector:
                 subject=str(semantic.get("subject") or "")[:120],
             )
 
+        # --------------------------------------------------
+        # A BUILD REQUEST FROM LIVE CHAT
+        #
+        # On stream nobody says "start a lesson" first: "make a flappy bird
+        # game" must just work. A build request starts the coding session if
+        # none is running, and a different viewer asking for a build becomes
+        # its owner. Changing someone else's program makes it their remix
+        # (a new published game), so nobody overwrites another viewer's game.
+        # --------------------------------------------------
+        build_request = plan.turns and (
+            semantic_intent in {"write_code", "write_and_run"}
+            or str(semantic.get("artifact_action") or "") in {"create", "modify"}
+        )
+        if build_request:
+            viewer_id = str(
+                message.author_id or f"{message.platform}:{message.display_name}"
+            )
+            if not session.teaching.session.active:
+                wanted = str(semantic.get("teacher") or "").lower()
+                teacher = (
+                    addressed_teacher
+                    or (wanted if wanted in session.teaching.cast else "")
+                    or plan.turns[0].speaker
+                )
+                if teacher in session.teaching.cast:
+                    session.teaching.start(
+                        student_id=viewer_id,
+                        student_name=message.display_name,
+                        goal=str(semantic.get("subject") or message.clean_text),
+                        teacher=teacher,
+                    )
+                    session.teaching.record_comment(
+                        viewer_id, message.display_name, message.clean_text
+                    )
+                    teaching = session.teaching.session
+                    session.trace(
+                        "teaching_session_started",
+                        student=message.display_name,
+                        teacher=teacher,
+                        goal=message.clean_text[:120],
+                        auto=True,
+                    )
+            elif not session.teaching.owns(viewer_id):
+                session.teaching.hand_over(viewer_id, message.display_name)
+                lesson = session.teaching.coding_lesson
+                if (
+                    lesson is not None
+                    and str(semantic.get("artifact_action") or "") == "modify"
+                    and not semantic.get("reopen")
+                ):
+                    lesson.creation_job_id = ""  # their remix, a new game
+                teaching = session.teaching.session
+                session.trace(
+                    "teaching_handed_over", student=message.display_name
+                )
+
         if teaching.active:
             # A previous verified action must never be narrated
             # again as though it happened for this message.

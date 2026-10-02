@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Callable, TypedDict
 from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
 import json
+import os
 import time
 from enum import Enum
 import numpy as np
@@ -346,9 +347,44 @@ class WebSocketHandler:
                 runtimes.run_coding_action
             )
             self.room_session.director.pending_probe = self.pending_viewer_messages
+            self._wire_code_in_public(runtimes)
         else:
             runtimes.retarget(client_uid, websocket.send_text)
         return self.room_session.director.ready
+
+    def _wire_code_in_public(self, runtimes) -> None:
+        """Browser check, one repair and publishing, exactly like the DEV Stage.
+
+        Everything here is optional: if a piece cannot start, coding still
+        works without it and the stream never stops.
+        """
+        try:
+            from .publishing import PublicationService, PublishSettings
+
+            settings = PublishSettings.from_env()
+            runtimes.publisher = PublicationService(settings)
+            logger.info(
+                "Code in Public publishing: "
+                + (
+                    "off"
+                    if not settings.enabled
+                    else ("dry run" if settings.dry_run else "LIVE to GitHub")
+                )
+            )
+        except Exception as exc:
+            logger.warning(f"Code in Public: publishing unavailable: {exc}")
+        if os.environ.get("VR_BROWSER_CHECK", "1").strip() in ("0", "false", "off"):
+            logger.info("Code in Public: browser check off (VR_BROWSER_CHECK=0)")
+            return
+        base = getattr(self, "stage_base_url", "") or "http://127.0.0.1:12393"
+        try:
+            from .room.browser_qa import BrowserQA
+
+            self._browser_qa = BrowserQA(base)
+            runtimes.browser_check = self._browser_qa.check
+            logger.info("Code in Public: web programs are checked in a real browser")
+        except Exception as exc:
+            logger.warning(f"Code in Public: browser check unavailable: {exc}")
 
     async def _process_room_message(
         self,
