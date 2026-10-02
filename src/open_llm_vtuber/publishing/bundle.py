@@ -163,6 +163,12 @@ window.addEventListener("load", function () { setTimeout(function () {
     if (b.disabled || b.form || handled(b)) return;
     rescue(b);
   });
+  // Things styled as buttons that are not real buttons (a <span class="cta">).
+  Array.prototype.forEach.call(document.querySelectorAll("[class*=btn],[class*=button],[class*=cta]"), function (b) {
+    if (/^(A|BUTTON|INPUT|BODY|HTML)$/.test(b.tagName) || b.querySelector("a,button") || handled(b)) return;
+    b.style.cursor = "pointer";
+    rescue(b);
+  });
 }, 300); });
 </script><!--/vr-rescue-->"""
 
@@ -187,9 +193,12 @@ def _add_policy(html: str) -> str:
         + PLAYER_MODE_TAG
         + RESCUE_HEAD
     )
-    match = re.search(r"<head(\s[^>]*)?>", html, re.I)
-    if match:
-        return html[: match.end()] + meta + html[match.end() :]
+    # After <head>, or after <html> / the doctype when there is no <head>:
+    # never before the doctype (that would put the page in quirks mode).
+    for pattern in (r"<head(\s[^>]*)?>", r"<html(\s[^>]*)?>", r"<!doctype[^>]*>"):
+        match = re.search(pattern, html, re.I)
+        if match:
+            return html[: match.end()] + meta + html[match.end() :]
     return meta + html
 
 

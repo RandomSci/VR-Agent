@@ -24,7 +24,7 @@
   .hero h1 span { display: block; color: var(--lamp); text-shadow: 0 0 40px rgba(255, 181, 94, 0.5); }
   .hero p { margin: 3vh 0 4vh; font-size: clamp(22px, 1.9vw, 34px); line-height: 1.4;
             max-width: 32ch; color: rgba(244, 234, 216, 0.82); }
-  .cta { display: inline-block; padding: 2.2vh 2.6vw; border-radius: 999px; font-size: clamp(22px, 1.7vw, 32px);
+  .cta { text-decoration: none; cursor: pointer; display: inline-block; padding: 2.2vh 2.6vw; border-radius: 999px; font-size: clamp(22px, 1.7vw, 32px);
          font-weight: 800; color: var(--night); background: var(--lamp);
          box-shadow: 0 0 0 0 rgba(255, 181, 94, 0.6); animation: pulse 2.4s ease-out infinite; }
   .menu { display: grid; gap: 2.4vh; position: relative; z-index: 1; margin-top: 8vh; }
@@ -51,9 +51,9 @@
 <section class="hero">
   <h1>Moonlit <span>Ramen</span></h1>
   <p>Slow-simmered broth, open until the city sleeps. Pull up a stool by the window.</p>
-  <span class="cta">See tonight's bowls</span>
+  <a class="cta" href="#menu">See tonight's bowls</a>
 </section>
-<section class="menu">
+<section class="menu" id="menu">
   <div class="item"><span class="dot" style="background: var(--lamp)"></span><div><h3>Lantern tonkotsu</h3><small>18-hour pork broth, chashu, soft egg</small></div><b>₱420</b></div>
   <div class="item"><span class="dot" style="background: var(--paint)"></span><div><h3>Spicy miso</h3><small>Red miso, chili oil, sweet corn</small></div><b>₱390</b></div>
   <div class="item"><span class="dot" style="background: var(--mint)"></span><div><h3>Garden shoyu</h3><small>Mushroom dashi, bok choy, tofu</small></div><b>₱360</b></div>

@@ -236,7 +236,8 @@ def render_gallery(
   .card:nth-child(2n) .shot img {{ animation-delay: -5s; }}
   .card:nth-child(3n) .shot img {{ animation-delay: -9s; }}
   @keyframes drift {{ from {{ transform: scale(1.02) translate(0, 0); }} to {{ transform: scale(1.12) translate(-2%, -1.5%); }} }}
-  .shot iframe {{ position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; border: 0;
+  .shot iframe {{ position: absolute; left: 0; top: 0; z-index: 1; width: 1280px; height: 720px; border: 0;
+                 transform-origin: 0 0; transform: scale(var(--k, .2));
                  pointer-events: none; opacity: 0; transition: opacity .35s ease; background: #0b1328; }}
   .shot iframe.on {{ opacity: 1; }}
   .shot::after {{ content: ""; position: absolute; inset: 0; background: linear-gradient(transparent 55%, rgba(7, 11, 24, .75)); }}
@@ -330,44 +331,53 @@ def render_gallery(
   var q = new URLSearchParams(location.search).get("q");
   if (q) {{ search.value = q; filter(); }}
 
-  // Hover a card: the real game plays inside it (the AI plays, ?demo).
-  // Phones: the card in the middle of the screen plays.
-  var live = null;
+  // Every card on screen is ALIVE: its real game runs inside it (the AI
+  // plays, ?demo). Cards scrolled away stop, so the page stays light.
+  var MAX_LIVE = window.matchMedia && matchMedia("(max-width: 700px)").matches ? 3 : 8;
+  var live = new Map();
   function play(card) {{
-    if (live && live.card === card) return;
-    stop();
+    if (live.has(card) || live.size >= MAX_LIVE) return;
     var link = card.querySelector(".play"), shot = card.querySelector(".shot");
     if (!link || !shot) return;
     var frame = document.createElement("iframe");
     frame.src = link.getAttribute("href") + "?demo=1";
     frame.setAttribute("tabindex", "-1");
     frame.setAttribute("aria-hidden", "true");
-    frame.setAttribute("loading", "lazy");
-    frame.onload = function () {{ setTimeout(function () {{ frame.classList.add("on"); }}, 350); }};
+    // Rendered at desktop size and scaled down, so pages look like pages.
+    frame.style.setProperty("--k", shot.clientWidth / 1280);
+    frame.onload = function () {{ setTimeout(function () {{ frame.classList.add("on"); }}, 400); }};
     shot.appendChild(frame);
-    live = {{ card: card, frame: frame }};
+    live.set(card, frame);
   }}
-  function stop() {{
-    if (!live) return;
-    var f = live.frame; live = null;
+  function stop(card) {{
+    var f = live.get(card);
+    if (!f) return;
+    live.delete(card);
     f.classList.remove("on");
-    setTimeout(function () {{ f.remove(); }}, 350);
+    setTimeout(function () {{ f.remove(); }}, 400);
   }}
-  var hover = window.matchMedia && matchMedia("(hover: hover)").matches;
-  cards.forEach(function (card) {{
-    if (hover) {{
-      card.addEventListener("mouseenter", function () {{ play(card); }});
-      card.addEventListener("mouseleave", function () {{ if (live && live.card === card) stop(); }});
-    }}
+  addEventListener("resize", function () {{
+    live.forEach(function (f, card) {{ f.style.setProperty("--k", card.querySelector(".shot").clientWidth / 1280); }});
   }});
-  if (!hover && "IntersectionObserver" in window) {{
+  var visible = new Set();
+  function refresh() {{
+    cards.forEach(function (card) {{
+      var shown = visible.has(card) && card.style.display !== "none";
+      if (shown) play(card); else stop(card);
+    }});
+  }}
+  if ("IntersectionObserver" in window) {{
     var seen = new IntersectionObserver(function (entries) {{
       entries.forEach(function (e) {{
-        if (e.isIntersecting && e.intersectionRatio > 0.8) play(e.target);
-        else if (live && live.card === e.target) stop();
+        if (e.isIntersecting) visible.add(e.target); else visible.delete(e.target);
       }});
-    }}, {{ threshold: [0, 0.8] }});
+      refresh();
+    }}, {{ threshold: 0.25 }});
     cards.forEach(function (card) {{ seen.observe(card); }});
+    search.addEventListener("input", function () {{ setTimeout(refresh, 50); }});
+    Array.prototype.forEach.call(document.querySelectorAll(".f"), function (f) {{
+      f.addEventListener("click", function () {{ setTimeout(refresh, 50); }});
+    }});
   }}
 
   var now = Date.now() / 1000;
