@@ -253,7 +253,7 @@ def test_dry_run_announcement_and_description_are_only_logged(tmp_path):
     assert (
         chat["ok"]
         and chat["dry_run"]
-        and chat["text"].startswith("@selwyn your game is live")
+        and chat["text"].startswith("@selwyn your game is up")
     )
     section = service.update_generated_games_section(job.job_id)
     assert section["ok"] and "Luna Flappy" in section["section"]

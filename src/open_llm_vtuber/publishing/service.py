@@ -275,8 +275,9 @@ class PublicationService:
         if who and not who.startswith("@"):
             who = "@" + who
         return (
-            f"{who + ' ' if who else ''}your game is live 🎮 {job.public_url}".strip()
-        )
+            f"{who + ' ' if who else ''}your game is up 🎮 {job.public_url} "
+            "(give it about 5 minutes to load, or search your name in the gallery)"
+        ).strip()
 
     # -- the code of each published game, kept locally ------------------
     @property

@@ -24,7 +24,7 @@ def test_youtube_preview_is_the_chat_line_and_the_description(tmp_path):
     job = passed_job(service)
     assert service.publish_project(job.job_id, GAME)["ok"]
     preview = service.youtube_preview(job.job_id)
-    assert preview["chat"].startswith("@selwyn your game is live")
+    assert preview["chat"].startswith("@selwyn your game is up")
     assert "Luna Flappy" in preview["description"]
 
 

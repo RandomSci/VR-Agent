@@ -34,7 +34,12 @@ def render_section(jobs: list[CreationJob], gallery_url: str, latest: int = 5) -
         lines.append(f"  {job.public_url}")
         lines.append("")
     if gallery_url:
-        lines += ["Full gallery:", gallery_url, ""]
+        lines += [
+            "Asked for a game on stream? Open the gallery and search your username.",
+            "New games can take about 5 minutes to show up. Enjoy!",
+            gallery_url,
+            "",
+        ]
     lines.append(END)
     return "\n".join(lines)
 

@@ -827,28 +827,38 @@ class RoomRuntimes:
             outcome["description"] = await asyncio.to_thread(
                 self.publisher.update_generated_games_section, job_id
             )
-            if outcome["chat"].get("ok") and self.session.speech_allowed():
-                record = self.publisher.store.get(job_id)
-                who = (record.viewer_display_name if record else "").lstrip(
-                    "@"
-                ) or "friend"
-                teacher = speaker or self.session.teaching.session.teacher
-                await self.session.speech.say(
-                    teacher,
-                    f"{who}, your game is live! The link is in chat. "
-                    "Want changes later? Just ask us, even another day!",
-                )
-            elif not updated and self.session.speech_allowed():
+            preview = outcome.get("preview") or {}
+            logger.info(
+                "Published to GitHub: "
+                + str(outcome.get("url") or outcome.get("public_url") or "")
+                + "\n--- chat message ---\n"
+                + str(preview.get("chat", ""))
+                + "\n--- description section ---\n"
+                + str(preview.get("description", ""))
+                + f"\n(YouTube chat: {outcome['chat'].get('reason') or 'sent'};"
+                + f" description: {outcome['description'].get('reason') or 'updated'})"
+            )
+            # Always tell the viewer, even when nobody chatted in the last
+            # minute: they are waiting for this.
+            if self.session.speech_target():
                 record = self.publisher.store.get(job_id)
                 who = (record.viewer_display_name if record else "").lstrip(
                     "@"
                 ) or "chat"
                 teacher = speaker or self.session.teaching.session.teacher
-                await self.session.speech.say(
-                    teacher,
-                    f"{who}, it's live on our games page! Search your name there "
-                    "to find it, share it with friends, and ask us anytime to change it.",
+                where = (
+                    "The link is in chat."
+                    if outcome["chat"].get("ok")
+                    else "Search your name on our games page."
                 )
+                line = (
+                    f"{who}, your update is pushed to GitHub! Give it about five "
+                    f"minutes to show up. {where}"
+                    if updated
+                    else f"{who}, your game is pushed to GitHub! Give it about five "
+                    f"minutes, then {where[0].lower() + where[1:]}"
+                )
+                await self.session.speech.say(teacher, line)
         return outcome
 
     async def _browser_check(self, source: str, kind: str):
