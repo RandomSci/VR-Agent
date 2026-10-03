@@ -1025,7 +1025,7 @@ class MinecraftEngine:
                     if time.time() - watched_at > 60:
                         watched_at = time.time()
                         for i, cid in enumerate(here):
-                            view, focus = (35, 15, -12 + 12 * i), (40, 16, -6 + 4 * i)  # inside the cleared lab
+                            view, focus = (25, 16, -8 + 10 * i), (40, 16, -6 + 4 * i)  # back from the wall: the whole network in view
                             asyncio.create_task(self._arrive(cid, view, focus, await self._fly(cid, view, focus)))
                     progress = float(self.projects.state.get("progress", 0.0)) + 1.0 / total
                     self.projects.state["progress"] = progress

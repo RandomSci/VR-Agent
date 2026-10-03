@@ -357,7 +357,9 @@ def split_steps(commands: list[str], project_id: str = "") -> list[dict[str, Any
         fy = sum(p[1] for p in points) / len(points)
         fz = sum(p[2] for p in points) / len(points)
         if project_id == "neural_net":
-            view = (fx - 8, fy + 2, fz)  # in front of the wall, never behind it
+            # in front of the wall (never behind it), far enough back that the
+            # camera through her eyes shows a good part of the network
+            view = (fx - 16, max(fy + 2, 12), fz * 0.6)
         elif (fx * fx + fz * fz) ** 0.5 < 4:
             view = (fx, fy + 7, fz - 18)  # a ring around the base: from outside the gate side
         else:
