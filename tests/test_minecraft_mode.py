@@ -547,8 +547,10 @@ def test_an_interrupted_run_is_still_finished(monkeypatch):
         monkeypatch.setattr(mm, "rcon_command", fake_rcon)
         run_cmd = "fill {x0} {y1} {z0} {x5} {y1} {z0} minecraft:oak_planks"
         assert await eng._lay_by_hand("mika", run_cmd)
-        assert len([c for c in rcon if c.startswith("setblock")]) == 1
-        assert placed == [run_cmd]  # the rest appears at the end
+        # she keeps laying the missed blocks herself, one per swing (3 tries)
+        sets = [c for c in rcon if c.startswith("setblock")]
+        assert len(sets) == len(set(sets)) == 3
+        assert placed == [run_cmd]  # only what she never managed appears at the end
         # summons and clearing just happen, never by hand
         placed.clear()
         assert await eng._lay_by_hand("mika", "fill {x-9} {y1} {z-9} {x9} {y9} {z9} minecraft:air")
@@ -574,7 +576,7 @@ def test_hand_blocks_and_sounds():
 
 def test_lay_blocks_command_is_patched_in():
     assert "name: '!layBlocks'" in mm.FLY_COMMANDS and "[VR] put " in mm.FLY_COMMANDS
-    assert "(v10)" in mm.FLY_COMMANDS
+    assert "(v12)" in mm.FLY_COMMANDS
 
 
 def test_both_girls_never_get_the_same_spot(monkeypatch):

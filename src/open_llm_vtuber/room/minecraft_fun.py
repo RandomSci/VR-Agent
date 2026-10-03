@@ -48,6 +48,8 @@ COURSE_Y = 40
 COURSE_Z = 28
 COURSE_X = (-20, 46)
 HOOPS = ((-20, "lime_concrete"), (-4, "gold_block"), (12, "gold_block"), (28, "gold_block"), (46, "red_concrete"))
+TNT_SAFE = 40  # TNT only this far (blocks) from the base, never near the builds
+TNT_GAP = 30.0  # seconds between two TNT
 FLY_SPEED = 18.0  # blocks a second at normal pace (the !flyTo patch)
 SPEED_STEP = 0.35  # each Speed level adds this much (the !flyTo patch)
 
@@ -83,6 +85,7 @@ class FunShow:
         self.racing = False
         self.course_built = False
         self.levels: dict[str, int] = {}  # Speed level from potions (the race keeps them)
+        self._tnt_at = 0.0
 
     # ------------------------------------------------------------ helpers
     async def rcon(self, command: str, reply: bool = False) -> Any:
@@ -177,15 +180,44 @@ class FunShow:
             return
         reply = await self.rcon(f"data get entity {self.e.names[eyes]} Rotation", reply=True)
         numbers = re.findall(r"-?\d+(?:\.\d+)?", str(reply).split(":")[-1]) if isinstance(reply, str) else []
-        if not numbers:
-            return
-        yaw = math.radians(float(numbers[0]))
+        fx, fz = self.e._facing(eyes, math.radians(float(numbers[0])) if numbers else None)
         ex, ey, ez = self.e._pos[eyes]
-        x, z = ex - math.sin(yaw) * 5.0, ez + math.cos(yaw) * 5.0
+        x, z = ex + fx * 5.0, ez + fz * 5.0
         self.e._target[mover] = (x, ey, z)
         self.e._chose_at[mover] = time.time()
         await self.e._command(mover, f"!flyTo({x:.1f}, {ey:.1f}, {z:.1f}, {ex:.1f}, {ey + 1.6:.1f}, {ez:.1f}, 0)")
         self.remember(f"{self.e.names[mover]} flew in front of {self.e.names[eyes]}")
+
+    # ------------------------------------------------------------ TNT
+    async def tnt(self, cid: str) -> None:
+        """She places TNT by hand in front of the camera, it is lit, it really
+        explodes. Never near the builds (castle, network...): the stream would
+        lose hours of work in one second."""
+        now = time.time()
+        if now - self._tnt_at < TNT_GAP:
+            await self.tell(cid, "The last TNT just went off. Wait a little before the next one.")
+            return
+        base = self.e.projects.state.get("base")
+        eyes = self.e.cam_focus if self.e.cam_focus in self.e.cast else self.e.cast[0]
+        who = cid if cid in self.e._pos else eyes
+        if not base or who not in self.e._pos:
+            return
+        x0, y0, z0 = self.e._pos[who]
+        fx, fz = self.e._facing(who)
+        x, y, z = math.floor(x0 + fx * 8), math.floor(y0), math.floor(z0 + fz * 8)
+        if math.hypot(x - base[0], z - base[2]) < TNT_SAFE:
+            await self.tell(cid, (
+                f"NOT here: TNT this close to your builds would blow them up. Fly at least {TNT_SAFE} blocks away "
+                "from the base first (!flyToPlace sky is not far enough, fly away), then ask again."))
+            return
+        self._tnt_at = now
+        bx, by, bz = base
+        await self.e._lay_by_hand(cid, f"setblock {{x{x - bx}}} {{y{y - by}}} {{z{z - bz}}} minecraft:tnt")
+        await self.rcon(f"setblock {x} {y} {z} minecraft:air")
+        await self.rcon(f"summon minecraft:tnt {x + 0.5} {y} {z + 0.5} {{fuse:60s}}")
+        self.remember(f"{self.e.names[cid]} lit TNT")
+        CLIPS.mark("tnt", f"{self.e.names[cid]} lit TNT", 2.5)
+        await self.tell(cid, "The TNT is lit and blows up in 3 seconds! React out loud.")
 
     # ------------------------------------------------------------ the race
     async def build_course(self) -> bool:
@@ -278,6 +310,11 @@ class FunShow:
 
 
 RACE_ASK = re.compile(r"\b(race|racing)\b", re.I)
+TNT_ASK = re.compile(r"\b(tnt|blow (?:it |something |stuff )?up|explode|explosion|kaboom)\b", re.I)
+
+
+def wants_tnt(text: str) -> bool:
+    return bool(TNT_ASK.search(text or ""))
 
 
 def wants_race(text: str) -> bool:
@@ -285,12 +322,14 @@ def wants_race(text: str) -> bool:
 
 
 def potion_ask(text: str) -> Optional[str]:
-    """'Mika drink a potion of invisibility' -> 'invisibility' (or None)."""
-    match = re.search(r"\bpotion of (\w+(?: \w+)?)", text or "", re.I)
-    if not match:
+    """'Mika drink a potion of invisibility', 'drink invisible potion mika',
+    'splash luna with glowing' -> the effect (or None)."""
+    low = (text or "").lower()
+    if not re.search(r"\b(potion|potions|drink|splash|brew)\b", low):
         return None
-    for words in (match.group(1), match.group(1).split()[0]):
-        name = effect_name(words)
-        if name in EFFECTS:
-            return name
+    words = re.findall(r"[a-z_]+", low)
+    for a, b in zip(words, words[1:] + [""]):
+        for name in (effect_name(f"{a}_{b}"), effect_name(a)):
+            if name in EFFECTS:
+                return name
     return None

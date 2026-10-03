@@ -68,7 +68,8 @@ from loguru import logger
 
 from ..vr_agent.text_safety import strip_emoji
 from ..live.clip_marks import CLIPS
-from .minecraft_fun import potion_ask, wants_race
+from .minecraft_freebuild import wants_build
+from .minecraft_fun import potion_ask, wants_race, wants_tnt
 from .minecraft_projects import MATERIALS, center, hand_blocks, hand_item, lay, place_sound
 
 MC_DIR = Path("minecraft")
@@ -117,9 +118,9 @@ POP_GAP = 5.0  # at most one big word on screen this often
 POP_WORD = re.compile(r"^(?:[A-Za-z']+[ ,]{0,2}){1,3}?[!?]+")  # the opening shout: "Argh!!!", "Wait, what?!"
 CLIP_WEIGHT = {"done": 1.0, "wrong": 2.5}  # how good a moment is for a short clip
 CHAT_BURST = 6  # this many comments in 30 s: chat went wild (a clip)
-BIG_REACTION = re.compile(r"\b(argh+|no{3,}|yes{3,}|wait,? what|oh my god|omg|woo+hoo+|we did it)\b", re.I)  # at most one engine exclamation this often
+BIG_REACTION = re.compile(r"\b(argh+|no{3,}|wait,? what|oh my god|omg|we did it)\b", re.I)  # at most one engine exclamation this often
 ARRIVE_TELEPORT = 12.0  # farther than this from her spot after the flight: teleported there
-HAND_WAIT = 8.0  # seconds (plus some per block) for a run laid by hand before the rest just appears
+HAND_WAIT = 8.0  # seconds (plus 0.9 per block) for a run laid by hand before the rest just appears
 PART_DISTANCE = 4.5  # overlapping anyway: the other girl flies this far aside
 CHOICE_HOLD = 25.0  # after a girl flies somewhere herself, the builder leaves her alone this long
 NUDGE_SECONDS = 45.0  # creative: one girl is asked what she wants to do next this often
@@ -140,7 +141,8 @@ HINTS = (
     'Say "Mika drink a potion of invisibility" (or levitation, glowing...)',
     "Ask Luna to splash Mika with a potion. She will.",
     "Say a name to talk to one of them: Mika or Luna",
-    "Tell them what to build next: they decide together",
+    'Type "build ..." and they build it by hand: a tower, a sky castle, your name',
+    'Type "dig a hole" or "TNT" (far from the castle, please)',
     "Mika loves mystery potions: ask her to brew one",
 )
 SURVIVAL_HINTS = (
@@ -150,25 +152,38 @@ SURVIVAL_HINTS = (
 )
 # How the girls sound: real reactions, not polite narration.
 EMOTIONS = (
-    "Show big feelings out loud with short interjections: Argh!!! when something fails or gets in your way, "
-    "Yesss! or Woohoo! when a piece is done, Nooo! when the network guesses wrong, Wait, what?! when surprised, "
-    "Hmph! when your friend teases you, Ugh! when it is tedious. Mix them up, never the same one twice in a row. "
+    "Talk like a real person: most lines start with normal words, not an exclamation. Save a big interjection "
+    "(Argh!, Nooo!, Wait, what?!, Hmph!) for a real moment, at most one in every four or five lines, and almost "
+    "never Woohoo or Yesss. Never write actions in stars like *places a block*, and never say something happened "
+    "or is done unless you were told it is. "
 )
 # Said by the engine itself at big moments (no AI call): quick, loud, varied.
 EXCLAIM = {
-    "done": ("Yesss! That piece is done!", "Woohoo! Look at that, finished!", "Ha! Nailed it!",
-             "Done! Oh, that looks so good!", "Wheee! Another piece up!", "Yes yes yes! Next one!"),
+    "done": ("Ha! Nailed it!", "Done! Oh, that looks so good!", "Finished. Look at that!",
+             "There! Another piece up.", "Okay, that one turned out great."),
     "wrong": ("Argh!!! It guessed {guess}? That was a {digit}!", "Nooo! A {guess}?! Come on, it is a {digit}!",
               "Ugh, so close! It said {guess}, it was a {digit}.", "Wait, what?! {guess}? Little network, focus!"),
-    "won": ("Yesss! I WON! Did you see that?!", "Woohoo! Eat my dust!", "Ha! Fastest girl in the sky!",
-            "Wheee! First place, baby!"),
+    "won": ("I WON! Did you see that?!", "Eat my dust!", "Ha! Fastest girl in the sky!",
+            "First place, baby!"),
     "back": ("Okay okay, back to building!", "Right, where was I? Back to work!", "Hmph, fine, back to the build!"),
 }
+# What they can really do (the spoken answers know it too, so they never
+# promise something the game cannot do, or pretend it already happened).
+CAN_DO = (
+    "What you can REALLY do in this game (the game does it for you when someone asks): build anything by hand "
+    "block by block (towers, castles, a viewer's name in blocks), dig holes and tunnels by hand, place and blow "
+    "up TNT (only far away from your builds), drink potions or splash your friend (invisibility, levitation, "
+    "speed, glowing, jump boost...), brew a mystery potion, get any item, race your friend through the sky "
+    "hoops, fly to the castle, the network, the farm, the garden, the base or high in the sky, fly in front of "
+    "the camera, test your neural network on a digit. You cannot fight, sleep, trade or play survival things "
+    "(it is creative mode). If asked for something you cannot do, say so with humor. "
+)
 # Who they are when they talk to chat: characters, not assistants.
 PERSONALITY = (
     "Be a character, not an assistant: have opinions, tease the viewer and your friend, be a little sassy or dramatic, "
     "start a running joke when it fits. Never generic praise (no 'great idea', no 'our little genius' again), never "
-    "the same phrase twice in a row. Open with a real reaction when it fits (Argh!, Yesss!, Ooh!, Hmph!, Wait, what?!). "
+    "the same phrase twice in a row. No Woohoo, no Yesss, no Ooh openers; a big reaction only at a real moment. "
+    "Never pretend to do things (no *actions in stars*): say you will do it. "
     "Keep it friendly for YouTube: playful roasting yes, mean no. "
 )
 # What the girls know about themselves and the show (true facts).
@@ -184,7 +199,9 @@ SYSTEM_FACTS = (
     "castle, network, farm, garden, base, sky or friend, !changeMaterial(block) changes what the rest of this part "
     "is made of, !testNetwork(digit) tests your network. It is creative mode, so you have EVERY block and item: "
     "!getItem(item, count) gives you anything, !drinkPotion(effect) and !splashPotion(effect) (on your friend) for "
-    "speed, levitation, glowing, invisibility, jump_boost and more, !brewPotion for a mystery experiment, !race for "
+    "speed, levitation, glowing, invisibility, jump_boost and more, !brewPotion for a mystery experiment, "
+    "!buildThis(what) to build OR DIG anything chat asks for (a tower, a hole, a tunnel, a name), by hand, right "
+    "in front of the camera, !blowUp to place TNT and blow it up (only far from your builds), !race for "
     "a flying race through the sky hoops (a speed potion really makes you faster), !standInFront to fly in front "
     "of your friend's eyes so the stream sees you. Use them whenever you want, decide together, say yes to fun "
     "viewer ideas."
@@ -195,6 +212,8 @@ CAMERA_HOLD = 15.0  # "eyes": the camera stays on one girl at least this long
 CAMERA_HZ = 20  # the camera stand moves this often; the game smooths moving entities
 CAMERA_EASE = 0.05  # share of the way to the new angle per step (about a second and a half)
 CAM_TAG = "vr_cam"
+LOOK_AT = re.compile(r"!flyTo\([^,]+,[^,]+,[^,]+,\s*(-?[\d.]+),\s*-?[\d.]+,\s*(-?[\d.]+)")
+SPLASH_ASK = re.compile(r"\b(splash|throw)\b", re.I)
 # "behind" (the default camera): like a chase cam in third person
 CHASE_BACK = 6.5  # blocks behind her
 CHASE_UP = 4.0  # blocks above her feet
@@ -505,6 +524,11 @@ class MinecraftEngine:
         self._burst_marked = 0.0
         self._reaction_marked = 0.0
         self._net_seen: Any = None
+        self._looking: dict[str, tuple[float, float, float]] = {}  # x, z she was told to look at, when
+        self._trail: dict[str, tuple[float, float, float]] = {}  # an earlier position (movement direction)
+        self._free_lock = asyncio.Lock()
+        self._free_busy = False
+        self._free_waiting = 0
         self._jobs: dict[int, dict[str, Any]] = {}  # runs being laid by hand
         self._job_seq = 0
         self._target: dict[str, tuple[float, float, float]] = {}  # where each girl is flying to (absolute)
@@ -564,9 +588,17 @@ class MinecraftEngine:
             asyncio.create_task(self.fun.race(targets[0]))
             heard += " (The sky race starts right now: no command needed.)"
         potion = potion_ask(text) if self.creative else None
-        if potion:
+        if potion and SPLASH_ASK.search(text):
+            asyncio.create_task(self.fun.splash(targets[0], potion))
+            heard += f" (You are throwing a splash potion of {potion.replace('_', ' ')} at your friend right now: no command needed.)"
+        elif potion:
             asyncio.create_task(self.fun.drink(targets[0], potion))
             heard += f" (You are drinking a potion of {potion.replace('_', ' ')} right now: no command needed.)"
+        elif self.creative and wants_tnt(text):
+            asyncio.create_task(self.fun.tnt(targets[0]))
+            heard += " (You are placing TNT right now, by hand: no command needed. It only works far from your builds.)"
+        elif self.creative and wants_build(text):
+            heard += self.request_build(text, author)
         # The asked girl answers out loud right away (one short AI call here).
         # Mindcraft alone took minutes: a bot drops its reply whenever another
         # message reaches it while it is still thinking.
@@ -995,6 +1027,10 @@ class MinecraftEngine:
                 # operators are never kicked for spamming (fast building sends a lot)
                 asyncio.create_task(rcon_command(f"op {self.names[cid]}"))
             self._seen_at[cid] = time.time()
+            if cid in self._pos:
+                old = self._trail.get(cid)
+                if old is None or ((old[0] - self._pos[cid][0]) ** 2 + (old[2] - self._pos[cid][2]) ** 2) ** 0.5 > 3:
+                    self._trail[cid] = self._pos[cid]
             game = state.get("gameplay") or {}
             action = state.get("action") or {}
             counts = ((state.get("inventory") or {}).get("counts") or {})
@@ -1047,6 +1083,9 @@ class MinecraftEngine:
     # ------------------------------------------------------------ director
     async def _command(self, cid: str, command: str) -> bool:
         """A Mindcraft command that runs right away, without an AI call."""
+        look = LOOK_AT.match(command)
+        if look:  # where she will be looking: the camera stays behind that
+            self._looking[cid] = (float(look.group(1)), float(look.group(2)), time.time())
         return await self.link.emit("send-message", self.names[cid], {"from": DIRECTOR, "message": command})
 
     def _friend(self, cid: str) -> str:
@@ -1274,11 +1313,32 @@ class MinecraftEngine:
             self._cam_checked = now
             logger.info(f"Minecraft: camera man ready ({str(reply)[:60]})")
 
+    def _facing(self, cid: str, rotation: Optional[float] = None) -> tuple[float, float]:
+        """Which way she faces (a unit x, z): where we last told her to look,
+        else where she is moving, else the rotation the server reports."""
+        here = self._pos.get(cid)
+        look = self._looking.get(cid)
+        if here and look and time.time() - look[2] < 90:
+            dx, dz = look[0] - here[0], look[1] - here[2]
+            n = (dx * dx + dz * dz) ** 0.5
+            if n > 0.5:
+                return dx / n, dz / n
+        trail = self._trail.get(cid)
+        if here and trail:
+            dx, dz = here[0] - trail[0], here[2] - trail[2]
+            n = (dx * dx + dz * dz) ** 0.5
+            if n > 1.5:
+                return dx / n, dz / n
+        if rotation is not None:
+            return -math.sin(rotation), math.cos(rotation)
+        return 0.0, 1.0
+
     async def _chase_target(self) -> None:
         """The 'behind' shot: a few blocks behind and above her, looking a
         little past her, so you see her back and where she is going (never
-        her face). Her direction comes from the server, eased so the camera
-        does not swing with every small head turn."""
+        her face). Her direction is where we told her to look (or where she
+        is moving), eased so the camera does not swing with every head turn.
+        The rotation the server reports had her facing the camera on stream."""
         cid = self.cam_focus if self.cam_focus in self.cast else self.cast[0]
         name = self.names[cid]
         pos = await rcon_command(f"data get entity {name} Pos", reply=True)
@@ -1291,13 +1351,14 @@ class MinecraftEngine:
             x, y, z = self._pos[cid]
         else:
             return
-        if turn:
-            yaw = math.radians(turn[0])
-            if self._chase_yaw is None:
-                self._chase_yaw = yaw
-            else:
-                d = math.atan2(math.sin(yaw - self._chase_yaw), math.cos(yaw - self._chase_yaw))
-                self._chase_yaw += d * CHASE_TURN
+        self._pos[cid] = (x, y, z)
+        fx, fz = self._facing(cid, math.radians(turn[0]) if turn else None)
+        yaw = math.atan2(-fx, fz)
+        if self._chase_yaw is None:
+            self._chase_yaw = yaw
+        else:
+            d = math.atan2(math.sin(yaw - self._chase_yaw), math.cos(yaw - self._chase_yaw))
+            self._chase_yaw += d * CHASE_TURN
         yaw = self._chase_yaw or 0.0
         fx, fz = -math.sin(yaw), math.cos(yaw)
         camera = (x - fx * CHASE_BACK, y + CHASE_UP, z - fz * CHASE_BACK)
@@ -1353,6 +1414,9 @@ class MinecraftEngine:
             try:
                 here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 10]
                 base = self.projects.state.get("base")
+                if self._free_busy:  # a build chat asked for comes first
+                    await asyncio.sleep(1.0)
+                    continue
                 if not here or not base or not self.link.connected.is_set() or self.projects.current() is None:
                     await asyncio.sleep(1.0)
                     continue
@@ -1489,21 +1553,26 @@ class MinecraftEngine:
             try:
                 if await self._command(cid, f'!layBlocks({job}, "{hand_item(block)}", "{spot_text}")'):
                     try:
-                        await asyncio.wait_for(self._jobs[job]["event"].wait(), timeout=HAND_WAIT + len(spots) * 0.6)
+                        await asyncio.wait_for(self._jobs[job]["event"].wait(), timeout=HAND_WAIT + len(spots) * 0.9)
                     except asyncio.TimeoutError:
                         logger.debug(f"Minecraft: {self.names[cid]} did not finish laying by hand")
                 done = self._jobs[job]["done"]
             finally:
                 self._jobs.pop(job, None)
+            missed = len(spots) - len(done)
             spots = [p for i, p in enumerate(spots) if i not in done]
             if not spots:
                 return True
-            # A viewer sent her somewhere mid-run: she comes back and lays the rest herself.
+            # Interrupted (a viewer sent her somewhere, a new action): she
+            # comes back and lays the rest herself, one block per swing.
             if hover is not None and look is not None and self._chose_at.get(cid, 0) >= started:
                 await self._back_to_work(cid, hover, look)
                 continue
+            if done:  # she was laying them: try the rest by hand again
+                continue
+            logger.debug(f"Minecraft: {self.names[cid]} could not lay {missed} blocks by hand")
             break
-        return await self.projects.place_one(run)  # whatever is left just appears
+        return await self.projects.place_one(run)  # last resort: she could not lay them at all
 
     async def _hand_event(self, words: list[str]) -> None:
         """'put <job> <i>': her hand hit block i, set it now. 'laid <job>': done."""
@@ -1620,6 +1689,7 @@ class MinecraftEngine:
         logger.info(f"Minecraft: {name} chose {verb} {arg}".rstrip())
         self._remember({
             "buildNext": f"{name} started building the next piece",
+            "buildThis": f"{name} started building: {arg[:60]}",
             "flyToPlace": f"{name} flew to the {arg}",
             "changeMaterial": f"{name} asked for {arg} as the material",
             "testNetwork": f"{name} asked the network to read a {arg}",
@@ -1628,9 +1698,15 @@ class MinecraftEngine:
             "splashPotion": f"{name} threw a splash potion of {arg}",
             "brewPotion": f"{name} started a mystery brew",
             "race": f"{name} called a sky race",
+            "blowUp": f"{name} wanted to blow something up with TNT",
             "standInFront": f"{name} asked to stand in front of the camera",
         }.get(verb, f"{name} did {verb} {arg}"))
-        if verb == "buildNext":
+        if verb == "buildThis" and arg:
+            self.request_build(arg, name)
+        elif verb == "buildNext" and self.creative and self.projects.current() is None:
+            # every project is finished: she builds something of her own
+            self.request_build("something fun and surprising of your own choice for the viewers", name)
+        elif verb == "buildNext":
             self._build_now = cid
             self._build_event.set()
             if self.projects.timed():
@@ -1685,6 +1761,8 @@ class MinecraftEngine:
             asyncio.create_task(self.fun.brew(cid))
         elif verb == "race":
             asyncio.create_task(self.fun.race(cid))
+        elif verb == "blowUp":
+            asyncio.create_task(self.fun.tnt(cid))
         elif verb == "standInFront":
             await self.fun.stand_in_front(cid)
         elif verb == "testNetwork" and arg.isdigit():
@@ -1986,6 +2064,83 @@ class MinecraftEngine:
         now = time.time()
         return " | ".join(t for at, t in list(self.memory)[-MEMORY_LINES:] if now - at < MEMORY_SECONDS)
 
+    def request_build(self, request: str, who: str) -> str:
+        """A free build, one at a time. Returns what to tell the girls."""
+        if self._free_waiting >= 2:
+            return " (Two builds are already waiting: tell them it has to wait a bit.)"
+        self._free_waiting += 1
+        _soon(self._free_build(request, who))
+        if self._free_busy:
+            return " (You build it right after the current build, by hand: no command needed.)"
+        return " (You two are building it right now, by hand, block by block: no command needed. Never say it is done before it is.)"
+
+    async def _free_build(self, request: str, who: str) -> None:
+        from . import minecraft_freebuild as fb
+
+        try:
+            async with self._free_lock:
+                self._free_waiting -= 1
+                self._free_busy = True
+                await self._free_build_now(fb, request, who)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(f"Minecraft: free build failed: {exc}")
+        finally:
+            self._free_busy = False
+
+    async def _free_build_now(self, fb: Any, request: str, who: str) -> None:
+        base = self.projects.state.get("base")
+        eyes = self.cam_focus if self.cam_focus in self.cast else self.cast[0]
+        here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 15 and c in self._pos]
+        if not base or not here or not await self.projects.ensure_loaded():
+            return
+        anchor = eyes if eyes in here else here[0]
+        key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+        if key and self._llm is None:
+            from openai import AsyncOpenAI
+
+            self._llm = AsyncOpenAI(api_key=key, timeout=15.0, max_retries=1)
+        plan = await fb.design(self._llm, self.model, request, who)
+        if plan is None:
+            for c in here:
+                await self.link.emit("send-message", self.names[c], {"from": "system", "message": (
+                    f"The build {who} asked for could not be planned right now. Say so honestly and ask for something simpler.")})
+            return
+        ax, ay, az = self._pos[anchor]
+        forward = fb.cardinal(*self._facing(anchor))
+        ground = int(base[1]) if abs(ay - base[1]) < 12 else int(math.floor(ay))
+        origin = (int(math.floor(ax)) + forward[0] * 6, ground, int(math.floor(az)) + forward[1] * 6)
+        steps = fb.pieces(plan, origin, tuple(base), forward)
+        title = plan["title"]
+        total = sum(len(lay(c)) for st in steps for c in st["commands"]) or 1
+        logger.info(f"Minecraft: building '{title}' for {who} by hand ({len(steps)} pieces)")
+        self._remember(f"{' and '.join(self.names[c] for c in here)} started building {title} for {who}")
+        await self._push({"kind": "project", "title": f"🔨 {title}", "step": f"for {who}", "progress": 0.0, "steps": []})
+        for c in here:
+            await self.link.emit("send-message", self.names[c], {"from": "system", "message": (
+                f"You and your friend are building {title} for {who} right now, by hand, block by block. "
+                "Talk about it while you build; it is NOT finished until you are told.")})
+        done = 0
+        for step in steps:
+            builders = [c for c in here if time.time() - self._chose_at.get(c, 0) > CHOICE_HOLD] or here[:1]
+            self.build_focus = (base[0] + step["focus"][0], base[1] + step["focus"][1], base[2] + step["focus"][2])
+            runs = [r for c in step["commands"] for r in lay(c)]
+            half = (len(runs) + 1) // 2
+            shares = [runs[:half], runs[half:]] if len(builders) > 1 and len(runs) > 1 else [runs]
+            await asyncio.gather(*(self._lay_runs(c, share, step) for c, share in zip(builders, shares)))
+            done += len(runs)
+            await self._push({"kind": "project", "title": f"🔨 {title}", "step": f"for {who}",
+                              "progress": round(done / total, 3), "steps": []})
+        await self._push({"kind": "project_done", "title": title, "step": title})
+        self._remember(f"{title} for {who} is finished")
+        CLIPS.mark("built", f"{title} for {who} finished", 3.0)
+        self._exclaim(random.choice(here), "done")
+        for c in here:
+            await self.link.emit("send-message", self.names[c], {"from": "system", "message": (
+                f"{title} for {who} is finished! Show it off in one line.")})
+        await self._push({"kind": "project", **self.projects.view()})
+
     def _exclaim(self, cid: str, kind: str, info: Optional[dict[str, Any]] = None) -> None:
         """A loud, quick reaction at a big moment, said by the engine (no AI call)."""
         now = time.time()
@@ -2103,6 +2258,7 @@ class MinecraftEngine:
             f"{self._memory_text() or 'the stream just started'}. {self.net_show.describe()} "
             f"{regulars} "
             f"{SYSTEM_FACTS if self.creative else ''} "
+            f"{CAN_DO if self.creative else ''}"
             f"{ask} "
             + PERSONALITY +
             "If they ask you to do something, say you will do it, or cheekily why not. Only say things that are true "
@@ -2369,7 +2525,7 @@ CAMERA_GLIDE = (
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v10)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v12)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -2644,7 +2800,7 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v10)
                 }
                 bot.swingArm('right');
                 proxy.sendOutputToServer(agent.name, '[VR] put ' + job + ' ' + i);
-                await sleep(170);
+                await sleep(260); // one block, a breath, the next: about 3 a second, easy to follow
             }
             proxy.sendOutputToServer(agent.name, '[VR] laid ' + job);
         })
@@ -2736,6 +2892,23 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v10)
         perform: async function (agent) {
             (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] standInFront');
             return 'Flying in front for the camera.';
+        }
+    },
+    {
+        name: '!buildThis',
+        description: 'Build anything right now, by hand, block by block, in front of the camera: a tower, a sky castle, a name in gold, one stone block.',
+        params: {'what': {type: 'string', description: 'what to build, in a few words'}},
+        perform: async function (agent, what) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] buildThis ' + what);
+            return 'You start building ' + what + ' by hand. It is NOT finished until you are told.';
+        }
+    },
+    {
+        name: '!blowUp',
+        description: 'Place TNT by hand in front of you and blow it up. Only works far away from your builds.',
+        perform: async function (agent) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] blowUp');
+            return 'You place the TNT. Wait for the boom.';
         }
     },
     { // VR Agent: back on the ground

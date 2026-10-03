@@ -473,13 +473,13 @@ def hand_blocks(command: str) -> Optional[tuple[list[tuple[int, int, int]], str]
             return None
     except ValueError:
         return None
-    if block.endswith(":air") or block == "air" or "{" in block:
+    if "{" in block:
         return None
     (x1, y1, z1), (x2, y2, z2) = corners
     xs, ys, zs = sorted((x1, x2)), sorted((y1, y2)), sorted((z1, z2))
     volume = (xs[1] - xs[0] + 1) * (ys[1] - ys[0] + 1) * (zs[1] - zs[0] + 1)
     if volume > HAND_LIMIT:
-        return None
+        return None  # big clearing and huge fills just happen
     spots = []
     for y in range(ys[0], ys[1] + 1):
         for x in range(xs[0], xs[1] + 1):
@@ -496,8 +496,11 @@ HAND_ITEMS = {"wall_torch": "torch", "redstone_wall_torch": "redstone_torch", "s
 
 
 def hand_item(block: str) -> str:
-    """What she holds while laying `block` (no namespace, no block states)."""
+    """What she holds while laying `block` (no namespace, no block states);
+    digging (air) is done with a pickaxe."""
     name = block.split("[", 1)[0].replace("minecraft:", "")
+    if name in ("air", "cave_air"):
+        return "diamond_pickaxe"
     if name.endswith("_wall_banner"):
         name = name.replace("_wall_banner", "_banner")
     if name.startswith("potted_"):
@@ -506,8 +509,10 @@ def hand_item(block: str) -> str:
 
 
 def place_sound(block: str) -> str:
-    """The sound a player hears when this block goes down."""
+    """The sound a player hears when this block goes down (or is dug out)."""
     name = block.split("[", 1)[0].replace("minecraft:", "")
+    if name in ("air", "cave_air"):
+        return "block.gravel.break"
     for keys, sound in (
         (("glass", "ice"), "block.glass.place"),
         (("wool", "carpet"), "block.wool.place"),

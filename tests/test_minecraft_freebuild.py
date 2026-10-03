@@ -1,0 +1,225 @@
+import asyncio
+import json
+from types import SimpleNamespace as NS
+
+import pytest
+
+from src.open_llm_vtuber.room import minecraft_freebuild as fb
+from src.open_llm_vtuber.room import minecraft_fun as fun
+from src.open_llm_vtuber.room import minecraft_mode as mm
+
+from .test_minecraft_mode import _live_engine
+
+
+@pytest.fixture(autouse=True)
+def _own_viewer_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(mm, "VIEWERS_FILE", tmp_path / "viewers.json")
+
+
+SKY_CASTLE = {
+    "title": "Selwyn's sky castle",
+    "parts": [
+        {"from": [-4, 10, 2], "to": [4, 10, 10], "block": "quartz_block", "shape": "solid"},
+        {"from": [-4, 11, 2], "to": [4, 14, 10], "block": "minecraft:stone_bricks", "shape": "walls"},
+        {"from": [0, 0, 0], "to": [0, 0, 0], "block": "tnt", "shape": "solid"},
+        {"from": [-99, 0, 0], "to": [99, 99, 99], "block": "glass", "shape": "walls"},
+    ],
+    "text": {"words": "Selwyn!", "block": "gold_block", "y": 11, "z": 2},
+}
+
+
+def test_a_design_is_checked_and_kept_small():
+    design = fb.parse_design("Sure! " + json.dumps(SKY_CASTLE))
+    assert design["parts"][1]["block"] == "stone_bricks"
+    assert design["parts"][2]["block"] == fb.FALLBACK_BLOCK  # never tnt
+    assert design["parts"][3]["from"] == [-fb.SIZE_X, 0, 0] and design["parts"][3]["to"][1] == fb.SIZE_Y
+    assert design["text"]["words"] == "SELWYN"
+    assert fb.parse_design("no json here") is None
+    blocks = fb.blocks_of(design)
+    assert len(blocks) <= fb.MAX_BLOCKS
+    walls = fb.blocks_of({"title": "t", "parts": [design["parts"][1]], "text": None})
+    assert ((0, 12, 6), "stone_bricks") not in walls and ((-4, 12, 6), "stone_bricks") in walls  # hollow
+
+
+def test_letters_read_left_to_right_for_the_builders():
+    design = {"title": "t", "parts": [], "text": {"words": "LI", "block": "gold_block", "y": 0, "z": 0}}
+    spots = {p for p, _b in fb.blocks_of(design)}
+    # L: its long upright is on the left (smaller x), I comes after it to the right
+    assert all(((-3, y, -1) in spots) for y in range(0, 5))
+    assert max(x for x, _y, _z in spots) == 3
+    # facing south (+z) her right hand is west (-x): letters stay readable from where she stands
+    assert fb.to_world((1, 0, 0), (0, 1)) == (-1, 0, 0) and fb.to_world((0, 0, 1), (0, 1)) == (0, 0, 1)
+    assert fb.to_world((1, 0, 0), (1, 0)) == (0, 0, 1)
+
+
+def test_viewers_can_ask_in_their_own_words():
+    assert fun.potion_ask("drink invisible potion mika") == "invisibility"
+    assert fun.potion_ask("Luna splash Mika with glowing") == "glowing"
+    assert fun.potion_ask("Mika drink a potion of invisibility!") == "invisibility"
+    assert fun.potion_ask("drink some water") is None
+    assert fb.wants_build("build sky castle now Mika and luna")
+    assert fb.wants_build("Mika place a block of stone on the sand.")
+    assert not fb.wants_build("how are you guys?")
+
+
+class _DesignLLM:
+    def __init__(self, design):
+        self.design = design
+        self.chat = NS(completions=NS(create=self.create))
+
+    async def create(self, **kwargs):
+        return NS(choices=[NS(message=NS(content=json.dumps(self.design)))])
+
+
+def test_a_viewer_build_is_laid_by_hand_in_front_of_the_camera(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+        eng._llm = _DesignLLM(SKY_CASTLE)
+        eng.projects.state.update({"base": [0, 64, 0]})
+        now = mm.time.time()
+        eng._seen_at = {"mika": now, "luna": now}
+        eng._pos = {"mika": (0.5, 64.0, 0.5), "luna": (3.5, 64.0, 0.5)}
+        eng._looking["mika"] = (0.5, 20.5, now)  # she looks south (+z)
+        rcon, placed, lays = [], [], []
+
+        async def fake_rcon(cmd, reply=False):
+            rcon.append(cmd)
+            return "ok"
+
+        async def command(cid, text):
+            if text.startswith("!layBlocks("):
+                job = int(text[len("!layBlocks("):].split(",")[0])
+                lays.append((cid, text))
+                for i in range(len(text.rsplit('"', 2)[-2].split(";"))):
+                    await eng._hand_event(["put", str(job), str(i)])
+                await eng._hand_event(["laid", str(job)])
+            return True
+
+        async def place_one(cmd):
+            placed.append(cmd)
+            return True
+
+        async def loaded():
+            return True
+
+        async def arrive(*a):
+            return None
+
+        async def no_wait(_s):
+            return None
+
+        real_sleep = asyncio.sleep
+        monkeypatch.setattr(mm, "rcon_command", fake_rcon)
+        monkeypatch.setattr(mm.asyncio, "sleep", no_wait)
+        eng._command, eng._arrive = command, arrive
+        eng.projects.place_one, eng.projects.ensure_loaded = place_one, loaded
+        note = eng.request_build("build a sky castle with my name Selwyn on it", "MathUnlockedYT")
+        assert "by hand" in note
+        for _ in range(500):
+            await real_sleep(0.005)
+            if not eng._free_busy and not eng._free_waiting:
+                break
+        expected = len(fb.blocks_of(fb.parse_design(json.dumps(SKY_CASTLE))))
+        sets = [c for c in rcon if c.startswith("setblock ")]
+        assert not placed  # nothing just appeared
+        assert len(sets) == len(set(sets)) == expected  # every block once, each on a swing
+        assert {c for c, _t in lays} == {"mika", "luna"}  # both build
+        # in front of her (south, +z), not behind
+        zs = [int(c.split()[3]) for c in sets]
+        assert min(zs) >= 6
+        assert "MathUnlockedYT" in eng._memory_text() and "finished" in eng._memory_text()
+        assert any(op.get("kind") == "project_done" for op in eng.pushed)
+
+    asyncio.run(run())
+
+
+def test_the_camera_stays_behind_where_she_looks(monkeypatch):
+    async def run():
+        monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
+        monkeypatch.delenv("VR_MINECRAFT_CAMERA", raising=False)
+        eng = _live_engine(monkeypatch)
+
+        async def rcon(cmd, reply=False):
+            if cmd == "data get entity Mika Pos":
+                return "Mika has the following entity data: [0.0d, 70.0d, 0.0d]"
+            if cmd == "data get entity Mika Rotation":
+                return "Mika has the following entity data: [0.0f, 0.0f]"  # the server says south...
+            return "ok"
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        sent = []
+
+        async def emit(event, *args):
+            sent.append(args)
+            return True
+
+        eng.link.emit = emit
+        await eng._command("mika", "!flyTo(0.0, 70.0, 0.0, -20.0, 70.0, 0.0, -60)")  # ...we told her: look west
+        eng.cam_focus = "mika"
+        await eng._chase_target()
+        (cx, _cy, cz), (lx, _ly, lz) = eng._shot
+        assert cx > 0 and abs(cz) < 0.01  # behind her is east
+        assert lx < 0  # looking west, past her
+
+    asyncio.run(run())
+
+
+def test_digging_is_done_by_hand_with_a_pickaxe_from_the_top_down():
+    design = fb.parse_design(json.dumps({"title": "A hole", "parts": [
+        {"from": [-1, -3, 3], "to": [1, -1, 5], "block": "air", "shape": "solid"}]}))
+    spots = fb.blocks_of(design)
+    assert len(spots) == 27 and all(b == "air" for _p, b in spots)
+    assert spots[0][0][1] == -1 and spots[-1][0][1] == -3  # top layer first
+    steps = fb.pieces(design, (0, 64, 0), (0, 64, 0), (0, 1))
+    commands = [c for st in steps for c in st["commands"]]
+    from src.open_llm_vtuber.room.minecraft_projects import place
+
+    absolute = [place(c, (0, 64, 0), {}) for c in commands]
+    assert all(mm.hand_blocks(a) for a in absolute)  # every dig is by hand
+    assert mm.hand_item("minecraft:air") == "diamond_pickaxe"
+    assert mm.hand_blocks("fill 0 0 0 40 10 40 minecraft:air") is None  # a big site clearing just happens
+    assert fb.wants_build("dig a hole here mika")
+
+
+def test_tnt_never_near_the_builds(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng.projects.state.update({"base": [0, 64, 0]})
+        rcon, hand = [], []
+
+        async def fake_rcon(cmd, reply=False):
+            rcon.append(cmd)
+            return "ok"
+
+        async def lay(cid, run, hover=None, look=None):
+            hand.append((cid, run))
+            return True
+
+        monkeypatch.setattr(mm, "rcon_command", fake_rcon)
+        eng._lay_by_hand = lay
+        eng._pos = {"mika": (10.0, 64.0, 10.0), "luna": (12.0, 64.0, 10.0)}
+        eng._looking["mika"] = (10.0, 30.0, mm.time.time())
+        await eng._heard("Mika", "[VR] blowUp")
+        await asyncio.sleep(0.02)  # it runs in the background
+        assert not hand and not any("summon minecraft:tnt" in c for c in rcon)
+        assert "NOT here" in eng.link.sent[-1][1]["message"]
+        eng._pos["mika"] = (100.0, 70.0, 100.0)  # far away from the base
+        eng._looking["mika"] = (100.0, 130.0, mm.time.time())
+        await eng._heard("Mika", "[VR] blowUp")
+        await asyncio.sleep(0.02)  # it runs in the background
+        assert hand and hand[0][1].endswith("minecraft:tnt")  # placed by her hand
+        assert any(c.startswith("summon minecraft:tnt 100.5 70 108.5") for c in rcon)  # 8 ahead of her, lit
+        await eng._heard("Mika", "[VR] blowUp")  # not again right away
+        await asyncio.sleep(0.02)
+        assert sum(1 for c in rcon if c.startswith("summon minecraft:tnt")) == 1
+        assert fun.wants_tnt("Mika use TNT!") and fun.wants_tnt("blow it up luna")
+
+    asyncio.run(run())
+
+
+def test_answers_know_what_they_can_really_do(monkeypatch):
+    eng = _live_engine(monkeypatch)
+    system, _user = eng._reply_prompt("mika", "Viewer", "can you dig?", [])
+    assert "dig holes" in system and "TNT" in system and "cannot fight" in system
+    assert "Never pretend" in system

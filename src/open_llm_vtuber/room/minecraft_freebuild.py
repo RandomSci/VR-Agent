@@ -1,0 +1,258 @@
+"""Free building: whatever chat (or a girl) asks for, built BY HAND.
+
+"build a sky castle with my name Selwyn on it", "place a block of stone on
+the sand": one small AI call designs it as a few boxes (and letters), and the
+design becomes short runs of blocks that both girls lay by hand, one block
+per arm swing, through the same code as the big projects (_lay_runs).
+
+A design is relative to the spot in front of the camera girl: x left/right,
+y up from the ground, z away from her. It is turned to the nearest compass
+direction she faces, so the build always appears in front of the camera."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from typing import Any, Optional
+
+from loguru import logger
+
+from .minecraft_fun import NO_ITEMS
+
+SIZE_X = 10  # x from -10 to 10
+SIZE_Y = 24
+DIG_Y = -10  # holes go this deep at most
+SIZE_Z = 20
+MAX_PARTS = 30
+MAX_BLOCKS = 700  # about a minute and a half for both girls by hand
+LAYER_RUNS = 40  # blocks per piece (one piece = one hop to a new spot)
+BLOCK_ID = re.compile(r"^[a-z0-9_]{2,40}$")
+FALLBACK_BLOCK = "stone_bricks"
+
+DESIGN_SYSTEM = (
+    "You design ONE small Minecraft build that two players lay block by block, live on stream. "
+    f"Coordinates are relative: x is left (-) / right (+) from -{SIZE_X} to {SIZE_X}, y is up from the ground "
+    f"(0 = the first layer of air above the ground, -1 = the ground itself) from {DIG_Y} up to {SIZE_Y}, z is "
+    f"forward, away from the builders, from 0 to {SIZE_Z}. "
+    'Answer ONLY with JSON: {"title": "short name", "parts": [{"from": [x, y, z], "to": [x, y, z], '
+    '"block": "stone_bricks", "shape": "solid" or "walls"}], "text": {"words": "SELWYN", "block": "gold_block", '
+    '"y": 6, "z": 0} or null}. '
+    f"Rules: at most {MAX_PARTS} parts, ordered bottom to top; real Minecraft block ids only (no tnt, lava, fire, "
+    'command blocks); "walls" is a hollow box with four sides (rooms, towers, keeps), "solid" is filled (floors, '
+    f"platforms, roofs, pillars); fewer than {MAX_BLOCKS} blocks in all. A small request stays small: one block is "
+    "one part. To DIG (a hole, a pit, a tunnel, a moat, a cave) use block \"air\" with y below 0, for example a "
+    "hole is from [-1, -4, 3] to [1, -1, 5]. "
+    "Floating or sky things start at y 10 or higher on a solid platform. When the viewer wants words or "
+    "their name on it, use text (capital letters A to Z and digits, at most 10 characters); the words stand on the "
+    "front (z of the front wall) facing the builders, at a height on the build."
+)
+
+# A tiny 3x5 pixel font: each letter is 5 rows of 3 pixels ("#" = a block).
+FONT = {
+    "A": ("###", "#.#", "###", "#.#", "#.#"), "B": ("##.", "#.#", "##.", "#.#", "##."),
+    "C": ("###", "#..", "#..", "#..", "###"), "D": ("##.", "#.#", "#.#", "#.#", "##."),
+    "E": ("###", "#..", "##.", "#..", "###"), "F": ("###", "#..", "##.", "#..", "#.."),
+    "G": ("###", "#..", "#.#", "#.#", "###"), "H": ("#.#", "#.#", "###", "#.#", "#.#"),
+    "I": ("###", ".#.", ".#.", ".#.", "###"), "J": ("..#", "..#", "..#", "#.#", "###"),
+    "K": ("#.#", "#.#", "##.", "#.#", "#.#"), "L": ("#..", "#..", "#..", "#..", "###"),
+    "M": ("#.#", "###", "###", "#.#", "#.#"), "N": ("##.", "#.#", "#.#", "#.#", "#.#"),
+    "O": ("###", "#.#", "#.#", "#.#", "###"), "P": ("###", "#.#", "###", "#..", "#.."),
+    "Q": ("###", "#.#", "#.#", "###", "..#"), "R": ("##.", "#.#", "##.", "#.#", "#.#"),
+    "S": ("###", "#..", "###", "..#", "###"), "T": ("###", ".#.", ".#.", ".#.", ".#."),
+    "U": ("#.#", "#.#", "#.#", "#.#", "###"), "V": ("#.#", "#.#", "#.#", "#.#", ".#."),
+    "W": ("#.#", "#.#", "###", "###", "#.#"), "X": ("#.#", "#.#", ".#.", "#.#", "#.#"),
+    "Y": ("#.#", "#.#", ".#.", ".#.", ".#."), "Z": ("###", "..#", ".#.", "#..", "###"),
+    "0": ("###", "#.#", "#.#", "#.#", "###"), "1": (".#.", "##.", ".#.", ".#.", "###"),
+    "2": ("###", "..#", "###", "#..", "###"), "3": ("###", "..#", "###", "..#", "###"),
+    "4": ("#.#", "#.#", "###", "..#", "..#"), "5": ("###", "#..", "###", "..#", "###"),
+    "6": ("###", "#..", "###", "#.#", "###"), "7": ("###", "..#", "..#", "..#", "..#"),
+    "8": ("###", "#.#", "###", "#.#", "###"), "9": ("###", "#.#", "###", "..#", "###"),
+    " ": ("...", "...", "...", "...", "..."),
+}
+
+
+def _clamp(v: Any, lo: int, hi: int) -> int:
+    try:
+        return max(lo, min(hi, int(round(float(v)))))
+    except (TypeError, ValueError):
+        return lo
+
+
+def block_id(name: Any) -> str:
+    """A safe, plain block id (no states, nothing that breaks the stream)."""
+    text = str(name or "").lower().replace("minecraft:", "").strip()
+    text = text.split("[", 1)[0].split("{", 1)[0]
+    if text in ("air", "cave_air"):
+        return "air"  # digging
+    if not BLOCK_ID.match(text) or NO_ITEMS.search(text) or text in ("water", "fire"):
+        return FALLBACK_BLOCK
+    return text
+
+
+def parse_design(raw: str) -> Optional[dict[str, Any]]:
+    """The AI's JSON, checked and clamped. None when it is unusable."""
+    match = re.search(r"\{.*\}", raw or "", re.S)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    parts = []
+    for part in (data.get("parts") or [])[:MAX_PARTS]:
+        if not isinstance(part, dict):
+            continue
+        a, b = part.get("from") or [], part.get("to") or part.get("from") or []
+        if len(a) < 3 or len(b) < 3:
+            continue
+        lo = [_clamp(a[0], -SIZE_X, SIZE_X), _clamp(a[1], DIG_Y, SIZE_Y), _clamp(a[2], 0, SIZE_Z)]
+        hi = [_clamp(b[0], -SIZE_X, SIZE_X), _clamp(b[1], DIG_Y, SIZE_Y), _clamp(b[2], 0, SIZE_Z)]
+        lo, hi = [min(p, q) for p, q in zip(lo, hi)], [max(p, q) for p, q in zip(lo, hi)]
+        shape = "walls" if str(part.get("shape", "")).lower().startswith(("wall", "hollow", "frame")) else "solid"
+        parts.append({"from": lo, "to": hi, "block": block_id(part.get("block")), "shape": shape})
+    text = data.get("text") if isinstance(data.get("text"), dict) else None
+    words = re.sub(r"[^A-Z0-9 ]", "", str((text or {}).get("words", "")).upper())[:10].strip()
+    if not parts and not words:
+        return None
+    return {
+        "title": str(data.get("title") or "A build for chat")[:40],
+        "parts": parts,
+        "text": {
+            "words": words,
+            "block": block_id((text or {}).get("block") or "gold_block"),
+            "y": _clamp((text or {}).get("y", 2), 0, SIZE_Y - 5),
+            "z": _clamp((text or {}).get("z", 0), 0, SIZE_Z),
+        } if words else None,
+    }
+
+
+def blocks_of(design: dict[str, Any]) -> list[tuple[tuple[int, int, int], str]]:
+    """Every block of the design, relative, in laying order (bottom up, then
+    the letters), each spot once."""
+    out: dict[tuple[int, int, int], str] = {}
+    for part in design["parts"]:
+        (x1, y1, z1), (x2, y2, z2) = part["from"], part["to"]
+        for y in range(y1, y2 + 1):
+            for z in range(z1, z2 + 1):
+                for x in range(x1, x2 + 1):
+                    if part["shape"] == "walls" and x1 < x < x2 and z1 < z < z2:
+                        continue  # a hollow room: only its four sides
+                    out[(x, y, z)] = part["block"]
+    text = design.get("text")
+    if text:
+        words = text["words"]
+        width = len(words) * 4 - 1
+        left = -(width // 2)
+        for i, ch in enumerate(words):
+            rows = FONT.get(ch, FONT[" "])
+            for r, row in enumerate(rows):
+                for c, pixel in enumerate(row):
+                    if pixel == "#":
+                        # letters face the builders: reading left to right from where they stand
+                        out[(left + i * 4 + c, text["y"] + 4 - r, text["z"] - 1)] = text["block"]
+    digs = sorted(((p, b) for p, b in out.items() if b == "air"), key=lambda kv: (-kv[0][1], kv[0][2], kv[0][0]))
+    builds = sorted(((p, b) for p, b in out.items() if b != "air"), key=lambda kv: (kv[0][1], kv[0][2], kv[0][0]))
+    return (digs + builds)[:MAX_BLOCKS]
+
+
+def to_world(rel: tuple[int, int, int], forward: tuple[int, int]) -> tuple[int, int, int]:
+    """Relative (x right, y up, z forward) -> world offsets for a builder facing `forward`."""
+    fx, fz = forward
+    rx, rz = -fz, fx  # her right hand: facing +z (south) means right is -x (west)
+    x, y, z = rel
+    return x * rx + z * fx, y, x * rz + z * fz
+
+
+def _lines(blocks: list[tuple[tuple[int, int, int], str]]) -> list[str]:
+    """Neighbouring blocks in a row become one line (laid in one go, by hand)."""
+    left = dict(blocks)
+    out = []
+    for (x, y, z), block in blocks:
+        if (x, y, z) not in left:
+            continue
+        for dx, dz in ((1, 0), (0, 1)):
+            end = 0
+            while left.get((x + dx * (end + 1), y, z + dz * (end + 1))) == block:
+                end += 1
+            if end:
+                break
+        for i in range(end + 1):
+            left.pop((x + dx * i, y, z + dz * i), None)
+        if end:
+            out.append(f"fill {{x{x}}} {{y{y}}} {{z{z}}} {{x{x + dx * end}}} {{y{y}}} {{z{z + dz * end}}} minecraft:{block}")
+        else:
+            out.append(f"setblock {{x{x}}} {{y{y}}} {{z{z}}} minecraft:{block}")
+    return out
+
+
+def cardinal(dx: float, dz: float) -> tuple[int, int]:
+    if abs(dx) >= abs(dz):
+        return (1 if dx >= 0 else -1, 0)
+    return (0, 1 if dz >= 0 else -1)
+
+
+def pieces(design: dict[str, Any], origin: tuple[int, int, int], base: tuple[int, int, int],
+           forward: tuple[int, int]) -> list[dict[str, Any]]:
+    """The design as build steps for _lay_runs: setblock commands with the
+    base placeholders, LAYER_RUNS blocks per piece, a focus and a view each."""
+    ox, oy, oz = origin
+    bx, by, bz = base
+    steps: list[dict[str, Any]] = []
+    group: list[tuple[tuple[int, int, int], str]] = []
+
+    def flush() -> None:
+        if not group:
+            return
+        world = []
+        for rel, block in group:
+            wx, wy, wz = to_world(rel, forward)
+            world.append(((ox + wx - bx, oy + wy - by, oz + wz - bz), block))
+        commands = _lines(world)
+        world = [p for p, _b in world]
+        fx = sum(p[0] for p in world) / len(world)
+        fy = sum(p[1] for p in world) / len(world)
+        fz = sum(p[2] for p in world) / len(world)
+        # she hovers on the builders' side, a little above, looking at it
+        view = (fx - forward[0] * 5, fy + 3, fz - forward[1] * 5)
+        steps.append({"commands": commands, "focus": (fx, fy, fz), "view": view})
+        group.clear()
+
+    last_y = None
+    for rel, block in blocks_of(design):
+        if group and (len(group) >= LAYER_RUNS or rel[1] != last_y):
+            flush()
+        group.append((rel, block))
+        last_y = rel[1]
+    flush()
+    return steps
+
+
+async def design(llm: Any, model: str, request: str, who: str) -> Optional[dict[str, Any]]:
+    """One AI call: the request as a design (None without an API key or on errors)."""
+    if llm is None or not (os.environ.get("OPENAI_API_KEY") or "").strip():
+        return None
+    try:
+        response = await llm.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": DESIGN_SYSTEM},
+                {"role": "user", "content": f"{who} asked: {request}"},
+            ],
+            max_tokens=900,
+            temperature=0.6,
+            response_format={"type": "json_object"},
+        )
+        return parse_design(response.choices[0].message.content or "")
+    except Exception as exc:  # pragma: no cover - network dependent
+        logger.warning(f"Minecraft: the build could not be designed: {exc}")
+        return None
+
+
+BUILD_ASK = re.compile(r"\b(build|place|put|construct|dig|make (?:me |us )?an?)\b", re.I)
+
+
+def wants_build(text: str) -> bool:
+    """'build a sky castle', 'place a block of stone on the sand' (not a question about building)."""
+    text = text or ""
+    return bool(BUILD_ASK.search(text)) and not re.search(r"\b(what|why|how|are you|did you)\b.*\?\s*$", text, re.I)
