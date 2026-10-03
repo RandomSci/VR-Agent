@@ -63,7 +63,7 @@ from typing import Any, Awaitable, Callable, Optional
 from loguru import logger
 
 from ..vr_agent.text_safety import strip_emoji
-from .minecraft_projects import MATERIALS, center, lay
+from .minecraft_projects import MATERIALS, center, hand_blocks, hand_item, lay, place_sound
 
 MC_DIR = Path("minecraft")
 SERVER_DIR = MC_DIR / "server"
@@ -96,6 +96,7 @@ CREATIVE_BLOCKED = [
 PIECE_SECONDS = (4.0, 20.0)  # creative: at least / at most this long per piece
 SIDE_GAP = 2.5  # each girl hovers this far to her own side of a shared spot (they are 5 apart)
 PERSONAL_SPACE = 3.0  # closer than this (sideways) and she moves further aside
+HAND_WAIT = 8.0  # seconds (plus some per block) for a run laid by hand before the rest just appears
 PART_DISTANCE = 4.5  # overlapping anyway: the other girl flies this far aside
 CHOICE_HOLD = 25.0  # after a girl flies somewhere herself, the builder leaves her alone this long
 NUDGE_SECONDS = 45.0  # creative: one girl is asked what she wants to do next this often
@@ -414,6 +415,8 @@ class MinecraftEngine:
         self._build_event = asyncio.Event()
         self._chose_at: dict[str, float] = {}
         self._opped: set[str] = set()
+        self._jobs: dict[int, dict[str, Any]] = {}  # runs being laid by hand
+        self._job_seq = 0
         self._target: dict[str, tuple[float, float, float]] = {}  # where each girl is flying to (absolute)
         self._close_since = 0.0
         self._parted_at = 0.0
@@ -834,6 +837,9 @@ class MinecraftEngine:
     async def _heard(self, agent: str, message: str) -> None:
         cid = self.ids.get(agent.lower())
         if not cid:
+            return
+        if str(message).startswith("[VR] put ") or str(message).startswith("[VR] laid "):
+            await self._hand_event(str(message)[5:].split())
             return
         if str(message).startswith("[VR] "):
             await self.choice(cid, str(message)[5:].strip())
@@ -1261,9 +1267,68 @@ class MinecraftEngine:
             hover = (cx + dx * 3, cy + 1.5, cz + dz * 3)
             await asyncio.sleep(await self._hop(cid, hover, (cx, cy, cz), last))
             last = hover
-            if not await self.projects.place_one(run):
+            if not await self._lay_by_hand(cid, run):
                 return False
         return True
+
+    async def _lay_by_hand(self, cid: str, run: str) -> bool:
+        """She lays a run block by block with her hand: block in hand, a look
+        and a swing per block, and each block appears on its swing (with the
+        place sound). Whatever she could not lay (interrupted, an old
+        Mindcraft) appears at the end, so the build is always complete."""
+        absolute = self.projects.absolute(run)
+        blocks = hand_blocks(absolute)
+        if blocks is None:  # a summon, clearing, a special fill: it just happens
+            return await self.projects.place_one(run)
+        spots, block = blocks
+        self._job_seq += 1
+        job = self._job_seq
+        sound = place_sound(block)
+        self._jobs[job] = {
+            "commands": [
+                (f"setblock {x} {y} {z} {block}", f"playsound minecraft:{sound} block @a {x} {y} {z} 1 1")
+                for x, y, z in spots
+            ],
+            "done": set(),
+            "event": asyncio.Event(),
+        }
+        spot_text = ";".join(f"{x} {y} {z}" for x, y, z in spots)
+        try:
+            if await self._command(cid, f'!layBlocks({job}, "{hand_item(block)}", "{spot_text}")'):
+                try:
+                    await asyncio.wait_for(self._jobs[job]["event"].wait(), timeout=HAND_WAIT + len(spots) * 0.6)
+                except asyncio.TimeoutError:
+                    logger.debug(f"Minecraft: {self.names[cid]} did not finish laying by hand, the rest appears")
+            if len(self._jobs[job]["done"]) < len(spots):
+                return await self.projects.place_one(run)
+            return True
+        finally:
+            self._jobs.pop(job, None)
+
+    async def _hand_event(self, words: list[str]) -> None:
+        """'put <job> <i>': her hand hit block i, set it now. 'laid <job>': done."""
+        try:
+            verb, job = words[0], int(words[1])
+        except (IndexError, ValueError):
+            return
+        item = self._jobs.get(job)
+        if item is None:
+            return
+        if verb == "laid":
+            item["event"].set()
+            return
+        try:
+            i = int(words[2])
+        except (IndexError, ValueError):
+            return
+        if i in item["done"] or not 0 <= i < len(item["commands"]):
+            return
+        item["done"].add(i)
+        place, sound = item["commands"][i]
+        await rcon_command(place)
+        await rcon_command(sound)
+        if len(item["done"]) == len(item["commands"]):
+            item["event"].set()
 
     async def _teach_round(self, here: list[str]) -> None:
         """Training: one girl draws a messy digit on the input board, pixel by
@@ -1780,7 +1845,7 @@ CAMERA_GLIDE = (
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v7)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v8)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -1845,6 +1910,61 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v7)
                 await new Promise((r) => setTimeout(r, 50));
             }
             bot.swingArm('right');
+        })
+    },
+    { // VR Agent: she builds by hand like a player (the engine sends this)
+        name: '!layBlocks',
+        description: 'Engine only: lay these blocks by hand, one at a time.',
+        params: {
+            'job': {type: 'int', description: 'job number', domain: [0, 1000000000]},
+            'item': {type: 'string', description: 'the block in her hand'},
+            'spots': {type: 'string', description: 'x y z;x y z;...'}
+        },
+        perform: runAsAction(async (agent, job, item, spots) => {
+            // The block in her hand, her head turning to each spot, an arm
+            // swing per block. The engine sets the block on each swing, so it
+            // appears exactly when her hand hits it.
+            const bot = agent.bot;
+            const Vec3 = bot.entity.position.constructor;
+            const proxy = await import('../mindserver_proxy.js');
+            const MAX_TURN = 0.3;
+            const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+            const turnTo = async (look) => {
+                const eye = bot.entity.position.offset(0, bot.entity.height || 1.62, 0);
+                const d = look.minus(eye);
+                const yaw = Math.atan2(-d.x, -d.z);
+                const pitch = Math.atan2(d.y, Math.sqrt(d.x * d.x + d.z * d.z));
+                const dy = wrap(yaw - bot.entity.yaw);
+                const dp = pitch - bot.entity.pitch;
+                await bot.look(bot.entity.yaw + Math.max(-MAX_TURN, Math.min(MAX_TURN, dy)),
+                    bot.entity.pitch + Math.max(-MAX_TURN, Math.min(MAX_TURN, dp)), true);
+                return Math.abs(dy) < 0.05 && Math.abs(dp) < 0.05;
+            };
+            try {
+                const info = bot.registry.itemsByName[item];
+                if (info) {
+                    const Item = (await import('prismarine-item')).default(bot.version);
+                    await bot.creative.setInventorySlot(36, new Item(info.id, 64));
+                    bot.setQuickBarSlot(0);
+                }
+            } catch (e) { /* empty hand: she still lays them */ }
+            const list = String(spots).split(';')
+                .map((s) => s.trim().split(' ').filter(Boolean).map(Number))
+                .filter((p) => p.length === 3 && p.every(Number.isFinite));
+            for (let i = 0; i < list.length; i++) {
+                if (bot.interrupt_code) return;
+                const [x, y, z] = list[i];
+                const spot = new Vec3(x + 0.5, y + 0.5, z + 0.5);
+                for (let k = 0; k < 8; k++) {
+                    if (await turnTo(spot)) break;
+                    await sleep(50);
+                }
+                bot.swingArm('right');
+                proxy.sendOutputToServer(agent.name, '[VR] put ' + job + ' ' + i);
+                await sleep(170);
+            }
+            proxy.sendOutputToServer(agent.name, '[VR] laid ' + job);
         })
     },
     { // VR Agent: the girls decide what happens; the stream engine carries it out

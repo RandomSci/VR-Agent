@@ -445,6 +445,84 @@ def lay(command: str) -> list[str]:
     return out
 
 
+HAND_LIMIT = 64  # a run with more blocks than this is not laid by hand
+
+
+def hand_blocks(command: str) -> Optional[tuple[list[tuple[int, int, int]], str]]:
+    """An absolute setblock or plain fill as the single blocks a girl lays by
+    hand, in laying order, and the block. None for anything else (air,
+    replace/keep/hollow fills, summons, NBT, too many blocks)."""
+    words = command.split()
+    if not words:
+        return None
+    try:
+        if words[0] == "setblock" and len(words) in (5, 6):
+            x, y, z = (int(v) for v in words[1:4])
+            corners = ((x, y, z), (x, y, z))
+            block, mode = words[4], (words[5] if len(words) == 6 else "replace")
+            if mode != "replace":
+                return None
+        elif words[0] == "fill" and len(words) in (8, 9):
+            a = tuple(int(v) for v in words[1:4])
+            b = tuple(int(v) for v in words[4:7])
+            corners = (a, b)
+            block, mode = words[7], (words[8] if len(words) == 9 else "")
+            if mode not in ("", "outline"):
+                return None
+        else:
+            return None
+    except ValueError:
+        return None
+    if block.endswith(":air") or block == "air" or "{" in block:
+        return None
+    (x1, y1, z1), (x2, y2, z2) = corners
+    xs, ys, zs = sorted((x1, x2)), sorted((y1, y2)), sorted((z1, z2))
+    volume = (xs[1] - xs[0] + 1) * (ys[1] - ys[0] + 1) * (zs[1] - zs[0] + 1)
+    if volume > HAND_LIMIT:
+        return None
+    spots = []
+    for y in range(ys[0], ys[1] + 1):
+        for x in range(xs[0], xs[1] + 1):
+            for z in range(zs[0], zs[1] + 1):
+                if mode == "outline" and xs[0] < x < xs[1] and ys[0] < y < ys[1] and zs[0] < z < zs[1]:
+                    continue  # outline keeps the inside as it is
+                spots.append((x, y, z))
+    return spots, block
+
+
+# Blocks that have another item (or none) in a player's hand.
+HAND_ITEMS = {"wall_torch": "torch", "redstone_wall_torch": "redstone_torch", "soul_wall_torch": "soul_torch",
+              "water": "water_bucket", "lava": "lava_bucket", "fire": "flint_and_steel"}
+
+
+def hand_item(block: str) -> str:
+    """What she holds while laying `block` (no namespace, no block states)."""
+    name = block.split("[", 1)[0].replace("minecraft:", "")
+    if name.endswith("_wall_banner"):
+        name = name.replace("_wall_banner", "_banner")
+    if name.startswith("potted_"):
+        name = name[len("potted_"):]
+    return HAND_ITEMS.get(name, name)
+
+
+def place_sound(block: str) -> str:
+    """The sound a player hears when this block goes down."""
+    name = block.split("[", 1)[0].replace("minecraft:", "")
+    for keys, sound in (
+        (("glass", "ice"), "block.glass.place"),
+        (("wool", "carpet"), "block.wool.place"),
+        (("amethyst",), "block.amethyst_block.place"),
+        (("sand", "gravel", "concrete_powder"), "block.sand.place"),
+        (("planks", "log", "wood", "fence", "door", "barrel", "chest", "bookshelf", "crafting", "ladder", "sign"),
+         "block.wood.place"),
+        (("grass", "dirt", "leaves", "flower", "tulip", "poppy", "daisy", "orchid", "allium", "bluet", "rose",
+          "lilac", "peony", "fern", "hay", "moss", "sapling", "farmland", "lily"), "block.grass.place"),
+    ):
+        if any(k in name for k in keys):
+            return sound
+    return "block.stone.place"
+
+
 def center(command: str) -> tuple[float, float, float]:
     points = _offsets(command) or [(0, 0, 0)]
     return (
@@ -612,6 +690,11 @@ class ProjectTracker:
         self._loaded = True
         await asyncio.sleep(2.0)
         return True
+
+    def absolute(self, command: str) -> str:
+        """A build command with the girls' material choice, in world coordinates."""
+        owners = {n: offline_uuid_ints(n) for n in self.names}
+        return place(self._swap(command), tuple(self.state["base"]), owners)
 
     async def place_one(self, command: str) -> bool:
         """One command (a run of blocks) into the world, with the girls' material choice."""

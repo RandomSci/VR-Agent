@@ -452,18 +452,30 @@ def test_the_camera_is_mikas_eyes_by_default(monkeypatch):
 
 
 def test_both_girls_lay_a_piece_block_by_block(monkeypatch):
+    """By hand: one swing per block, each block set on its swing, none twice."""
     async def run():
         eng = _live_engine(monkeypatch)
         eng.projects.state.update({"project": 0, "milestone": 0, "built": 0, "base": [8, 62, -81]})
-        hops, placed = [], []
+        eng.projects.state.pop("material", None)  # no swap left over from another test
+        hops, placed, rcon = [], [], []
 
         async def command(cid, text):
             hops.append((cid, text))
+            if text.startswith("!layBlocks("):
+                job = int(text[len("!layBlocks("):].split(",")[0])
+                spots = text.rsplit('"', 2)[-2].split(";")
+                for i in range(len(spots)):  # her hand hits each block in turn
+                    await eng._hand_event(["put", str(job), str(i)])
+                await eng._hand_event(["laid", str(job)])
             return True
 
         async def place_one(cmd):
             placed.append(cmd)
             return True
+
+        async def fake_rcon(cmd, reply=False):
+            rcon.append(cmd)
+            return "ok"
 
         async def arrive(*a):
             return None
@@ -474,17 +486,82 @@ def test_both_girls_lay_a_piece_block_by_block(monkeypatch):
         eng._command = command
         eng._arrive = arrive
         eng.projects.place_one = place_one
+        monkeypatch.setattr(mm, "rcon_command", fake_rcon)
         monkeypatch.setattr(mm.asyncio, "sleep", no_wait)
         step = {"commands": ["fill {x-9} {y1} {z-9} {x9} {y1} {z9} minecraft:stone_bricks outline"],
                 "focus": (0, 1, 0), "view": (0, 8, -18)}
         runs = mm.lay(step["commands"][0])
         half = (len(runs) + 1) // 2
         await asyncio.gather(eng._lay_runs("mika", runs[:half], step), eng._lay_runs("luna", runs[half:], step))
-        assert sorted(placed) == sorted(runs) and len(runs) > 10  # every run laid, none twice
+        assert not placed  # nothing just appeared: all of it was laid by hand
+        sets = [c for c in rcon if c.startswith("setblock ")]
+        expected = sum(len(mm.hand_blocks(eng.projects.absolute(r))[0]) for r in runs)
+        assert len(sets) == len(set(sets)) == expected and expected > 70  # every block once
+        assert len([c for c in rcon if c.startswith("playsound minecraft:block.stone.place")]) == expected
+        lays = [(c, t) for c, t in hops if t.startswith("!layBlocks(")]
+        assert {c for c, _t in lays} == {"mika", "luna"} and len(lays) == len(runs)
+        assert all('"stone_bricks"' in t for _c, t in lays)  # the block in her hand
         short = [t for _c, t in hops if t.endswith(", -60)")]
-        assert {c for c, t in hops if t.endswith(", -60)")} == {"mika", "luna"} and len(short) == len(runs)
+        assert len(short) == len(runs)
+        assert not eng._jobs
 
     asyncio.run(run())
+
+
+def test_an_interrupted_run_is_still_finished(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng.projects.state.update({"project": 0, "milestone": 0, "built": 0, "base": [8, 62, -81]})
+        placed, rcon = [], []
+
+        async def command(cid, text):
+            job = int(text[len("!layBlocks("):].split(",")[0])
+            await eng._hand_event(["put", str(job), "0"])  # one block, then a new action interrupts her
+            await eng._hand_event(["put", str(job), "0"])  # a repeat never sets it twice
+            await eng._hand_event(["laid", str(job)])
+            return True
+
+        async def place_one(cmd):
+            placed.append(cmd)
+            return True
+
+        async def fake_rcon(cmd, reply=False):
+            rcon.append(cmd)
+            return "ok"
+
+        eng._command = command
+        eng.projects.place_one = place_one
+        monkeypatch.setattr(mm, "rcon_command", fake_rcon)
+        run_cmd = "fill {x0} {y1} {z0} {x5} {y1} {z0} minecraft:oak_planks"
+        assert await eng._lay_by_hand("mika", run_cmd)
+        assert len([c for c in rcon if c.startswith("setblock")]) == 1
+        assert placed == [run_cmd]  # the rest appears at the end
+        # summons and clearing just happen, never by hand
+        placed.clear()
+        assert await eng._lay_by_hand("mika", "fill {x-9} {y1} {z-9} {x9} {y9} {z9} minecraft:air")
+        assert placed == ["fill {x-9} {y1} {z-9} {x9} {y9} {z9} minecraft:air"]
+
+    asyncio.run(run())
+
+
+def test_hand_blocks_and_sounds():
+    spots, block = mm.hand_blocks("fill 1 64 1 3 64 1 minecraft:oak_planks")
+    assert spots == [(1, 64, 1), (2, 64, 1), (3, 64, 1)] and block == "minecraft:oak_planks"
+    assert mm.hand_blocks("setblock 5 70 5 minecraft:oak_stairs[facing=east]")[0] == [(5, 70, 5)]
+    assert mm.hand_blocks("fill 0 0 0 9 9 9 minecraft:stone") is None  # too big for one run
+    assert mm.hand_blocks("fill 0 0 0 1 1 1 minecraft:stone replace minecraft:dirt") is None
+    assert mm.hand_blocks("summon minecraft:cow 1 2 3") is None
+    assert len(mm.hand_blocks("fill 0 0 0 2 2 2 minecraft:stone outline")[0]) == 26  # not the middle
+    assert mm.hand_item("minecraft:oak_stairs[facing=east]") == "oak_stairs"
+    assert mm.hand_item("minecraft:wall_torch[facing=north]") == "torch"
+    assert mm.place_sound("minecraft:glass") == "block.glass.place"
+    assert mm.place_sound("minecraft:cherry_planks") == "block.wood.place"
+    assert mm.place_sound("minecraft:quartz_block") == "block.stone.place"
+
+
+def test_lay_blocks_command_is_patched_in():
+    assert "name: '!layBlocks'" in mm.FLY_COMMANDS and "[VR] put " in mm.FLY_COMMANDS
+    assert "(v8)" in mm.FLY_COMMANDS
 
 
 def test_both_girls_never_get_the_same_spot(monkeypatch):
