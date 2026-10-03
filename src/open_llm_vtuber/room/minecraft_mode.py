@@ -31,9 +31,12 @@ characters, captions, the chat that reached them and a small HUD
                                      and they build each project piece by piece
                                      in front of the camera (0 = survival, the
                                      old gather and the build appears)
-    VR_MINECRAFT_CAMERA=director     with VR_MINECRAFT_PLAYER: your camera floats
-                                     behind both girls and what they build
-                                     ("eyes" = through the eyes of who talks)
+    VR_MINECRAFT_CAMERA=behind       with VR_MINECRAFT_PLAYER (the default): your
+                                     camera floats behind and above Mika and
+                                     glides after her, like third person
+                                     ("mika" = through her eyes, "eyes" = through
+                                     the eyes of who talks, "director" = behind
+                                     both girls and what they build)
     VR_MINECRAFT_PLAYER=YourName     your Minecraft name: when you join the
                                      world with the real game, you become an
                                      invisible spectator that looks through
@@ -51,6 +54,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import random
 import re
@@ -109,6 +113,8 @@ CHAT_MAX_AGE = 40.0  # a comment not answered by then is skipped (busy chat move
 ANSWER_BATCH = 3  # one spoken answer covers up to this many viewers
 BOT_BATCH = 4  # one message to a bot carries up to this many comments
 EXCLAIM_GAP = 20.0
+POP_GAP = 5.0  # at most one big word on screen this often
+POP_WORD = re.compile(r"^(?:[A-Za-z']+[ ,]{0,2}){1,3}?[!?]+")  # the opening shout: "Argh!!!", "Wait, what?!"
 CLIP_WEIGHT = {"done": 1.0, "wrong": 2.5}  # how good a moment is for a short clip
 CHAT_BURST = 6  # this many comments in 30 s: chat went wild (a clip)
 BIG_REACTION = re.compile(r"\b(argh+|no{3,}|yes{3,}|wait,? what|oh my god|omg|woo+hoo+|we did it)\b", re.I)  # at most one engine exclamation this often
@@ -126,6 +132,22 @@ PLACES = {
     "base": ((-6, 6, -14), (0, 2, 0)),
     "sky": ((-20, 48, -40), (0, 0, 0)),
 }
+# What viewers can do, shown one at a time under the network panel: people
+# stay when they know they can change what happens.
+HINTS = (
+    'Type "race" and Mika and Luna race through the sky hoops',
+    'Type "draw 7" and the neural network tries to read it',
+    'Say "Mika drink a potion of invisibility" (or levitation, glowing...)',
+    "Ask Luna to splash Mika with a potion. She will.",
+    "Say a name to talk to one of them: Mika or Luna",
+    "Tell them what to build next: they decide together",
+    "Mika loves mystery potions: ask her to brew one",
+)
+SURVIVAL_HINTS = (
+    "Say a name to talk to one of them: Mika or Luna",
+    "Tell them what to build, where to go, what to find",
+    "Ask them anything: they answer out loud",
+)
 # How the girls sound: real reactions, not polite narration.
 EMOTIONS = (
     "Show big feelings out loud with short interjections: Argh!!! when something fails or gets in your way, "
@@ -173,6 +195,13 @@ CAMERA_HOLD = 15.0  # "eyes": the camera stays on one girl at least this long
 CAMERA_HZ = 20  # the camera stand moves this often; the game smooths moving entities
 CAMERA_EASE = 0.05  # share of the way to the new angle per step (about a second and a half)
 CAM_TAG = "vr_cam"
+# "behind" (the default camera): like a chase cam in third person
+CHASE_BACK = 6.5  # blocks behind her
+CHASE_UP = 4.0  # blocks above her feet
+CHASE_AHEAD = 4.0  # the camera looks at a point this far in front of her
+CHASE_EVERY = 4  # her position is read from the server every 4 frames (5 a second)
+CHASE_EASE = 0.12  # faster than the director: she flies 18 blocks a second
+CHASE_TURN = 0.25  # how quickly the camera swings round when she turns
 CAMERA_REFRESH = 20.0  # spectate again this often (a respawn ends it)
 DIRECTOR = "Director"  # a plain command from this name runs right away in Mindcraft (no AI call)
 # Mindcraft's automatic behaviours. elbow_room fought our teleports (the HUD
@@ -422,7 +451,8 @@ class MinecraftEngine:
         self._cam_sent_at = 0.0
         # The camera: through one girl's eyes (her id, default the first: Mika),
         # "eyes" = whoever talks, "director" = floating behind both.
-        self.camera_style = (os.environ.get("VR_MINECRAFT_CAMERA", "") or self.cast[0]).strip().lower()
+        self.camera_style = (os.environ.get("VR_MINECRAFT_CAMERA", "") or "behind").strip().lower()
+        self._chase_yaw: Optional[float] = None
         self._shot: Optional[tuple[tuple[float, float, float], tuple[float, float, float]]] = None  # target
         self._pose: Optional[list[float]] = None  # where the camera stand is now: x, y, z, lx, ly, lz
         self._cam_ready = False
@@ -460,6 +490,9 @@ class MinecraftEngine:
         self._build_event = asyncio.Event()
         self._chose_at: dict[str, float] = {}
         self._opped: set[str] = set()
+        self.stats: dict[str, Any] = {"blocks": 0, "wins": {}}  # the counters on screen
+        self._stats_sent = 0.0
+        self._popped_at = 0.0
         self.memory: deque[tuple[float, str]] = deque(maxlen=24)  # what just happened, both girls share it
         self.viewers = ViewerMemory(VIEWERS_FILE)  # regulars, across streams
         self._streaming = 0  # answers still being written
@@ -539,7 +572,9 @@ class MinecraftEngine:
         # message reaches it while it is still thinking.
         answer = targets[0] if len(targets) == 1 else self._quietest(targets)
         first_time = author not in self._answered
-        self.viewers.saw(author, text)
+        if self.viewers.saw(author, text):  # first message this stream: a small hello on screen
+            streams = int((self.viewers.data.get(author) or {}).get("streams", 1))
+            asyncio.create_task(self._push({"kind": "hello", "author": author, "streams": streams}))
         self._remember(f"viewer {author} wrote: {text[:90]}")
         self.chat_queue.append({"who": answer, "author": author, "text": heard, "at": now, "first": first_time})
         self._kick_answers()
@@ -621,6 +656,8 @@ class MinecraftEngine:
                 "camera": "web",
                 "problem": self.problem,
                 "creative": self.creative,  # the Stage hides survival things (hearts, food, items)
+                "hints": list(HINTS if self.creative else SURVIVAL_HINTS),  # what viewers can do, rotating
+                "stats": self.stats,
             }
             await self._wait_ready()
             await self._push({"kind": "start", **self.view})
@@ -931,7 +968,10 @@ class MinecraftEngine:
         self.recent.append(key)
         logger.info(f"Minecraft {self.names[cid]}: {text}")
         self._remember(f"{self.names[cid]} said: {text[:110]}")
-        if BIG_REACTION.search(text) and time.time() - self._reaction_marked > 30:
+        big = BIG_REACTION.search(text)
+        if big:
+            self._pop(cid, big.group(0) + "!", "fail" if re.match(r"(?i)argh|no", big.group(0)) else "win")
+        if big and time.time() - self._reaction_marked > 30:
             self._reaction_marked = time.time()
             CLIPS.mark("reaction", f"{self.names[cid]}: {text[:80]}", 1.5)
         await self._push({"kind": "line", "who": cid, "text": text, "to": to})
@@ -1130,8 +1170,8 @@ class MinecraftEngine:
             # creative first: switching modes also ends any old "spectate" (through her eyes)
             await rcon_command(f"gamemode creative {self.camera_player}")
             await rcon_command(f"gamemode spectator {self.camera_player}")
-            if self.camera_style != "director":
-                await rcon_command(f"kill @e[tag={CAM_TAG}]")  # an old camera stand from the director camera
+            if self.camera_style not in ("director", "behind"):
+                await rcon_command(f"kill @e[tag={CAM_TAG}]")  # an old camera stand (director / behind camera)
             self._shot = None
             self._cam_ready = False
             self.camera_on = True
@@ -1152,6 +1192,16 @@ class MinecraftEngine:
             return
         if self.camera_style == "director":
             await self._director_shot([c for c in self.cast if c in bots])
+            return
+        if self.camera_style == "behind":
+            # behind and above Mika (or VR_MINECRAFT_FOLLOW), looking past her
+            follow = os.environ.get("VR_MINECRAFT_FOLLOW", "").strip().lower()
+            self.cam_focus = follow if follow in self.cast else self.cast[0]
+            if self.cam_focus in bots:
+                if self._shot is None:
+                    await self._chase_target()
+                if self._shot:
+                    await self._ensure_stand(self._shot)
             return
         if self.camera_style in bots and self.cam_focus != self.camera_style:
             self.cam_focus = self.camera_style  # always through her eyes (Mika by default)
@@ -1201,6 +1251,10 @@ class MinecraftEngine:
         if shot is None:
             return
         self._shot = shot
+        await self._ensure_stand(shot)
+
+    async def _ensure_stand(self, shot: tuple[tuple[float, float, float], tuple[float, float, float]]) -> None:
+        """The invisible armor stand your view rides on: there, and spectated."""
         now = time.time()
         if self._cam_ready and now - self._cam_checked > 30:
             self._cam_checked = now
@@ -1220,16 +1274,54 @@ class MinecraftEngine:
             self._cam_checked = now
             logger.info(f"Minecraft: camera man ready ({str(reply)[:60]})")
 
+    async def _chase_target(self) -> None:
+        """The 'behind' shot: a few blocks behind and above her, looking a
+        little past her, so you see her back and where she is going (never
+        her face). Her direction comes from the server, eased so the camera
+        does not swing with every small head turn."""
+        cid = self.cam_focus if self.cam_focus in self.cast else self.cast[0]
+        name = self.names[cid]
+        pos = await rcon_command(f"data get entity {name} Pos", reply=True)
+        rot = await rcon_command(f"data get entity {name} Rotation", reply=True)
+        here = _numbers(pos)
+        turn = _numbers(rot)
+        if len(here) >= 3:
+            x, y, z = here[:3]
+        elif cid in self._pos:
+            x, y, z = self._pos[cid]
+        else:
+            return
+        if turn:
+            yaw = math.radians(turn[0])
+            if self._chase_yaw is None:
+                self._chase_yaw = yaw
+            else:
+                d = math.atan2(math.sin(yaw - self._chase_yaw), math.cos(yaw - self._chase_yaw))
+                self._chase_yaw += d * CHASE_TURN
+        yaw = self._chase_yaw or 0.0
+        fx, fz = -math.sin(yaw), math.cos(yaw)
+        camera = (x - fx * CHASE_BACK, y + CHASE_UP, z - fz * CHASE_BACK)
+        look = (x + fx * CHASE_AHEAD, y + 0.6, z + fz * CHASE_AHEAD)
+        self._shot = (camera, look)
+
     async def _camera_follow(self) -> None:
         """Glide the camera stand toward the current shot, CAMERA_HZ times a second."""
+        tick = 0
         while True:
             await asyncio.sleep(1.0 / CAMERA_HZ)
+            tick += 1
+            if self.camera_on and self.camera_style == "behind" and tick % CHASE_EVERY == 0:
+                try:
+                    await self._chase_target()
+                except Exception as exc:  # pragma: no cover - live game dependent
+                    logger.debug(f"Minecraft camera: {exc}")
             if not (self.camera_on and self._cam_ready and self._shot and self._pose):
                 continue
+            ease = CHASE_EASE if self.camera_style == "behind" else CAMERA_EASE
             target = [*self._shot[0], *self._shot[1]]
             moved = 0.0
             for i in range(6):
-                step = (target[i] - self._pose[i]) * CAMERA_EASE
+                step = (target[i] - self._pose[i]) * ease
                 self._pose[i] += step
                 moved = max(moved, abs(step))
             if moved < 0.004:
@@ -1432,6 +1524,7 @@ class MinecraftEngine:
         if i in item["done"] or not 0 <= i < len(item["commands"]):
             return
         item["done"].add(i)
+        self._count(blocks=1)
         place, sound = item["commands"][i]
         await rcon_command(place)
         await rcon_command(sound)
@@ -1906,8 +1999,30 @@ class MinecraftEngine:
             return
         self._exclaimed_at = now
         text = random.choice(EXCLAIM[kind]).format(**(info or {}))
+        self._pop(cid, text, {"done": "win", "won": "win", "wrong": "fail"}.get(kind, "wow"))
         self.lines.appendleft({"who": cid, "text": text, "at": now})
         self.line_ready.set()
+
+    def _pop(self, cid: str, text: str, tone: str = "wow") -> None:
+        """A big comic word next to her for a second (ARGH!!!, YESSS!)."""
+        now = time.time()
+        word = POP_WORD.match(text.strip())
+        if not word or now - self._popped_at < POP_GAP:
+            return
+        self._popped_at = now
+        shout = word.group(0).strip(" ,").upper()
+        _soon(self._push({"kind": "pop", "who": cid, "text": shout[:16], "tone": tone}))
+
+    def _count(self, blocks: int = 0, winner: str = "") -> None:
+        """The counters on screen: blocks laid by hand, race wins."""
+        self.stats["blocks"] = int(self.stats.get("blocks", 0)) + blocks
+        if winner:
+            wins = self.stats.setdefault("wins", {})
+            wins[winner] = int(wins.get(winner, 0)) + 1
+        now = time.time()
+        if winner or now - self._stats_sent > 1.0:  # at most once a second while building
+            self._stats_sent = now
+            _soon(self._push({"kind": "stats", **self.stats, "names": self.names}))
 
     def _kick_answers(self) -> None:
         if self._answer_task is None or self._answer_task.done():
@@ -2111,6 +2226,21 @@ class MinecraftEngine:
 # ---------------------------------------------------------------------------
 # setup checks and process files
 # ---------------------------------------------------------------------------
+def _soon(coro: Any) -> None:
+    """Send this to the Stage when there is a running loop (tests: dropped)."""
+    try:
+        asyncio.get_running_loop().create_task(coro)
+    except RuntimeError:
+        coro.close()
+
+
+def _numbers(reply: Any) -> list[float]:
+    """'Mika has the following entity data: [1.5d, 64.0d, 2.3d]' -> [1.5, 64.0, 2.3]."""
+    if not isinstance(reply, str) or ":" not in reply:
+        return []
+    return [float(v) for v in re.findall(r"-?\d+(?:\.\d+)?(?:E-?\d+)?", reply.split(":", 1)[1])]
+
+
 def clean_reply(text: str) -> str:
     return strip_emoji(COMMAND_RE.sub(" ", text or "")).strip().strip('"').strip()
 
@@ -2129,10 +2259,12 @@ class ViewerMemory:
         except Exception:
             self.data = {}
 
-    def saw(self, name: str, text: str) -> None:
+    def saw(self, name: str, text: str) -> bool:
+        """Remember a message. True when it is their first one this stream."""
         now = time.time()
         entry = self.data.setdefault(name, {"streams": 0, "messages": 0, "first": now, "said": []})
-        if name not in self.here:
+        first = name not in self.here
+        if first:
             self.here.add(name)
             entry["streams"] = int(entry.get("streams", 0)) + 1
         entry["messages"] = int(entry.get("messages", 0)) + 1
@@ -2140,6 +2272,7 @@ class ViewerMemory:
         entry["said"] = (list(entry.get("said") or []) + [text[:100]])[-3:]
         if now - self._saved > 30:
             self.save()
+        return first
 
     def describe(self, name: str) -> str:
         entry = self.data.get(name) or {}

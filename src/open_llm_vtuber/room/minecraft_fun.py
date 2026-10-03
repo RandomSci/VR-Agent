@@ -162,6 +162,7 @@ class FunShow:
     async def apply(self, cid: str, name: str) -> None:
         seconds, level = EFFECTS[name]
         await self.rcon(f"effect give {self.e.names[cid]} minecraft:{name} {seconds} {level}")
+        await self.e._push({"kind": "effect", "who": cid, "name": name.replace("_", " "), "seconds": seconds})
         if name == "speed":
             self.levels[cid] = level + 1
             asyncio.get_running_loop().call_later(seconds, self.levels.pop, cid, None)
@@ -268,6 +269,7 @@ class FunShow:
             '{flight_duration:1,explosions:[{shape:"large_ball",colors:[I;16766720,16711680],has_twinkle:1b}]}}}}'
         )
         self.remember(f"{w} won the sky race against {lost}")
+        self.e._count(winner=winner)
         CLIPS.mark("race", f"{w} won the sky race against {lost}", 3.0)
         self.e._exclaim(winner, "won")
         logger.info(f"Minecraft: {w} won the race ({levels[winner]} vs {levels[loser]})")

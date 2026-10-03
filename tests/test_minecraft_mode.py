@@ -438,10 +438,10 @@ def test_the_girls_choose_what_happens(monkeypatch):
     asyncio.run(run())
 
 
-def test_the_camera_is_mikas_eyes_by_default(monkeypatch):
+def test_the_camera_can_be_mikas_eyes(monkeypatch):
     async def run():
         monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
-        monkeypatch.delenv("VR_MINECRAFT_CAMERA", raising=False)
+        monkeypatch.setenv("VR_MINECRAFT_CAMERA", "mika")
         eng = _live_engine(monkeypatch)
         commands = []
 
@@ -827,3 +827,37 @@ def test_regular_viewers_are_remembered_between_streams(tmp_path):
     second.saw("MathUnlockedYT", "hi again")
     text = second.describe("MathUnlockedYT")
     assert "regular" in text and "number 2" in text and "build more layers" in text
+
+
+
+def test_the_default_camera_floats_behind_mika(monkeypatch):
+    """Like third person from behind: her back and where she goes, never her face."""
+    async def run():
+        monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
+        monkeypatch.delenv("VR_MINECRAFT_CAMERA", raising=False)
+        eng = _live_engine(monkeypatch)
+        commands = []
+
+        async def rcon(cmd, reply=False):
+            commands.append(cmd)
+            if cmd == "data get entity Mika Pos":
+                return "Mika has the following entity data: [100.5d, 70.0d, 200.5d]"
+            if cmd == "data get entity Mika Rotation":
+                return "Mika has the following entity data: [0.0f, 10.0f]"  # facing +z
+            return "ok"
+
+        async def who():
+            return {"mika", "luna", "selwyn"}
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        monkeypatch.setattr(mm, "rcon_online", who)
+        assert eng.camera_style == "behind"
+        await eng._camera_tick()
+        assert not any(c.startswith("spectate Mika") for c in commands)  # not her eyes
+        assert any(c.startswith("summon minecraft:armor_stand") for c in commands)
+        assert any(c.startswith("spectate @e[tag=vr_cam") for c in commands)
+        (cx, cy, cz), (lx, ly, lz) = eng._shot
+        assert (cx, cy, cz) == (100.5, 70.0 + mm.CHASE_UP, 200.5 - mm.CHASE_BACK)  # behind (-z) and above
+        assert lz > 200.5 and cy > ly  # looking past her, down at her back
+
+    asyncio.run(run())

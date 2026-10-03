@@ -48,7 +48,10 @@
       <div id="mc-status"></div>
       <div id="mc-project"><div class="mc-ptitle"></div><div class="mc-pstep"></div><i><b></b></i><div class="mc-psteps"></div></div>
       <div id="mc-done"></div>
-      <div id="mc-net"><b>🧠 Neural network</b><span class="mc-nstats"></span><span class="mc-nlast"></span></div>`;
+      <div id="mc-net"><b>🧠 Neural network</b><span class="mc-nstats"></span><span class="mc-nlast"></span></div>
+      <div id="mc-hint"></div>
+      <div id="mc-score"></div>
+      <div id="mc-toasts"></div>`;
     document.body.append(root, over);
   }
 
@@ -70,7 +73,9 @@
         <header class="mc-tag"><span class="mc-name"></span><span class="mc-hearts"></span><span class="mc-food"></span></header>
         <div class="mc-doing"></div>
         <div class="mc-items"></div>
-        <div class="mc-bubble"></div>`;
+        <div class="mc-bubble"></div>
+        <div class="mc-pop"></div>
+        <div class="mc-effects"></div>`;
       hudPane.querySelector(".mc-name").textContent = names[id] || id;
       box.appendChild(view);
       top.appendChild(hudPane);
@@ -114,6 +119,8 @@
     if (op.project) project(op.project);
     if (op.net) net(op.net);
     setCamera(op.camera || "web");
+    startHints(op.hints);
+    if (op.stats) stats(op.stats);
     clearInterval(layoutTimer);
     let tries = 0;
     const place = () => {
@@ -137,6 +144,7 @@
     document.documentElement.classList.remove("mc-client");
     clearInterval(layoutTimer);
     document.documentElement.classList.remove("minecraft-mode", "mc-creative");
+    clearInterval(hintTimer);
     if (window.vrRoom && window.vrRoom.normal) window.vrRoom.normal();
   }
 
@@ -285,6 +293,96 @@
     tag.className = `mc-nlast ${last.right ? "right" : "wrong"}`;
   }
 
+  // ---- small things that make people stay: what they can do, counters,
+  // a hello for each viewer, big words at big moments, potion timers.
+  let hints = [];
+  let hintAt = 0;
+  let hintTimer = 0;
+  const HINT_MS = 14000;
+
+  function startHints(list) {
+    hints = (list || []).filter(Boolean);
+    clearInterval(hintTimer);
+    if (!hints.length) return;
+    const show = () => {
+      const box = $("mc-hint");
+      if (!box) return;
+      box.classList.remove("show");
+      setTimeout(() => {
+        box.textContent = "💡 " + hints[hintAt++ % hints.length];
+        box.classList.add("show");
+      }, 450);
+    };
+    show();
+    hintTimer = setInterval(show, HINT_MS);
+  }
+
+  function stats(op) {
+    const box = $("mc-score");
+    if (!box) return;
+    const parts = [];
+    if (op.blocks) parts.push(el("span", "", `🧱 ${Number(op.blocks).toLocaleString()} blocks`));
+    const wins = op.wins || {};
+    if (Object.keys(wins).length) {
+      const who = cast.map((id) => `${(op.names || names)[id] || id} ${wins[id] || 0}`).join(" – ");
+      parts.push(el("span", "", `🏁 ${who}`));
+    }
+    const before = box.textContent;
+    box.replaceChildren(...parts);
+    box.classList.toggle("show", parts.length > 0);
+    if (before && box.textContent !== before) {
+      box.classList.remove("tick");
+      void box.offsetWidth;
+      box.classList.add("tick");
+    }
+  }
+
+  function pop(op) {
+    const p = pane(op.who);
+    if (!p) return;
+    const box = p.querySelector(".mc-pop");
+    box.textContent = op.text || "";
+    box.className = `mc-pop ${op.tone || "wow"}`;
+    void box.offsetWidth;
+    box.classList.add("show");
+  }
+
+  function hello(op) {
+    const box = $("mc-toasts");
+    if (!box) return;
+    const regular = (op.streams || 1) > 1;
+    const row = el("div", `mc-toast ${regular ? "regular" : "new"}`);
+    row.append(el("i", "", regular ? "⭐" : "👋"), el("b", "", op.author || "viewer"),
+      el("span", "", regular ? `stream #${op.streams} with us` : "new here, welcome!"));
+    box.prepend(row);
+    while (box.children.length > 3) box.lastChild.remove();
+    setTimeout(() => row.classList.add("old"), 4600);
+    setTimeout(() => row.remove(), 5200);
+  }
+
+  const effectTimers = {};
+  function effect(op) {
+    const p = pane(op.who);
+    if (!p) return;
+    const box = p.querySelector(".mc-effects");
+    const key = `${op.who}:${op.name}`;
+    let chip = box.querySelector(`[data-name="${CSS.escape(op.name)}"]`);
+    if (!chip) {
+      chip = el("span", "mc-effect");
+      chip.dataset.name = op.name;
+      box.append(chip);
+    }
+    const ends = Date.now() + (op.seconds || 10) * 1000;
+    clearInterval(effectTimers[key]);
+    const tick = () => {
+      const left = Math.ceil((ends - Date.now()) / 1000);
+      if (left <= 0) { clearInterval(effectTimers[key]); chip.remove(); return; }
+      chip.textContent = `🫧 ${op.name} ${left}s`;
+    };
+    tick();
+    effectTimers[key] = setInterval(tick, 500);
+  }
+
   function projectDone(op) {
     const box = $("mc-done");
     if (!box) return;
@@ -310,6 +408,10 @@
       case "camera": if (!root) return; setCamera(op.mode); break;
       case "net": if (!root) return; net(op); break;
       case "focus": if (!root) return; if (camera === "client") setFocus(op.who, true); break;
+      case "pop": if (!root) return; pop(op); break;
+      case "hello": if (!root) return; hello(op); break;
+      case "stats": if (!root) return; stats(op); break;
+      case "effect": if (!root) return; effect(op); break;
       case "stop": leave(); break;
     }
   }
