@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live Chat Monitor</title>
+<style>
+  :root { --bg: #0f1420; --card: #182033; --line: #26314a; --ink: #e8edf7; --dim: #8d99b3;
+          --name: #ffb55e; --ok: #5fe3c8; --warn: #ff8a9a; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+               font: 15px/1.4 system-ui, "Segoe UI", Ubuntu, sans-serif; }
+  header { position: sticky; top: 0; display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+           background: #0b0f19; border-bottom: 1px solid var(--line); z-index: 2; }
+  header b { font-size: 15px; } #state { margin-left: auto; color: var(--dim); font-size: 13px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); }
+  .dot.on { background: var(--ok); box-shadow: 0 0 0 4px #5fe3c822; }
+  #list { padding: 8px 10px 30px; }
+  .msg { padding: 8px 10px; margin-bottom: 6px; border-radius: 10px; background: var(--card); border: 1px solid var(--line);
+         animation: in .25s ease; }
+  @keyframes in { from { opacity: 0; transform: translateY(6px); } }
+  .top { display: flex; gap: 8px; align-items: baseline; }
+  .name { color: var(--name); font-weight: 700; } .time { color: var(--dim); font-size: 12px; margin-left: auto; }
+  .text { margin-top: 2px; word-break: break-word; font-size: 16px; }
+  .status { display: inline-block; margin-top: 4px; padding: 1px 8px; border-radius: 99px; font-size: 11px;
+            background: #5fe3c81f; color: var(--ok); }
+  .status.bad { background: #ff8a9a1f; color: var(--warn); }
+  .empty { color: var(--dim); text-align: center; margin-top: 30px; }
+</style>
+</head>
+<body>
+<header><span class="dot" id="dot"></span><b>Live chat</b><span id="state">connecting…</span></header>
+<div id="list"><div class="empty" id="empty">No chat messages yet. They show up here the moment the server reads them.</div></div>
+<script>
+(() => {
+  let after = 0, failures = 0;
+  const list = document.getElementById("list");
+  const nearBottom = () => innerHeight + scrollY >= document.body.scrollHeight - 80;
+  const el = (tag, cls, text) => { const n = document.createElement(tag); n.className = cls; n.textContent = text; return n; };
+
+  function add(m) {
+    const empty = document.getElementById("empty");
+    if (empty) empty.remove();
+    const box = el("div", "msg", "");
+    const top = el("div", "top", "");
+    top.append(el("span", "name", m.author || "viewer"),
+               el("span", "time", new Date(m.at * 1000).toLocaleTimeString()));
+    box.append(top, el("div", "text", m.text));
+    const bad = /^(ignored|filtered)/.test(m.status || "");
+    box.append(el("span", "status" + (bad ? " bad" : ""), m.status || ""));
+    list.append(box);
+    while (list.children.length > 200) list.firstElementChild.remove();
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch(`/vr-agent/chat-feed?after=${after}`, { cache: "no-store" });
+      const data = await r.json();
+      const stick = nearBottom();
+      for (const m of data.messages || []) { add(m); after = Math.max(after, m.id); }
+      if (stick) scrollTo(0, document.body.scrollHeight);
+      failures = 0;
+      document.getElementById("dot").classList.add("on");
+      document.getElementById("state").textContent = "server online";
+    } catch (e) {
+      failures += 1;
+      document.getElementById("dot").classList.remove("on");
+      document.getElementById("state").textContent = "server offline, retrying…";
+    }
+    setTimeout(poll, failures ? 3000 : 1000);
+  }
+  poll();
+})();
+</script>
+</body>
+</html>

@@ -14,6 +14,7 @@ from loguru import logger
 
 from ..vr_agent.state import VRAgentState, runtime
 from ..room.class_mode import class_mode_enabled
+from . import chat_feed
 
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
@@ -607,11 +608,15 @@ class YouTubeLiveChatService:
     def _accept(self, message: YouTubeChatMessage, source_label: str) -> bool:
         blocked = blocked_author_reason(message)
         if blocked:
+            chat_feed.record(message.author_display_name, message.text, f"ignored: {blocked}")
             logger.debug(
                 f"YouTube {source_label} ignored ({blocked}) from {message.author_display_name}"
             )
             return False
         accepted, reason = self.buffer.add(message)
+        chat_feed.record(
+            message.author_display_name, message.text, "received" if accepted else f"filtered: {reason}"
+        )
         if accepted and self._observe(message):
             self._last_message_seen_at = time.time()
             return True
@@ -642,6 +647,7 @@ class YouTubeLiveChatService:
             timestamp=datetime.now(timezone.utc),
         )
         accepted, reason = self.buffer.add(mock)
+        chat_feed.record(mock.author_display_name, mock.text, "received (test)" if accepted else f"filtered: {reason}")
         if accepted and self._observe(mock):
             self._last_message_seen_at = time.time()
             return {"accepted": True, "reason": "handled_by_room", "message_id": mock.message_id}

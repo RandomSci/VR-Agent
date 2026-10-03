@@ -260,6 +260,13 @@ def init_webtool_routes(
         ops = await ws_handler.room_session.emit_and_push(name, **data)
         return JSONResponse({"event": name, "ops": [o.get("op") for o in ops]})
 
+    @router.get("/vr-agent/chat-feed")
+    async def vr_agent_chat_feed(after: int = 0):
+        """Live chat as the server sees it, for /vr-agent/chat.html."""
+        from .live.chat_feed import since
+
+        return JSONResponse({"messages": since(after)})
+
     @router.post("/youtube-live/mock-message")
     async def youtube_live_mock_message(request: Request):
         youtube_live_service = get_youtube_live_service()
