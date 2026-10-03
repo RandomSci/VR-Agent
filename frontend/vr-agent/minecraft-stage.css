@@ -2,13 +2,18 @@
 #mc-stage, #mc-over { display: none; }
 html.minecraft-mode #coding-workspace, html.minecraft-mode #class-stage { display: none !important; }
 html.minecraft-mode body { background: #0b0f17 !important; }
+/* the speech bubble already shows the line: no second subtitle at the bottom */
+html.minecraft-mode .vra-caption { display: none !important; }
 html.minecraft-mode #mc-stage { display: block; position: fixed; inset: 0; z-index: 2; }
 html.minecraft-mode #mc-over { display: block; position: fixed; inset: 0; z-index: 6; pointer-events: none;
   font-family: Nunito, Quicksand, "DejaVu Sans", "Liberation Sans", sans-serif; color: #fff; }
 
 #mc-views { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: #0b0f17; }
 .mc-view { position: relative; overflow: hidden; background: radial-gradient(900px 600px at 50% 30%, #253a5e, #0b0f17); }
-.mc-view iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity 1.2s; }
+/* The 3D views draw at 60% size and are scaled up: about a third of the pixels,
+   so the integrated GPU keeps up (Minecraft's blocky look hides the scaling). */
+.mc-view iframe { position: absolute; left: 0; top: 0; width: 60%; height: 60%; border: 0; opacity: 0;
+  transform: scale(1.6667); transform-origin: 0 0; transition: opacity 1.2s; }
 .mc-view.live iframe { opacity: 1; }
 .mc-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1vh;
   font-weight: 800; font-size: clamp(16px, 1.6vw, 32px); color: #cfe0ff; }

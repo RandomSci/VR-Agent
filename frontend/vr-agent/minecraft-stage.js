@@ -124,7 +124,8 @@
       p.querySelector(".mc-hearts").textContent = "♥".repeat(hearts) + "♡".repeat(10 - hearts);
       p.querySelector(".mc-food").textContent = `🍗 ${food}/10`;
       p.classList.toggle("hurt", (h.health || 0) <= 6);
-      const doing = [h.doing, h.time, h.biome].filter(Boolean).join(" · ");
+      const action = String(h.doing || "").replace(/^action:\s*/i, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+      const doing = [action, h.time, h.biome].filter(Boolean).join(" · ");
       p.querySelector(".mc-doing").textContent = doing;
       const items = p.querySelector(".mc-items");
       items.replaceChildren(...(h.items || []).map(([name, n]) => el("span", "", `${name} ×${n}`)));
