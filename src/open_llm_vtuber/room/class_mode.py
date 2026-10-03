@@ -738,6 +738,12 @@ class ClassEngine:
         nudged = False
         while time.time() < deadline:
             await asyncio.sleep(0.5)
+            if self.inbox:
+                # The quiz countdown is free time: answer chat right away
+                # (answers still count while she talks, the timer keeps going).
+                await self._chat_break(self.view.get("lesson") or "", record)
+                nudged = True
+                continue
             if not nudged and not self.quiz_votes and deadline - time.time() < seconds / 2:
                 nudged = True
                 await self._say(
