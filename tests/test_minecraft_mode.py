@@ -438,10 +438,10 @@ def test_the_girls_choose_what_happens(monkeypatch):
     asyncio.run(run())
 
 
-def test_the_camera_can_be_mikas_eyes(monkeypatch):
+def test_the_camera_is_mikas_eyes_by_default(monkeypatch):
     async def run():
         monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
-        monkeypatch.setenv("VR_MINECRAFT_CAMERA", "mika")
+        monkeypatch.delenv("VR_MINECRAFT_CAMERA", raising=False)
         eng = _live_engine(monkeypatch)
         commands = []
 
@@ -832,11 +832,11 @@ def test_regular_viewers_are_remembered_between_streams(tmp_path):
 
 
 
-def test_the_default_camera_floats_behind_mika(monkeypatch):
+def test_the_behind_camera_floats_behind_mika(monkeypatch):
     """Like third person from behind: her back and where she goes, never her face."""
     async def run():
         monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
-        monkeypatch.delenv("VR_MINECRAFT_CAMERA", raising=False)
+        monkeypatch.setenv("VR_MINECRAFT_CAMERA", "behind")
         eng = _live_engine(monkeypatch)
         commands = []
 

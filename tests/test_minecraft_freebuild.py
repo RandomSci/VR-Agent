@@ -137,7 +137,7 @@ def test_a_viewer_build_is_laid_by_hand_in_front_of_the_camera(monkeypatch):
 def test_the_camera_stays_behind_where_she_looks(monkeypatch):
     async def run():
         monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
-        monkeypatch.delenv("VR_MINECRAFT_CAMERA", raising=False)
+        monkeypatch.setenv("VR_MINECRAFT_CAMERA", "behind")
         eng = _live_engine(monkeypatch)
 
         async def rcon(cmd, reply=False):

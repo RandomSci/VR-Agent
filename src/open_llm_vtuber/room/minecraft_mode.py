@@ -31,12 +31,11 @@ characters, captions, the chat that reached them and a small HUD
                                      and they build each project piece by piece
                                      in front of the camera (0 = survival, the
                                      old gather and the build appears)
-    VR_MINECRAFT_CAMERA=behind       with VR_MINECRAFT_PLAYER (the default): your
-                                     camera floats behind and above Mika and
-                                     glides after her, like third person
-                                     ("mika" = through her eyes, "eyes" = through
-                                     the eyes of who talks, "director" = behind
-                                     both girls and what they build)
+    VR_MINECRAFT_CAMERA=mika         with VR_MINECRAFT_PLAYER (the default): you
+                                     see through Mika's eyes, first person
+                                     ("behind" = floats behind her, "eyes" =
+                                     through the eyes of who talks, "director" =
+                                     behind both girls and what they build)
     VR_MINECRAFT_PLAYER=YourName     your Minecraft name: when you join the
                                      world with the real game, you become an
                                      invisible spectator that looks through
@@ -470,7 +469,9 @@ class MinecraftEngine:
         self._cam_sent_at = 0.0
         # The camera: through one girl's eyes (her id, default the first: Mika),
         # "eyes" = whoever talks, "director" = floating behind both.
-        self.camera_style = (os.environ.get("VR_MINECRAFT_CAMERA", "") or "behind").strip().lower()
+        # Default: through Mika's eyes (first person). "behind" and "director"
+        # still need work on stream (her face turned to the camera).
+        self.camera_style = (os.environ.get("VR_MINECRAFT_CAMERA", "") or self.cast[0]).strip().lower()
         self._chase_yaw: Optional[float] = None
         self._shot: Optional[tuple[tuple[float, float, float], tuple[float, float, float]]] = None  # target
         self._pose: Optional[list[float]] = None  # where the camera stand is now: x, y, z, lx, ly, lz
