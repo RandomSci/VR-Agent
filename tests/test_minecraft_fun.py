@@ -40,12 +40,14 @@ def test_potions_and_items(monkeypatch):
         assert not any("instant_damage" in c for c in sent)
         await eng._heard("Mika", "[VR] getItem cake 3")
         assert "give Mika minecraft:cake 3" in sent
+        await eng._heard("Mika", "[VR] getItem lava_bucket 1")
+        assert not any("lava" in c for c in sent)
         await eng._heard("Mika", "[VR] getItem tnt 64")
-        assert not any("tnt" in c for c in sent)
+        assert "give Mika minecraft:tnt 64" in sent  # building with TNT is fine
         await eng._heard("Mika", "[VR] getItem unicorn 1")
         told = [m[1]["message"] for m in eng.link.sent if m[0] == "Mika"]
         assert any("no item called unicorn" in t for t in told) and any("not allowed" in t for t in told)
-        assert "Mika drank a potion of invisibility" in eng._memory_text()
+        assert any("Mika drank a potion of invisibility" in t for _at, t in eng.memory)
 
     asyncio.run(run())
 

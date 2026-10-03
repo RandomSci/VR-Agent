@@ -18,17 +18,20 @@ from typing import Any, Optional
 
 from loguru import logger
 
-from .minecraft_fun import NO_ITEMS
 from .minecraft_templates import DEFAULT_COLOURS, SIZES, TEMPLATES, footprint
 from .minecraft_templates import build as make_template
 
-SIZE_X = 10  # x from -10 to 10
-SIZE_Y = 24
-DIG_Y = -10  # holes go this deep at most
-SIZE_Z = 20
-MAX_PARTS = 30
-MAX_BLOCKS = 700  # a free design: about two minutes for both girls by hand
-MAX_TEMPLATE_BLOCKS = 2400  # a giant dragon: about six minutes, every block by hand
+# Only what would wreck the stream: fire and lava spread and burn the builds,
+# command and structure blocks control the server. Everything else is fine.
+DESIGN_BANNED = re.compile(r"(command_block|structure_block|structure_void|jigsaw|lava|fire|barrier|spawner)")
+# Big on purpose: chat may ask for anything, and it is built (by hand).
+SIZE_X = 40  # x from -40 to 40
+SIZE_Y = 80
+DIG_Y = -30  # holes go this deep at most
+SIZE_Z = 80
+MAX_PARTS = 150
+MAX_BLOCKS = 20000  # a free design (a huge one takes an hour by hand: fine on an 11 hour stream)
+MAX_TEMPLATE_BLOCKS = 20000
 LAYER_RUNS = 40  # blocks per piece (one piece = one hop to a new spot)
 BLOCK_ID = re.compile(r"^[a-z0-9_]{2,40}$")
 FALLBACK_BLOCK = "stone_bricks"
@@ -44,7 +47,7 @@ DESIGN_SYSTEM = (
     "The template adds all the details (paths, flowers, windows, roofs, battlements, lanterns): just pick nice, "
     "matching blocks. Use template \"custom\" only when nothing fits, and then also give parts as below, with real "
     "detail (a statue has a head, arms and colours; a bridge has railings and lanterns), at least 80 blocks unless "
-    "they asked for one or two blocks. "
+    "they asked for one or two blocks. Big requests may be really big: there is no limit, the stream is long. "
     "Custom parts: "
     f"Coordinates are relative: x is left (-) / right (+) from -{SIZE_X} to {SIZE_X}, y is up from the ground "
     f"(0 = the first layer of air above the ground, -1 = the ground itself) from {DIG_Y} up to {SIZE_Y}, z is "
@@ -97,7 +100,7 @@ def block_id(name: Any) -> str:
     text = text.split("[", 1)[0].split("{", 1)[0]
     if text in ("air", "cave_air"):
         return "air"  # digging
-    if not BLOCK_ID.match(text) or NO_ITEMS.search(text) or text in ("water", "fire"):
+    if not BLOCK_ID.match(text) or DESIGN_BANNED.search(text):
         return FALLBACK_BLOCK
     return text
 
@@ -181,9 +184,14 @@ def blocks_of(design: dict[str, Any]) -> list[tuple[tuple[int, int, int], str]]:
                     if pixel == "#":
                         # letters face the builders: reading left to right from where they stand
                         out[(left + i * 4 + c, text["y"] + 4 - r, text["z"] - 1)] = text["block"]
+    return ordered(out)[:MAX_TEMPLATE_BLOCKS if design.get("template") else MAX_BLOCKS]
+
+
+def ordered(out: dict[tuple[int, int, int], str]) -> list[tuple[tuple[int, int, int], str]]:
+    """Laying order: digging top down first, then building bottom up."""
     digs = sorted(((p, b) for p, b in out.items() if b == "air"), key=lambda kv: (-kv[0][1], kv[0][2], kv[0][0]))
     builds = sorted(((p, b) for p, b in out.items() if b != "air"), key=lambda kv: (kv[0][1], kv[0][2], kv[0][0]))
-    return (digs + builds)[:MAX_TEMPLATE_BLOCKS if design.get("template") else MAX_BLOCKS]
+    return digs + builds
 
 
 def footprint_of(spots: dict[tuple[int, int, int], str]) -> tuple[int, int, int, int, int]:
@@ -228,7 +236,12 @@ def cardinal(dx: float, dz: float) -> tuple[int, int]:
 
 def pieces(design: dict[str, Any], origin: tuple[int, int, int], base: tuple[int, int, int],
            forward: tuple[int, int]) -> list[dict[str, Any]]:
-    """The design as build steps for _lay_runs: setblock commands with the
+    return pieces_of(blocks_of(design), origin, base, forward)
+
+
+def pieces_of(blocks: list[tuple[tuple[int, int, int], str]], origin: tuple[int, int, int],
+              base: tuple[int, int, int], forward: tuple[int, int]) -> list[dict[str, Any]]:
+    """Blocks (in laying order) as build steps for _lay_runs: commands with the
     base placeholders, LAYER_RUNS blocks per piece, a focus and a view each."""
     ox, oy, oz = origin
     bx, by, bz = base
@@ -253,7 +266,7 @@ def pieces(design: dict[str, Any], origin: tuple[int, int, int], base: tuple[int
         group.clear()
 
     last_y = None
-    for rel, block in blocks_of(design):
+    for rel, block in blocks:
         if group and (len(group) >= LAYER_RUNS or rel[1] != last_y):
             flush()
         group.append((rel, block))
@@ -273,7 +286,7 @@ async def design(llm: Any, model: str, request: str, who: str) -> Optional[dict[
                 {"role": "system", "content": DESIGN_SYSTEM},
                 {"role": "user", "content": f"{who} asked: {request}"},
             ],
-            max_tokens=900,
+            max_tokens=4000,
             temperature=0.6,
             response_format={"type": "json_object"},
         )

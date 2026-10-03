@@ -36,10 +36,11 @@ ALIASES = {
     "feather": "slow_falling", "falling": "slow_falling", "strong": "strength",
 }
 MYSTERY = ["levitation", "glowing", "invisibility", "jump_boost", "speed", "slowness", "nausea", "slow_falling"]
-# Never handed out: they break the world, the stream or the bots.
+# Never handed out: only what wrecks the stream (fire, lava, explosions
+# by accident, server control). TNT blocks are fine: !blowUp lights them.
 NO_ITEMS = re.compile(
-    r"(command_block|structure_block|structure_void|jigsaw|barrier|^light$|debug_stick|tnt|end_crystal|"
-    r"respawn_anchor|lava|fire_charge|flint_and_steel|spawn_egg|spawner|wither|dragon_egg|bedrock|knowledge_book)"
+    r"(command_block|structure_block|structure_void|jigsaw|barrier|^light$|debug_stick|lava|fire_charge|"
+    r"flint_and_steel|spawner|end_crystal|respawn_anchor|knowledge_book)"
 )
 ITEM_NAME = re.compile(r"^[a-z0-9_]{2,40}$")
 # The race course, base relative: straight along x, high in the sky, inside

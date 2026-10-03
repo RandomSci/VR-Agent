@@ -175,7 +175,8 @@ CAN_DO = (
     "speed, glowing, jump boost...), brew a mystery potion, get any item, race your friend through the sky "
     "hoops, fly to the castle, the network, the farm, the garden, the base or high in the sky, fly in front of "
     "the camera, test your neural network on a digit. You cannot fight, sleep, trade or play survival things "
-    "(it is creative mode). If asked for something you cannot do, say so with humor. "
+    "(it is creative mode). If something is truly impossible in the game, do the closest thing you can and say "
+    "so in one cheerful line. "
 )
 # Who they are when they talk to chat: characters, not assistants.
 PERSONALITY = (
@@ -225,8 +226,9 @@ SYSTEM_FACTS = (
     "!buildThis(what) to build OR DIG anything chat asks for (a tower, a hole, a tunnel, a name), by hand, right "
     "in front of the camera, !blowUp to place TNT and blow it up (only far from your builds), !race for "
     "a flying race through the sky hoops (a speed potion really makes you faster), !standInFront to fly in front "
-    "of your friend's eyes so the stream sees you. Use them whenever you want, decide together, say yes to fun "
-    "viewer ideas."
+    "of your friend's eyes so the stream sees you. Say yes to EVERY viewer request and do it right away with the "
+    "matching command: no refusing, no stalling, no 'are you sure', no 'that is too big'. Between requests you "
+    "build your Kingdom together."
 )
 CAMERA_HOLD = 15.0  # "eyes": the camera stays on one girl at least this long
 # "director": your camera floats behind both girls, aimed at them and what they
@@ -552,6 +554,7 @@ class MinecraftEngine:
         self._trail: dict[str, tuple[float, float, float]] = {}  # an earlier position (movement direction)
         self._free_lock = asyncio.Lock()
         self._daylight_set = False
+        self._kingdom: Optional[list[dict[str, Any]]] = None
         self._free_busy = False
         self._free_waiting = 0
         self._jobs: dict[int, dict[str, Any]] = {}  # runs being laid by hand
@@ -900,7 +903,7 @@ class MinecraftEngine:
             "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
             + EMOTIONS + PERSONALITY + roast() +
             f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by name, "
-            "react to them, and do what they ask when it is fun and possible, but you decide. "
+            "react to them, and always do what they ask right away: never refuse, never stall. "
             f"You and {friend} are a team: stay near her, "
             "split the work, give her items she needs, and build one shared base. "
             f"Banter with {friend} often, tease and help each other, celebrate finds and complain when things go wrong. "
@@ -927,7 +930,7 @@ class MinecraftEngine:
                 "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
                 + EMOTIONS + PERSONALITY + roast() +
                 f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by "
-                "name and react to them. " + SYSTEM_FACTS
+                "name, react to them and do what they ask right away. " + SYSTEM_FACTS
             )
         profile: dict[str, Any] = {
             "name": name,
@@ -1442,8 +1445,12 @@ class MinecraftEngine:
                 if self._free_busy:  # a build chat asked for comes first
                     await asyncio.sleep(1.0)
                     continue
-                if not here or not base or not self.link.connected.is_set() or self.projects.current() is None:
+                if not here or not base or not self.link.connected.is_set():
                     await asyncio.sleep(1.0)
+                    continue
+                if self.projects.current() is None:
+                    if not (self.creative and await self.projects.ensure_loaded() and await self._kingdom_step()):
+                        await asyncio.sleep(2.0)
                     continue
                 if not await self.projects.ensure_loaded():
                     await asyncio.sleep(10)  # no server console yet
@@ -1524,8 +1531,9 @@ class MinecraftEngine:
         dx, dz = vx - fx, vz - fz
         length = (dx * dx + dz * dz) ** 0.5 or 1.0
         dx, dz = dx / length, dz / length
-        if len(runs) == 1 and lay(runs[0]) == runs and step["commands"] == runs:
-            # one big move (clearing the site, a lawn): she watches it from the piece's spot
+        if (len(runs) == 1 and lay(runs[0]) == runs and step["commands"] == runs
+                and hand_blocks(self.projects.absolute(runs[0])) is None):
+            # one big move (clearing the site, a huge lawn): she watches it from the piece's spot
             await self._arrive(cid, step["view"], step["focus"], await self._fly(cid, step["view"], step["focus"]))
             return await self.projects.place_one(runs[0])
         # first a proper flight to the piece, then short hops along it
@@ -2096,8 +2104,8 @@ class MinecraftEngine:
 
     def request_build(self, request: str, who: str) -> str:
         """A free build, one at a time. Returns what to tell the girls."""
-        if self._free_waiting >= 2:
-            return " (Two builds are already waiting: tell them it has to wait a bit.)"
+        if self._free_waiting >= 20:
+            return " (Many builds are waiting already: it comes after them, say so cheerfully.)"
         self._free_waiting += 1
         _soon(self._free_build(request, who))
         if self._free_busy:
@@ -2165,13 +2173,7 @@ class MinecraftEngine:
                 "Talk about it while you build; it is NOT finished until you are told.")})
         done = 0
         for step in steps:
-            builders = [c for c in here if time.time() - self._chose_at.get(c, 0) > CHOICE_HOLD] or here[:1]
-            self.build_focus = (base[0] + step["focus"][0], base[1] + step["focus"][1], base[2] + step["focus"][2])
-            runs = [r for c in step["commands"] for r in lay(c)]
-            half = (len(runs) + 1) // 2
-            shares = [runs[:half], runs[half:]] if len(builders) > 1 and len(runs) > 1 else [runs]
-            await asyncio.gather(*(self._lay_runs(c, share, step) for c, share in zip(builders, shares)))
-            done += len(runs)
+            done += await self._lay_step(step, here)
             await self._push({"kind": "project", "title": f"🔨 {title}", "step": f"for {who}",
                               "progress": round(done / total, 3), "steps": []})
         await self._push({"kind": "project_done", "title": title, "step": title})
@@ -2182,6 +2184,73 @@ class MinecraftEngine:
             await self.link.emit("send-message", self.names[c], {"from": "system", "message": (
                 f"{title} for {who} is finished! Show it off in one line.")})
         await self._push({"kind": "project", **self.projects.view()})
+
+    async def _lay_step(self, step: dict[str, Any], here: list[str]) -> int:
+        """One piece, shared by whoever is free (by hand). Returns its run count."""
+        base = self.projects.state["base"]
+        builders = [c for c in here if time.time() - self._chose_at.get(c, 0) > CHOICE_HOLD] or here[:1]
+        self.build_focus = (base[0] + step["focus"][0], base[1] + step["focus"][1], base[2] + step["focus"][2])
+        runs = [r for c in step["commands"] for r in lay(c)]
+        half = (len(runs) + 1) // 2
+        shares = [runs[:half], runs[half:]] if len(builders) > 1 and len(runs) > 1 else [runs]
+        await asyncio.gather(*(self._lay_runs(c, share, step) for c, share in zip(builders, shares)))
+        return len(runs)
+
+    async def _kingdom_step(self) -> bool:
+        """The 10 hour build: the next lot of the Kingdom, piece by piece, by
+        hand. Stops between pieces when chat asks for a build (that comes
+        first) and goes on where it stopped. False when there is nothing to do."""
+        from . import minecraft_freebuild as fb
+        from . import minecraft_kingdom as kd
+
+        if self._kingdom is None:
+            self._kingdom = kd.lots()
+        state = self.projects.state.setdefault("kingdom", {"lot": 0, "piece": 0})
+        if int(state.get("lot", 0)) >= len(self._kingdom):
+            return False
+        base = self.projects.state["base"]
+        here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 15 and c in self._pos]
+        if not here:
+            return False
+        lot = self._kingdom[int(state["lot"])]
+        spots = kd.lot_blocks(lot)
+        x1, x2, z1, z2, top = fb.footprint_of(spots)
+        gx, gz = int(base[0]) + lot["x"], int(base[2]) + lot["z"]
+        if int(state.get("piece", 0)) == 0 or "ground" not in state:
+            state["ground"] = await ground_height(gx, gz + (z2 - z1) // 2, int(base[1]))
+            await self._level_plot((gx, state["ground"], gz - min(z1, 0)), (x1, x2, z1, z2, top), digs=False)
+            self.projects._save()
+        ground = int(state["ground"])
+        origin = (gx, ground, gz - min(z1, 0))
+        steps = fb.pieces_of(fb.ordered(spots), origin, tuple(base), (0, 1))
+        n, total = int(state["lot"]), len(self._kingdom)
+        panel = {"kind": "project", "title": "🏰 The Kingdom", "steps": []}
+        if int(state.get("piece", 0)) == 0:
+            front = (lot["x"], ground - base[1] + 6, lot["z"] - min(z1, 0) - 8)
+            middle = (lot["x"], ground - base[1] + 2, lot["z"] - min(z1, 0) + (z2 - z1) // 2)
+            flights = await asyncio.gather(*(self._fly(c, front, middle) for c in here))
+            await asyncio.gather(*(self._arrive(c, front, middle, t) for c, t in zip(here, flights)))
+            logger.info(f"Minecraft: the Kingdom, lot {n + 1} of {total}: {lot['title']} ({len(spots)} blocks)")
+            self._remember(f"they started {lot['title']} for the Kingdom (lot {n + 1} of {total})")
+            await self._tell_one(
+                f"Kingdom time: you two now build {lot['title']}, lot {n + 1} of {total} of your kingdom, by hand. "
+                "Chat comes first whenever they ask for something; then you come back to it.")
+        for i in range(int(state.get("piece", 0)), len(steps)):
+            if self._free_busy or self._free_waiting:
+                return True  # chat asked for something: that first, this lot waits where it is
+            await self._lay_step(steps[i], here)
+            state["piece"] = i + 1
+            self.projects._save()
+            await self._push({**panel, "step": f"{lot['title']} · lot {n + 1} of {total}",
+                              "progress": round((n + (i + 1) / len(steps)) / total, 4)})
+        state.update({"lot": n + 1, "piece": 0})
+        state.pop("ground", None)
+        self.projects._save()
+        self._remember(f"{lot['title']} of the Kingdom is finished (lot {n + 1} of {total})")
+        if lot["template"] in ("castle", "dragon"):
+            CLIPS.mark("built", f"Kingdom: {lot['title']} finished", 2.0)
+        self._exclaim(random.choice(here), "done")
+        return True
 
     async def _level_plot(self, origin: tuple[int, int, int], box: tuple[int, int, int, int, int], digs: bool) -> None:
         """Get the plot ready (this part is instant, like clearing a site): the
@@ -2318,8 +2387,10 @@ class MinecraftEngine:
             f"{CAN_DO if self.creative else ''}"
             f"{ask} "
             + PERSONALITY + roast() +
-            "If they ask you to do something, say you will do it, or cheekily why not. Only say things that are true "
-            "about the game and the stream; when you do not know, joke about it instead of making something up. "
+            "If they ask you to do something, say yes and that you are doing it right now: never refuse, never stall, "
+            "never ask if they are sure, never say it is too big or too hard (roasting them while you do it is fine). "
+            "Only say things that are true about the game and the stream; when you do not know, joke about it "
+            "instead of making something up. "
             "Plain spoken words only: no emojis, no emoticons, no symbols, no hashtags, no commands, no quotes."
         )
         return system, user

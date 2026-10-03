@@ -21,8 +21,7 @@ SKY_CASTLE = {
     "parts": [
         {"from": [-4, 10, 2], "to": [4, 10, 10], "block": "quartz_block", "shape": "solid"},
         {"from": [-4, 11, 2], "to": [4, 14, 10], "block": "minecraft:stone_bricks", "shape": "walls"},
-        {"from": [0, 0, 0], "to": [0, 0, 0], "block": "tnt", "shape": "solid"},
-        {"from": [-99, 0, 0], "to": [99, 99, 99], "block": "glass", "shape": "walls"},
+        {"from": [0, 0, 0], "to": [0, 0, 0], "block": "lava", "shape": "solid"},
     ],
     "text": {"words": "Selwyn!", "block": "gold_block", "y": 11, "z": 2},
 }
@@ -31,8 +30,12 @@ SKY_CASTLE = {
 def test_a_design_is_checked_and_kept_small():
     design = fb.parse_design("Sure! " + json.dumps(SKY_CASTLE))
     assert design["parts"][1]["block"] == "stone_bricks"
-    assert design["parts"][2]["block"] == fb.FALLBACK_BLOCK  # never tnt
-    assert design["parts"][3]["from"] == [-fb.SIZE_X, 0, 0] and design["parts"][3]["to"][1] == fb.SIZE_Y
+    assert design["parts"][2]["block"] == fb.FALLBACK_BLOCK  # never lava: it would burn the builds
+    huge = fb.parse_design(json.dumps({"title": "huge", "parts": [
+        {"from": [-99, 0, 0], "to": [99, 999, 999], "block": "tnt", "shape": "walls"}]}))
+    assert huge["parts"][0]["block"] == "tnt"  # no limits on what they build with
+    assert huge["parts"][0]["from"] == [-fb.SIZE_X, 0, 0] and huge["parts"][0]["to"][1] == fb.SIZE_Y
+    assert len(fb.blocks_of(huge)) == fb.MAX_BLOCKS
     assert design["text"]["words"] == "SELWYN"
     assert fb.parse_design("no json here") is None
     blocks = fb.blocks_of(design)
@@ -284,3 +287,66 @@ def test_they_roast_chat_unless_told_not_to(monkeypatch):
     monkeypatch.setenv("VR_ROAST", "0")
     system, _u = eng._reply_prompt("mika", "MathUnlockedYT", "where is my castle", [])
     assert "ROAST" not in system
+
+
+def test_the_kingdom_is_built_lot_by_lot_and_chat_comes_first(monkeypatch):
+    from src.open_llm_vtuber.room import minecraft_kingdom as kd
+
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng.projects.state.update({"base": [0, 64, 0], "kingdom": {"lot": 0, "piece": 0}})
+        now = mm.time.time()
+        eng._seen_at = {"mika": now, "luna": now}
+        eng._pos = {"mika": (0.5, 64.0, 0.5), "luna": (3.5, 64.0, 0.5)}
+        sets, placed = [], []
+
+        async def fake_rcon(cmd, reply=False):
+            if cmd.startswith("setblock "):
+                sets.append(cmd)
+            if cmd.startswith("execute unless block"):
+                return "Test passed" if int(cmd.split()[4]) <= 63 else "Test failed"
+            return "ok"
+
+        async def command(cid, text):
+            if text.startswith("!layBlocks("):
+                job = int(text[len("!layBlocks("):].split(",")[0])
+                for i in range(len(text.rsplit('"', 2)[-2].split(";"))):
+                    await eng._hand_event(["put", str(job), str(i)])
+                await eng._hand_event(["laid", str(job)])
+            return True
+
+        async def place_one(cmd):
+            placed.append(cmd)
+            return True
+
+        async def arrive(*a):
+            return None
+
+        async def no_wait(_s):
+            return None
+
+        monkeypatch.setattr(mm, "rcon_command", fake_rcon)
+        monkeypatch.setattr(mm.asyncio, "sleep", no_wait)
+        eng._command, eng._arrive, eng.projects.place_one = command, arrive, place_one
+        # chat asked for something: the Kingdom waits right away, nothing lost
+        eng._free_waiting = 1
+        assert await eng._kingdom_step()
+        assert eng.projects.state["kingdom"]["piece"] == 0 and not sets
+        eng._free_waiting = 0
+        assert await eng._kingdom_step()  # the whole first lot: the king's castle
+        first = kd.lots()[0]
+        assert eng.projects.state["kingdom"] == {"lot": 1, "piece": 0}
+        assert len(sets) == len(set(sets)) == len(kd.lot_blocks(first)) and not placed  # all by hand
+        assert first["title"] == "the king's castle" and "Kingdom" in eng._memory_text()
+        assert any(op.get("title") == "🏰 The Kingdom" for op in eng.pushed)
+
+    asyncio.run(run())
+
+
+def test_the_kingdom_fills_a_long_stream():
+    from src.open_llm_vtuber.room import minecraft_kingdom as kd
+
+    lots = kd.lots()
+    assert len(lots) == kd.GRID * kd.GRID and lots[0]["template"] == "castle"
+    assert kd.total_blocks() > 150_000  # about 10 hours by hand, two girls
+    assert len({(lot["x"], lot["z"]) for lot in lots}) == len(lots)  # every lot its own place
