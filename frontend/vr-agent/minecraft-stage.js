@@ -70,8 +70,10 @@
   function setFocus(id, force) {
     if (!id || id === focus) return;
     if (!force && Date.now() - focusAt < FOCUS_HOLD) return;
+    const was = focus;
     focus = id;
     focusAt = Date.now();
+    if (was) fresh(id); // a view that sat hidden starts clean (no frozen or blank 3D)
     document.querySelectorAll("#mc-views .mc-view").forEach((v) => v.classList.toggle("focus", v.dataset.who === id));
     const watch = $("mc-watch");
     if (watch) {
@@ -120,6 +122,18 @@
 
   // The bot's view only exists once it is in the world: point the frame at it
   // then, and again after the bot was gone for a while (a restart).
+  // The 3D view can go blank or freeze in OBS after a while (lost graphics
+  // context, unloaded chunks). A fresh load fixes it: on every camera switch
+  // and every few minutes on the view being watched.
+  const REFRESH_MS = 6 * 60 * 1000;
+  function fresh(id) {
+    const p = viewPane(id);
+    if (!p || !loaded[id]) return;
+    const frame = p.querySelector("iframe");
+    frame.src = `http://${location.hostname || "127.0.0.1"}:${ports[id] || 3000}/?t=${Date.now()}`;
+  }
+  setInterval(() => { if (focus && document.documentElement.classList.contains("minecraft-mode")) fresh(focus); }, REFRESH_MS);
+
   function view(id) {
     const p = viewPane(id);
     if (!p) return;
