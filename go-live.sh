@@ -23,12 +23,16 @@ fi
 
 echo "Stage for OBS: http://127.0.0.1:12393/vr-agent/teaching-stage.html"
 
-# VR_START_OBS=1 in .env: OBS opens minimized and starts streaming by itself,
-# so you never have to touch it. The 11h55m limit stops it again.
-if grep -qE '^VR_START_OBS=(1|true)' .env 2>/dev/null && command -v obs >/dev/null; then
-    if ! pgrep -x obs >/dev/null; then
-        echo "Starting OBS (minimized, streaming)"
-        (sleep 20; obs --startstreaming --minimize-to-tray --disable-shutdown-check >/dev/null 2>&1) &
+# VR_START_OBS=1 in .env: OBS opens minimized, and the server tells it to
+# start streaming once the Stage page is up (OBS_WEBSOCKET_PASSWORD needed).
+# The 11h55m limit stops it again. You never have to click anything in OBS.
+if grep -qE '^VR_START_OBS=(1|true)' .env 2>/dev/null && ! pgrep -x obs >/dev/null; then
+    if command -v obs >/dev/null; then
+        echo "Opening OBS (minimized)"
+        (sleep 15; obs --minimize-to-tray --disable-shutdown-check >/dev/null 2>&1) &
+    elif command -v flatpak >/dev/null && flatpak info com.obsproject.Studio >/dev/null 2>&1; then
+        echo "Opening OBS (minimized)"
+        (sleep 15; flatpak run com.obsproject.Studio --minimize-to-tray --disable-shutdown-check >/dev/null 2>&1) &
     fi
 fi
 stop=0

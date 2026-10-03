@@ -134,6 +134,9 @@ class StreamAutopilot:
 
     # ------------------------------------------------------------ start
     def start(self) -> None:
+        if not getattr(self, "_obs_started", False):
+            self._obs_started = True
+            asyncio.create_task(start_obs_stream())
         if not self.ready or (self.task and not self.task.done()):
             return
         self.task = asyncio.create_task(self._run(), name="stream-autopilot")
@@ -266,6 +269,30 @@ class StreamAutopilot:
 
 async def stop_obs_stream() -> bool:
     """Tell OBS to stop streaming (obs-websocket 5). False when not set up."""
+    return await obs_request("StopStream")
+
+
+async def start_obs_stream(tries: int = 12) -> bool:
+    """VR_START_OBS=1: once the Stage is up, OBS starts streaming by itself
+    (retried while OBS is still opening). Already streaming is fine."""
+    if not _flag("VR_START_OBS", "0"):
+        return False
+    for _ in range(tries):
+        status = await obs_request("GetStreamStatus", want_reply=True)
+        if isinstance(status, dict):
+            if status.get("outputActive"):
+                logger.info("OBS is already streaming")
+                return True
+            if await obs_request("StartStream"):
+                logger.info("OBS started streaming")
+                return True
+        await asyncio.sleep(10)
+    logger.warning("OBS did not start streaming: is OBS open with the WebSocket server on?")
+    return False
+
+
+async def obs_request(request_type: str, want_reply: bool = False) -> Any:
+    """One obs-websocket 5 request. False (or None) when OBS is not reachable."""
     password = os.environ.get("OBS_WEBSOCKET_PASSWORD", "").strip()
     url = os.environ.get("OBS_WEBSOCKET_URL", "ws://127.0.0.1:4455").strip()
     if not password and not _flag("OBS_STOP_STREAM", "0"):
@@ -286,10 +313,15 @@ async def stop_obs_stream() -> bool:
                 ).decode()
             await ws.send(json.dumps({"op": 1, "d": identify}))
             await asyncio.wait_for(ws.recv(), 5)  # Identified
-            await ws.send(json.dumps({"op": 6, "d": {"requestType": "StopStream", "requestId": "vr-end"}}))
-            await asyncio.wait_for(ws.recv(), 5)
-        logger.info("Stream autopilot: OBS stopped streaming")
-        return True
+            await ws.send(json.dumps({"op": 6, "d": {"requestType": request_type, "requestId": "vr"}}))
+            reply = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        data = reply.get("d") or {}
+        ok = bool((data.get("requestStatus") or {}).get("result"))
+        if want_reply:
+            return data.get("responseData") or {} if ok else None
+        if ok and request_type == "StopStream":
+            logger.info("Stream autopilot: OBS stopped streaming")
+        return ok
     except Exception as exc:
-        logger.warning(f"Could not stop OBS: {exc}")
-        return False
+        logger.debug(f"OBS {request_type} failed: {exc}")
+        return None if want_reply else False
