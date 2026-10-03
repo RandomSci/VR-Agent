@@ -103,6 +103,8 @@
     names = op.names || names;
     ports = op.viewers || ports;
     document.documentElement.classList.add("minecraft-mode");
+    // creative: no hearts, food or item lists (they never change), see the CSS
+    document.documentElement.classList.toggle("mc-creative", op.creative !== false);
     views();
     focus = "";
     setFocus(cast[0], true);
@@ -134,7 +136,7 @@
   function leave() {
     document.documentElement.classList.remove("mc-client");
     clearInterval(layoutTimer);
-    document.documentElement.classList.remove("minecraft-mode");
+    document.documentElement.classList.remove("minecraft-mode", "mc-creative");
     if (window.vrRoom && window.vrRoom.normal) window.vrRoom.normal();
   }
 

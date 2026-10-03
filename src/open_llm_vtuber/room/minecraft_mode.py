@@ -620,6 +620,7 @@ class MinecraftEngine:
                 "viewers": ports,
                 "camera": "web",
                 "problem": self.problem,
+                "creative": self.creative,  # the Stage hides survival things (hearts, food, items)
             }
             await self._wait_ready()
             await self._push({"kind": "start", **self.view})

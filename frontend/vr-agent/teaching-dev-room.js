@@ -1578,6 +1578,8 @@
   else boot();
 
   // Developer console hooks.
+  const MC_SCALE = 0.42; // Minecraft mode: the characters' size (0.5 before: they covered the game)
+
   window.vrRoom = Object.freeze({
     state: () => ({
       characters: [...room.characters.values()].map((c) => ({
@@ -1790,15 +1792,18 @@
       }
       return true;
     },
-    // Minecraft mode: both characters small in the bottom corners, over
-    // their own bot's view.
+    // Minecraft mode: both characters small, tucked into the bottom corners
+    // so the game (builds, the race, titles in the middle) stays visible.
+    // Who talks grows a little and is fully bright; the quiet one is a bit
+    // smaller and dimmer, so viewers always see who is speaking.
     minecraft: (leftId, rightId) => {
       const left = String(leftId || "").toLowerCase();
       if (!window.vrRoom.teaching(left)) return false;
       const spots = [
-        [left, 0.105, 0.5],
-        [String(rightId || "").toLowerCase(), 0.895, 0.5],
+        [left, 0.085, MC_SCALE],
+        [String(rightId || "").toLowerCase(), 0.915, MC_SCALE],
       ];
+      const glow = [];
       for (const [id, x, scale] of spots) {
         const c = room.characters.get(id);
         const base = c && room._teachingView && room._teachingView.saved.get(id);
@@ -1806,15 +1811,31 @@
         c.model.visible = true;
         c.move = null;
         c.model.scale.set(base.scaleX * scale, base.scaleY * scale);
-        c.model.position.set(STAGE_W * x, STAGE_H * 1.03);
+        c.model.position.set(STAGE_W * x, STAGE_H * 1.05);
         c.home = { x: c.model.position.x, y: c.model.position.y };
         c.baseX = c.model.position.x;
         c.lane = { min: c.model.position.x, max: c.model.position.x };
         c.direct("VIEWER", 60 * 60 * 1000, 0);
+        glow.push({ c, base, k: 0 });
       }
+      clearInterval(room._mcGlow);
+      room._mcGlow = setInterval(() => {
+        const anyone = glow.some((g) => g.c.speaking);
+        for (const g of glow) {
+          if (!g.c.model) continue;
+          // 1 while she talks, 0 while quiet; eased so it never jumps
+          g.k += ((g.c.speaking ? 1 : 0) - g.k) * 0.15;
+          const s = MC_SCALE * (1 + 0.08 * g.k);
+          g.c.model.scale.set(g.base.scaleX * s, g.base.scaleY * s);
+          g.c.model.alpha = anyone ? 0.78 + 0.22 * g.k : 1;
+        }
+      }, 50);
       return true;
     },
     normal: () => {
+      clearInterval(room._mcGlow);
+      room._mcGlow = 0;
+      for (const c of room.characters.values()) if (c.model) c.model.alpha = 1;
       const view =
         room._teachingView;
 

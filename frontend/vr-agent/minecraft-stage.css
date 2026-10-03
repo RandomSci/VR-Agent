@@ -110,3 +110,10 @@ html.minecraft-mode #mc-over { display: block; position: fixed; inset: 0; z-inde
 .mc-nlast { padding: .2vh .6vw; border-radius: 99px; }
 .mc-nlast.right { background: #5fe3c833; color: #b6ffe9; }
 .mc-nlast.wrong { background: #ff6f6f33; color: #ffc4c4; }
+
+/* Less on screen: what Minecraft is doing under the hood ("stopped ·
+   Afternoon · desert") and the inventory are not for viewers. Survival keeps
+   the name and hearts (they matter there); creative shows none of it: they
+   cannot get hurt or hungry, and the talking pill already says who is who. */
+html.minecraft-mode .mc-doing, html.minecraft-mode .mc-items, html.minecraft-mode .mc-food { display: none !important; }
+html.minecraft-mode.mc-creative .mc-tag { display: none !important; }
