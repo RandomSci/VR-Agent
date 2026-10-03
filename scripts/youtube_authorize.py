@@ -6,7 +6,8 @@ Needs YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env (an OAuth client of
 type "Desktop app" from Google Cloud, with the YouTube Data API v3 enabled).
 It opens Google's consent page in your browser, asks only for the
 youtube.force-ssl scope (post to live chat, reply to comments, edit video
-descriptions), and saves the refresh token to data/secrets/youtube_token.json
+descriptions) plus Slides, Docs, Sheets, Calendar and its own Drive files for
+class mode, and saves the refresh token to data/secrets/youtube_token.json
 (gitignored, readable only by you). Leave YOUTUBE_REFRESH_TOKEN empty in .env:
 the server reads the saved token and keeps it up to date. Sign in with the
 channel that streams. The token is never printed.
@@ -37,7 +38,7 @@ from open_llm_vtuber.publishing.settings import (  # noqa: E402
     PublishSettings,
     save_refresh_token,
 )
-from open_llm_vtuber.publishing.youtube import SCOPE, TOKEN_URL  # noqa: E402
+from open_llm_vtuber.publishing.youtube import ALL_SCOPES, TOKEN_URL  # noqa: E402
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 
@@ -81,7 +82,7 @@ def main() -> None:
                 "client_id": settings.youtube_client_id,
                 "redirect_uri": redirect,
                 "response_type": "code",
-                "scope": SCOPE,
+                "scope": ALL_SCOPES,
                 "access_type": "offline",
                 "prompt": "consent",
                 "state": state,

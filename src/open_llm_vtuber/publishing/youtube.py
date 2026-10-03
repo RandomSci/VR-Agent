@@ -30,6 +30,17 @@ import httpx
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API = "https://www.googleapis.com/youtube/v3"
 SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
+# Class mode also uses the same Google account for lesson material:
+# Slides (the lesson deck), Docs (notes), Sheets (leaderboard), Calendar
+# (the schedule) and files it creates in Drive. One sign-in covers all.
+CLASS_SCOPES = (
+    "https://www.googleapis.com/auth/presentations",
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/drive.file",
+)
+ALL_SCOPES = " ".join((SCOPE, *CLASS_SCOPES))
 CHAT_LIMIT = 200  # YouTube live chat messages are short; keep well within it
 
 
