@@ -63,6 +63,7 @@ from typing import Any, Awaitable, Callable, Optional
 from loguru import logger
 
 from ..vr_agent.text_safety import strip_emoji
+from .minecraft_projects import MATERIALS
 
 MC_DIR = Path("minecraft")
 SERVER_DIR = MC_DIR / "server"
@@ -93,6 +94,30 @@ CREATIVE_BLOCKED = [
     "!startConversation", "!endConversation",
 ]
 PIECE_SECONDS = (4.0, 20.0)  # creative: at least / at most this long per piece
+CHOICE_HOLD = 25.0  # after a girl flies somewhere herself, the builder leaves her alone this long
+NUDGE_SECONDS = 45.0  # creative: one girl is asked what she wants to do next this often
+# Places a girl can fly to herself (!flyToPlace): where she hovers and what she looks at, base relative.
+PLACES = {
+    "castle": ((0, 22, -26), (0, 8, 0)),
+    "network": ((25, 16, -6), (40, 16, -6)),
+    "farm": ((0, 14, -40), (0, 0, -20)),
+    "garden": ((0, 14, 42), (0, 0, 21)),
+    "base": ((-6, 6, -14), (0, 2, 0)),
+    "sky": ((-20, 48, -40), (0, 0, 0)),
+}
+# What the girls know about themselves and the show (true facts).
+SYSTEM_FACTS = (
+    "True facts about you and this stream, share them when someone asks: you are AI characters made by Selwyn "
+    "of the YouTube channel Selwyn Builds, running in his VR Agent system. Your brain is GPT-4o-mini, your voice "
+    "is text to speech, your Live2D bodies stand at the bottom of the screen while the real Minecraft world shows "
+    "behind you. New in this system: you play creative and fly; you build every project piece by piece; an "
+    "invisible camera man follows you both; viewer comments are answered within seconds; the neural network you "
+    "build is REAL, written from scratch with backpropagation (35 input pixels, two hidden layers of 8 neurons, "
+    "10 outputs) and it learns live, and viewers can type draw 7 to make it read a digit. "
+    "You are in charge of what happens: !buildNext builds the next piece now, !flyToPlace(place) flies you to "
+    "castle, network, farm, garden, base, sky or friend, !changeMaterial(block) changes what the rest of this part "
+    "is made of, !testNetwork(digit) tests your network. Use them whenever you want, decide together."
+)
 CAMERA_HOLD = 15.0  # "eyes": the camera stays on one girl at least this long
 # "director": your camera floats behind both girls, aimed at them and what they
 # build, and glides to a new angle when they move. "eyes": through her eyes.
@@ -377,6 +402,9 @@ class MinecraftEngine:
         self.projects = ProjectTracker(list(self.names.values()), rcon_command, self._push, self._tell_both)
         self.projects.creative = self.creative
         self._builder_turn = 0
+        self._build_now: Optional[str] = None  # a girl said !buildNext
+        self._build_event = asyncio.Event()
+        self._chose_at: dict[str, float] = {}
         from .minecraft_net_show import NetShow
 
         self.net_show = NetShow(self.projects, lambda *a, **k: rcon_command(*a, **k), self._tell_one, self._push)
@@ -519,6 +547,7 @@ class MinecraftEngine:
                 asyncio.create_task(self._camera_loop(), name="mc-camera"),
                 asyncio.create_task(self._net_loop(), name="mc-net"),
                 asyncio.create_task(self._build_loop(), name="mc-build"),
+                asyncio.create_task(self._nudge_loop(), name="mc-nudge"),
             ]
             self._tasks.append(asyncio.create_task(self._title_loop(), name="mc-title"))
             await self._wait_live()
@@ -702,7 +731,7 @@ class MinecraftEngine:
                 "never call yourself a bot or an AI assistant. "
                 "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
                 f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by "
-                "name and react to them. Do not use commands, just talk."
+                "name and react to them. " + SYSTEM_FACTS
             )
         profile: dict[str, Any] = {
             "name": name,
@@ -784,6 +813,9 @@ class MinecraftEngine:
     async def _heard(self, agent: str, message: str) -> None:
         cid = self.ids.get(agent.lower())
         if not cid:
+            return
+        if str(message).startswith("[VR] "):
+            await self.choice(cid, str(message)[5:].strip())
             return
         text, to = clean_line(message)
         if not text:
@@ -1118,8 +1150,15 @@ class MinecraftEngine:
                 step = steps[done]
                 bx, by, bz = base
                 self.build_focus = (bx + step["focus"][0], by + step["focus"][1], bz + step["focus"][2])
-                self._builder_turn += 1
-                cid = here[self._builder_turn % len(here)]
+                if self._build_now in here:
+                    cid = self._build_now  # she asked to build it herself
+                else:
+                    # whoever did not just fly somewhere of her own choosing
+                    free = [c for c in here if time.time() - self._chose_at.get(c, 0) > CHOICE_HOLD] or here
+                    self._builder_turn += 1
+                    cid = free[self._builder_turn % len(free)]
+                self._build_now = None
+                self._build_event.clear()
                 started = time.time()
                 flight = await self._fly(cid, step["view"], step["focus"])
                 await self._arrive(cid, step["view"], step["focus"], flight)
@@ -1133,7 +1172,10 @@ class MinecraftEngine:
                 await self._push({"kind": "project", **self.view["project"]})
                 await self._camera_to(cid)
                 pace = min(PIECE_SECONDS[1], max(PIECE_SECONDS[0], total / len(steps)))
-                await asyncio.sleep(max(0.0, pace - (time.time() - started)))
+                try:  # the next piece comes after the pace, or right away when a girl says !buildNext
+                    await asyncio.wait_for(self._build_event.wait(), timeout=max(0.0, pace - (time.time() - started)))
+                except asyncio.TimeoutError:
+                    pass
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1152,6 +1194,61 @@ class MinecraftEngine:
         up = max(0.0, max(here[1] + 1, y + 3, cruise) - here[1])
         down = max(0.0, max(here[1] + 1, y + 3, cruise) - y)
         return min(10.0, (up + across + down) / 9.0 + 0.8)
+
+    async def choice(self, cid: str, text: str) -> None:
+        """Something a girl decided with one of her own commands."""
+        name = self.names[cid]
+        verb, _, arg = text.partition(" ")
+        arg = arg.strip().strip('"').strip("'").lower()
+        logger.info(f"Minecraft: {name} chose {verb} {arg}".rstrip())
+        if verb == "buildNext":
+            self._build_now = cid
+            self._build_event.set()
+        elif verb == "flyToPlace" and self.projects.state.get("base"):
+            self._chose_at[cid] = time.time()
+            if arg == "friend":
+                friend = self._friend(cid)
+                if friend == cid or friend not in self._pos:
+                    return
+                bx, by, bz = self.projects.state["base"]
+                fx, fy, fz = self._pos[friend]
+                view = (fx - bx + 3, fy - by + 1, fz - bz + 3)
+                focus = (fx - bx, fy - by + 1, fz - bz)
+            else:
+                view, focus = PLACES.get(arg, PLACES["base"])
+            asyncio.create_task(self._arrive(cid, view, focus, await self._fly(cid, view, focus)))
+        elif verb == "changeMaterial":
+            old = self.projects.set_material(arg)
+            note = (
+                f"Done: the rest of {self.projects.view().get('step', 'this part')} is built from {arg} instead of {old}."
+                if old else f"{arg} cannot be used here. Pick one of: {', '.join(sorted(MATERIALS)[:14])}."
+            )
+            await self.link.emit("send-message", name, {"from": "system", "message": note})
+        elif verb == "testNetwork" and arg.isdigit():
+            if not self.net_show.request(int(arg), name):
+                await self.link.emit("send-message", name, {"from": "system", "message": "The network is not built far enough yet: it needs its weights first."})
+
+    async def _nudge_loop(self) -> None:
+        """Creative: now and then one girl decides what happens next (and talks)."""
+        if not self.creative:
+            return
+        while True:
+            await asyncio.sleep(NUDGE_SECONDS)
+            here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 10]
+            if not here or not self.link.connected.is_set():
+                continue
+            cid = self._quietest(here)
+            view = self.projects.view()
+            steps = self.projects.steps()
+            done = int(self.projects.state.get("built", 0))
+            friend = self.names[self._friend(cid)]
+            net = self.net_show.describe()
+            await self.link.emit("send-message", self.names[cid], {"from": "system", "message": (
+                f"Status: {strip_emoji(view.get('title', ''))}, part {view.get('step', '')}, "
+                f"{done} of {len(steps) or 'a few'} pieces built. {net} "
+                f"Say something to {friend} out loud about what you are building or what to do next, and if you "
+                "want, use one of your commands (!buildNext, !flyToPlace, !changeMaterial, !testNetwork)."
+            )})
 
     async def _arrive(self, cid: str, view: tuple, focus: tuple, flight: float) -> None:
         """Wait for the flight; if a hill or a tree stopped her (players cannot
@@ -1307,6 +1404,7 @@ class MinecraftEngine:
             f"You are {name}. {persona} You are live on YouTube playing {'creative' if self.creative else 'survival'} Minecraft with {friend}. "
             f"Right now you are: {doing}. Team project: {strip_emoji(view.get('title', ''))}, working on {view.get('step', '')}. "
             f"Just said on stream: {recent or 'nothing yet'}. {self.net_show.describe()} "
+            f"{SYSTEM_FACTS if self.creative else ''} "
             "A viewer wrote in the live chat. Answer them out loud in one or two short sentences, under 25 words. "
             "Say their name once. If they ask you to do something, say you will do it, or cheekily why not. "
             "Plain spoken words only: no emojis, no emoticons, no symbols, no hashtags, no commands, no quotes."
@@ -1488,7 +1586,7 @@ CAMERA_GLIDE = (
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v4)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v5)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -1531,6 +1629,41 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v4)
             await bot.lookAt(new Vec3(lx, ly, lz), true);
             bot.swingArm('right');
         })
+    },
+    { // VR Agent: the girls decide what happens; the stream engine carries it out
+        name: '!buildNext',
+        description: 'Fly to the next piece of your team project and build it right now.',
+        perform: async function (agent) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] buildNext');
+            return 'You fly to the next piece and build it.';
+        }
+    },
+    {
+        name: '!flyToPlace',
+        description: 'Fly somewhere you choose: castle, network, farm, garden, base, sky (high up for a view) or friend.',
+        params: {'place': {type: 'string', description: 'castle, network, farm, garden, base, sky or friend'}},
+        perform: async function (agent, place) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] flyToPlace ' + place);
+            return 'You fly to ' + place + '.';
+        }
+    },
+    {
+        name: '!changeMaterial',
+        description: 'Choose the main block for the rest of the part you are building, like quartz_block, deepslate_bricks, pink_concrete, sandstone.',
+        params: {'block': {type: 'BlockName', description: 'the new main block'}},
+        perform: async function (agent, block) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] changeMaterial ' + block);
+            return 'From now on this part is built from ' + block + ' (if it is allowed).';
+        }
+    },
+    {
+        name: '!testNetwork',
+        description: 'Let your real neural network read a messy handwritten digit on its board and guess it.',
+        params: {'digit': {type: 'int', description: 'the digit, 0 to 9', domain: [0, 10]}},
+        perform: async function (agent, digit) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] testNetwork ' + digit);
+            return 'The network reads a ' + digit + ' now.';
+        }
     },
     { // VR Agent: back on the ground
         name: '!land',

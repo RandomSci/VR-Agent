@@ -369,6 +369,29 @@ def split_steps(commands: list[str], project_id: str = "") -> list[dict[str, Any
     return steps
 
 
+# Blocks the girls may switch a part to (!changeMaterial): pretty, solid, safe.
+MATERIALS = {
+    "stone_bricks", "quartz_block", "smooth_quartz", "deepslate_bricks", "mossy_stone_bricks", "sandstone",
+    "smooth_sandstone", "red_sandstone", "prismarine_bricks", "dark_prismarine", "purpur_block",
+    "polished_blackstone_bricks", "bricks", "mud_bricks", "tuff_bricks", "calcite", "amethyst_block",
+    "white_concrete", "pink_concrete", "light_blue_concrete", "purple_concrete", "lime_concrete",
+    "yellow_concrete", "orange_concrete", "red_concrete", "black_concrete", "cyan_concrete",
+    "oak_planks", "spruce_planks", "birch_planks", "cherry_planks", "dark_oak_planks", "bamboo_planks",
+    "gold_block", "emerald_block", "diamond_block", "glass", "white_stained_glass", "pink_stained_glass",
+}
+
+
+def main_block(steps: list[dict[str, Any]]) -> str:
+    """The block most of a part is made of (what !changeMaterial swaps)."""
+    counts: dict[str, int] = {}
+    for step in steps:
+        for command in step["commands"]:
+            for name in re.findall(r"minecraft:([a-z_]+)", command):
+                if name != "air":
+                    counts[name] = counts.get(name, 0) + 1
+    return max(counts, key=counts.get) if counts else ""
+
+
 class ProjectTracker:
     """Progress toward the next milestone, the build when it is reached."""
 
@@ -498,6 +521,25 @@ class ProjectTracker:
             self._steps_key = key
         return self._steps
 
+    def set_material(self, block: str) -> str:
+        """A girl picked a new main block for the part she is building.
+        Returns what it replaces, or "" when the block is not allowed."""
+        block = block.replace("minecraft:", "").strip().lower()
+        main = main_block(self.steps())
+        if block not in MATERIALS or not main or main == block:
+            return ""
+        self.state["material"] = {"part": [self.state.get("project", 0), self.state.get("milestone", 0)],
+                                  "from": main, "to": block}
+        self._save()
+        return main
+
+    def _swap(self, command: str) -> str:
+        swap = self.state.get("material") or {}
+        part = [self.state.get("project", 0), self.state.get("milestone", 0)]
+        if swap.get("part") != part:
+            return command
+        return re.sub(rf"minecraft:{re.escape(swap['from'])}(?![a-z_])", f"minecraft:{swap['to']}", command)
+
     async def run_step(self, step: dict[str, Any]) -> bool:
         """One piece into the world. False without a server console."""
         base = tuple(self.state["base"])
@@ -510,7 +552,7 @@ class ProjectTracker:
             self._loaded = True
             await asyncio.sleep(2.0)
         for command in step["commands"]:
-            reply = await self.rcon(place(command, base, owners), reply=True)
+            reply = await self.rcon(place(self._swap(command), base, owners), reply=True)
             if reply is False:
                 return False
             if isinstance(reply, str) and any(w in reply for w in REFUSED) and "Could not set the block" not in reply:

@@ -378,3 +378,36 @@ def test_director_camera_frames_both_girls_and_the_build(monkeypatch):
         assert float(glide[-1].split()[2]) > 0  # now from the other side
 
     asyncio.run(run())
+
+
+def test_the_girls_choose_what_happens(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng.projects.state.update({"project": 0, "milestone": 0, "built": 0, "base": [8, 62, -81]})
+        flights = []
+
+        async def fly(cid, view, focus):
+            flights.append((cid, view, focus))
+            return 0.0
+
+        async def arrive(*a):
+            return None
+
+        eng._fly = fly
+        eng._arrive = arrive
+        # her own chat line with the marker is an action, never speech
+        await eng._heard("Mika", "[VR] buildNext")
+        assert eng._build_now == "mika" and eng._build_event.is_set() and not eng.lines
+        await eng._heard("Luna", "[VR] flyToPlace sky")
+        await asyncio.sleep(0)
+        assert flights[-1] == ("luna", *mm.PLACES["sky"]) and "luna" in eng._chose_at
+        await eng._heard("Mika", "[VR] changeMaterial quartz_block")
+        swapped = eng.projects._swap("fill {x-9} {y} {z-9} {x9} {y} {z9} minecraft:stone_bricks")
+        assert swapped.endswith("minecraft:quartz_block")
+        assert eng.projects._swap("setblock {x0} {y5} {z9} minecraft:stone_brick_wall").endswith("stone_brick_wall")
+        await eng._heard("Mika", "[VR] changeMaterial tnt")  # not allowed: told, nothing changes
+        assert eng.link.sent[-1][1]["message"].startswith("tnt cannot be used")
+        profile = eng.profile("luna")["conversing"]
+        assert "Selwyn Builds" in profile and "!flyToPlace" in profile
+
+    asyncio.run(run())
