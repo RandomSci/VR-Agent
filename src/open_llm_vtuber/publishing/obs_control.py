@@ -23,8 +23,10 @@ import hashlib
 import itertools
 import json
 import os
+import shutil
 import subprocess
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from loguru import logger
@@ -42,12 +44,82 @@ class OBSError(RuntimeError):
     pass
 
 
+# OBS keeps its WebSocket settings in a file on this same computer, so the
+# password never has to be copied into .env (and can never be wrong).
+CONFIG_PATHS = (
+    Path.home() / ".config/obs-studio/plugin_config/obs-websocket/config.json",
+    Path.home() / ".var/app/com.obsproject.Studio/config/obs-studio/plugin_config/obs-websocket/config.json",
+)
+
+
+def _obs_config() -> tuple[Optional[Path], dict[str, Any]]:
+    for path in CONFIG_PATHS:
+        try:
+            return path, json.loads(path.read_text())
+        except Exception:
+            continue
+    return None, {}
+
+
+def obs_running() -> bool:
+    return subprocess.run(["pgrep", "-x", "obs"], capture_output=True).returncode == 0
+
+
+def prepare_obs_config() -> None:
+    """Before OBS opens: make sure its WebSocket server is switched on."""
+    path, config = _obs_config()
+    if path is None or obs_running() or config.get("server_enabled"):
+        return
+    config["server_enabled"] = True
+    try:
+        path.write_text(json.dumps(config, indent=4))
+        logger.info("OBS: WebSocket server switched on in OBS settings")
+    except Exception as exc:
+        logger.warning(f"OBS: could not switch the WebSocket server on: {exc}")
+
+
+def launch_obs(streaming: bool) -> bool:
+    """Open OBS from the terminal (minimized), optionally streaming at once."""
+    args = ["--minimize-to-tray", "--disable-shutdown-check"] + (["--startstreaming"] if streaming else [])
+    for command in (["obs"], ["flatpak", "run", "com.obsproject.Studio"]):
+        if shutil.which(command[0]):
+            try:
+                subprocess.Popen(
+                    command + args,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,  # Ctrl+C in the terminal must not kill it
+                )
+                return True
+            except Exception as exc:
+                logger.warning(f"OBS: could not open: {exc}")
+    return False
+
+
+async def close_obs(timeout: float = 15) -> None:
+    """Close OBS like clicking X (it stops the stream first)."""
+    if not obs_running():
+        return
+    subprocess.run(["pkill", "-x", "obs"], check=False)
+    deadline = time.time() + timeout
+    while time.time() < deadline and obs_running():
+        await asyncio.sleep(0.5)
+    if obs_running():
+        subprocess.run(["pkill", "-9", "-x", "obs"], check=False)
+    logger.info("OBS: closed")
+
+
 class OBS:
     """One authenticated obs-websocket connection: ``async with OBS() as obs``."""
 
     def __init__(self) -> None:
-        self.url = os.environ.get("OBS_WEBSOCKET_URL", "ws://127.0.0.1:4455").strip()
-        self.password = os.environ.get("OBS_WEBSOCKET_PASSWORD", "").strip()
+        _path, config = _obs_config()
+        port = config.get("server_port") or 4455
+        self.url = os.environ.get("OBS_WEBSOCKET_URL", "").strip() or f"ws://127.0.0.1:{port}"
+        # OBS's own settings file wins: it is always the current password.
+        self.password = str(config.get("server_password") or "") or os.environ.get(
+            "OBS_WEBSOCKET_PASSWORD", ""
+        ).strip()
         self.ws = None
         self._ids = itertools.count(1)
 
@@ -66,7 +138,12 @@ class OBS:
                 hashlib.sha256((secret + auth["challenge"]).encode()).digest()
             ).decode()
         await self.ws.send(json.dumps({"op": 1, "d": identify}))
-        reply = json.loads(await asyncio.wait_for(self.ws.recv(), 5))
+        try:
+            reply = json.loads(await asyncio.wait_for(self.ws.recv(), 5))
+        except Exception as exc:
+            if "4009" in str(exc):
+                raise OBSError("OBS refused the WebSocket password") from None
+            raise
         if reply.get("op") != 2:
             raise OBSError("OBS refused the WebSocket password")
         return self
@@ -98,7 +175,7 @@ async def _connect_when_ready(wait_seconds: float) -> Optional[OBS]:
         try:
             return await OBS().__aenter__()
         except OBSError as exc:
-            logger.error(f"OBS: {exc}. Check OBS_WEBSOCKET_PASSWORD in .env")
+            logger.error(f"OBS: {exc}")
             return None
         except Exception as exc:
             last = str(exc)
@@ -187,11 +264,22 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
     if not manage_obs():
         STREAM_LIVE.set()
         return False
+    prepare_obs_config()
+    if not obs_running():
+        logger.info("OBS: opening it (minimized)")
+        launch_obs(streaming=False)
     started = time.time()
     logger.info("OBS: waiting for OBS to answer (WebSocket server)")
-    obs = await _connect_when_ready(180)
+    obs = await _connect_when_ready(90)
     if obs is None:
-        STREAM_LIVE.set()  # teach anyway; you can start streaming yourself
+        # No remote control: restart OBS from the terminal, streaming at once.
+        # The server is already up, so the Stage page loads straight away.
+        logger.warning("OBS: no remote control, so OBS is reopened and told to stream from the terminal")
+        await close_obs()
+        if launch_obs(streaming=True):
+            await asyncio.sleep(20)
+            logger.info("OBS: reopened with streaming on")
+        STREAM_LIVE.set()
         return False
     logger.info("OBS: connected")
     try:
@@ -233,7 +321,6 @@ async def stop_and_close() -> None:
         logger.warning(f"OBS: could not stop streaming: {exc}")
     if manage_obs():
         try:
-            subprocess.run(["pkill", "-x", "obs"], check=False, timeout=5)
-            logger.info("OBS: closed")
+            await close_obs()
         except Exception as exc:
             logger.debug(f"OBS: close failed: {exc}")

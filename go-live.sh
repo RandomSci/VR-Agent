@@ -29,32 +29,9 @@ fi
 
 echo "Stage for OBS: http://127.0.0.1:12393/vr-agent/teaching-stage.html"
 
-# VR_START_OBS=1 in .env: OBS opens (minimized) once the server is up. The server then picks
-# the Stage scene, reloads the page without cache, waits for Mika and Luna,
-# and only then starts streaming. Ctrl+C ends the stream and closes OBS.
-# setsid: Ctrl+C in this terminal must not kill OBS before the goodbye.
-# OBS opens only once the server answers, so its Browser source never loads
-# a dead page (that was the black screen).
-open_obs_when_server_is_up() {
-    for _ in $(seq 1 90); do
-        curl -s -o /dev/null "http://127.0.0.1:12393/vr-agent/teaching-stage.html" && break
-        sleep 2
-    done
-    echo "Opening OBS (minimized)"
-    if command -v obs >/dev/null; then
-        setsid obs --minimize-to-tray --disable-shutdown-check >/dev/null 2>&1 &
-    else
-        setsid flatpak run com.obsproject.Studio --minimize-to-tray --disable-shutdown-check >/dev/null 2>&1 &
-    fi
-}
-if grep -qE '^VR_START_OBS=(1|true)' .env 2>/dev/null && ! pgrep -x obs >/dev/null; then
-    if command -v obs >/dev/null || { command -v flatpak >/dev/null && flatpak info com.obsproject.Studio >/dev/null 2>&1; }; then
-        open_obs_when_server_is_up &
-    else
-        echo "VR_START_OBS=1 but OBS was not found: open it yourself"
-    fi
-fi
-
+# VR_START_OBS=1 in .env: the server opens OBS, picks the Stage scene, reloads
+# the page without cache, waits for Mika and Luna, then starts streaming.
+# Ctrl+C: goodbye, the broadcast ends, OBS stops and closes.
 stop=0
 trap 'stop=1' INT TERM
 while [ "$stop" -eq 0 ]; do
@@ -65,3 +42,9 @@ while [ "$stop" -eq 0 ]; do
     echo "Server stopped (exit $code). Restarting in 5 seconds, Ctrl+C to quit."
     sleep 5
 done
+
+# Whatever happened above, OBS never stays open streaming on its own.
+if grep -qE '^VR_START_OBS=(1|true)' .env 2>/dev/null && pgrep -x obs >/dev/null; then
+    echo "Closing OBS"
+    pkill -x obs
+fi

@@ -103,11 +103,19 @@ def parse_json_object(text: str) -> Optional[dict[str, Any]]:
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
         return None
-    try:
-        value = json.loads(text[start : end + 1])
-    except ValueError:
-        return None
-    return value if isinstance(value, dict) else None
+    body = text[start : end + 1]
+    # \frac, \beta, \begin written with one backslash would become control characters
+    body = re.sub(r"(?<!\\)\\([fb])(?=[a-zA-Z]{2})", r"\\\\\1", body)
+    for attempt in range(3):
+        try:
+            value = json.loads(body, strict=False)
+            return value if isinstance(value, dict) else None
+        except ValueError:
+            if attempt == 0:  # LaTeX like \frac written with one backslash
+                body = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", body)
+            else:  # trailing commas
+                body = re.sub(r",\s*([}\]])", r"\1", body)
+    return None
 
 
 def _clip(value: Any, limit: int) -> str:
@@ -557,10 +565,18 @@ class ClassEngine:
             {"role": "user", "content": f'Write the lesson "{title}" now as JSON.'},
         ]
         started = time.time()
-        reply = await self._ask(messages, timeout=150, writing=True)
-        lesson = normalize_lesson(parse_json_object(reply) or {}, title)
+        lesson = None
+        for attempt in range(2):
+            reply = await self._ask(messages, timeout=150, writing=True)
+            lesson = normalize_lesson(parse_json_object(reply) or {}, title)
+            if lesson is not None:
+                break
+            logger.warning(
+                f"Class: lesson '{title}' came back unreadable"
+                + (", asking again" if attempt == 0 else "")
+                + f" (reply starts: {' '.join(str(reply)[:120].split())!r})"
+            )
         if lesson is None:
-            logger.warning(f"Class: lesson '{title}' came back unreadable")
             return None
         problems = await self._check(lesson)
         if problems:

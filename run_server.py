@@ -174,7 +174,10 @@ def run(console_log_level: str):
     uv_server.goodbye = server.ws_handler.end_session
     # The 12 hour limit stops the server cleanly (go-live.sh then does not restart).
     server.ws_handler.request_shutdown = lambda: setattr(uv_server, "should_exit", True)
-    uv_server.run()
+    try:
+        uv_server.run()
+    except KeyboardInterrupt:
+        pass
 
 
 class GoodbyeServer(uvicorn.Server):
@@ -185,10 +188,20 @@ class GoodbyeServer(uvicorn.Server):
     goodbye = None
     _bye_task = None
 
+    _first_press = 0.0
+
     def handle_exit(self, sig, frame) -> None:
+        import time as _time
+
+        if self._bye_task is not None and _time.time() - self._first_press < 12:
+            logger.info("Still ending the stream, one moment (Ctrl+C again after 12 s to force)")
+            return
         if self.goodbye is None or self._bye_task is not None or self.should_exit:
-            return super().handle_exit(sig, frame)
-        logger.info("Saying goodbye on stream before stopping (Ctrl+C again to stop now)")
+            super().handle_exit(sig, frame)
+            self._captured_signals.clear()  # a clean exit, no KeyboardInterrupt trace
+            return
+        self._first_press = _time.time()
+        logger.info("Ending the stream: goodbye, YouTube, OBS (about 20 s)")
         loop = asyncio.get_event_loop()
 
         async def bye() -> None:
@@ -197,6 +210,7 @@ class GoodbyeServer(uvicorn.Server):
             except Exception as exc:
                 logger.warning(f"Goodbye skipped: {exc}")
             uvicorn.Server.handle_exit(self, sig, frame)
+            self._captured_signals.clear()
 
         self._bye_task = True
         loop.call_soon_threadsafe(lambda: setattr(self, "_bye_task", loop.create_task(bye())))
