@@ -335,7 +335,7 @@ class ProjectTracker:
         project, (name, gather, _build) = current
         await self.tell(
             f"Your big team project right now is {project['title']}. Next part: {name}. "
-            f"To make it happen, {gather}. Set this as your goal with !goal and talk about it with each other."
+            f"To make it happen, {gather}. Talk about it with each other and get to work."
         )
 
     async def _complete(self) -> None:
@@ -375,5 +375,5 @@ class ProjectTracker:
         else:
             text = f"{name} for {project['title']} is finished! Go look at it and celebrate!"
         if nxt is not None:
-            text += f" Next up: {nxt[1][0]} for {nxt[0]['title']}. To make it happen, {nxt[1][1]}. Set it as your new !goal."
+            text += f" Next up: {nxt[1][0]} for {nxt[0]['title']}. To make it happen, {nxt[1][1]}. Get to work on it."
         await self.tell(text)

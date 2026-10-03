@@ -48,3 +48,202 @@ def test_profile_is_in_character():
 def test_chunks_stay_short():
     parts = mm.chunks("One. " * 200)
     assert len(parts) <= 3 and all(len(p) <= mm.MAX_SAY for p in parts)
+
+
+# ---------------------------------------------------------------- live fixes
+import asyncio  # noqa: E402
+
+from src.open_llm_vtuber.room.speech import playback_wait  # noqa: E402
+from src.open_llm_vtuber.vr_agent.text_safety import strip_emoji  # noqa: E402
+
+
+def test_no_emoji_is_ever_spoken():
+    assert mm.clean_line("We did it!! 🎉🏰✨ Castle time 😂")[0] == "We did it!! Castle time"
+    assert mm.clean_line("Love you ❤️ Luna :) <3 xD")[0] == "Love you Luna"
+    assert mm.clean_line("🎉🎉")[0] == ""
+    assert strip_emoji("family 👨‍👩‍👧 flag 🇵🇭 key 1️⃣ ⛏️") == "family flag key 1"
+    assert strip_emoji("at 10:30, see http://x.y/a") == "at 10:30, see http://x.y/a"
+
+
+def test_bot_messages_that_are_not_speech():
+    for notice in (
+        "Agent stopped. Self-prompting still active.",
+        "Agent did not use command in the last 3 auto-prompts. Stopping auto-prompting.",
+        "*Director used goal*",
+    ):
+        assert mm.clean_line(notice)[0] == "", notice
+
+
+def test_speech_waits_only_as_long_as_the_clip():
+    assert playback_wait(4000, 10) == 6.5  # 4 s clip: never the old 22 s
+    assert playback_wait(0, 3) == 7.0
+
+
+def test_profile_has_no_emoji_and_no_fighting_modes():
+    eng = _engine()
+    profile = eng.profile("luna")
+    assert profile["modes"]["elbow_room"] is False and profile["modes"]["idle_staring"] is False
+    assert "NEVER use emojis" in profile["conversing"]
+    assert "moveAway(150)" not in profile["conversing"]
+
+
+class FakeLink:
+    def __init__(self):
+        self.sent = []
+        self.connected = asyncio.Event()
+        self.connected.set()
+
+    async def emit(self, event, *args):
+        self.sent.append(args)
+        return True
+
+
+def _live_engine(monkeypatch):
+    eng = _engine()
+    eng.link = FakeLink()
+    eng.pushed = []
+
+    async def push(op):
+        eng.pushed.append(op)
+
+    eng._push = push
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    return eng
+
+
+def test_viewer_gets_a_spoken_answer_right_away(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng.lines.extend({"who": "mika", "text": f"chatter {i}", "at": mm.time.time()} for i in range(4))
+        eng.enqueue("MathUnlockedYT", "Luna hi 😊")
+        await asyncio.sleep(0.05)
+        assert eng.viewer_lines and eng.viewer_lines[0]["who"] == "luna"
+        assert "MathUnlockedYT" in eng.viewer_lines[0]["text"]
+        # the bot still gets it, told not to greet twice
+        assert eng.outbox[0]["to"] == "luna" and "already answered" in eng.outbox[0]["text"]
+        assert "😊" not in eng.outbox[0]["text"]
+        # chatter that arrives afterwards cannot push the answer out
+        for i in range(6):
+            eng.lines.append({"who": "mika", "text": f"more {i}", "at": mm.time.time()})
+        spoken = []
+
+        async def say(cid, text, mood="", short=False):
+            spoken.append((cid, text))
+
+        eng._say = say
+        task = asyncio.create_task(eng._speak_loop())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        assert spoken[0][0] == "luna" and "MathUnlockedYT" in spoken[0][1]
+
+    asyncio.run(run())
+
+
+def test_answer_from_the_model_is_cleaned(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+
+        class Done:
+            choices = [NS(message=NS(content='"Hi Sam! 😊 On it! !collectBlocks("oak_log", 5) 🌳"'))]
+
+        async def create(**kwargs):
+            assert kwargs["max_tokens"] <= 80
+            return Done()
+
+        eng._llm = NS(chat=NS(completions=NS(create=create)))
+        text = await eng.reply_text("mika", "Sam", "get wood")
+        assert text == "Hi Sam! On it!"
+
+    asyncio.run(run())
+
+
+def test_unnamed_chat_goes_to_who_spoke_least():
+    eng = _engine()
+    eng._spoke_at = {"mika": 100.0, "luna": 50.0}
+    assert eng._targets("hello there") == ["luna"]
+    eng._spoke_at = {"mika": 50.0, "luna": 100.0}
+    assert eng._targets("hello again") == ["mika"]
+
+
+def _state(x, z, kind="acting"):
+    return {"gameplay": {"position": {"x": x, "y": 64, "z": z}, "health": 20, "hunger": 20}, "action": {"kind": kind}}
+
+
+def test_a_bot_without_a_goal_gets_one(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        clock = [1000.0]
+        monkeypatch.setattr(mm.time, "time", lambda: clock[0])
+        eng._kind["mika"] = "stopped"
+        eng._pos["mika"] = (0.0, 64.0, 0.0)
+        await eng._direct("mika")
+        name, msg = eng.link.sent[-1]
+        assert name == "Mika" and msg["from"] == mm.DIRECTOR and msg["message"].startswith('!goal("')
+        assert msg["message"].count('"') == 2  # one quoted argument, nothing that breaks it
+        assert strip_emoji(msg["message"]) == msg["message"]  # no emoji for her to copy
+        count = len(eng.link.sent)
+        clock[0] += 5
+        await eng._direct("mika")
+        assert len(eng.link.sent) == count  # not again within GOAL_RETRY
+
+    asyncio.run(run())
+
+
+def test_a_stuck_bot_is_moved_out_and_her_view_reloaded(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        clock = [1000.0]
+        monkeypatch.setattr(mm.time, "time", lambda: clock[0])
+
+        async def no_wait(_s):
+            return None
+
+        monkeypatch.setattr(mm.asyncio, "sleep", no_wait)
+        commands = []
+
+        async def rcon(cmd, reply=False):
+            commands.append(cmd)
+            return "Spread 1 player around 10, 20"
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        for cid in ("mika", "luna"):
+            eng._kind[cid] = "acting"
+            eng._goal_at[cid] = clock[0]
+            eng._seen_at[cid] = clock[0]
+        eng._goal_step = str(eng.projects.view().get("step") or "")
+        eng._pos["luna"] = (10.0, 64.0, 20.0)
+        eng._pos["mika"] = (0.0, 64.0, 0.0)
+        await eng._direct("mika")
+        clock[0] += 30
+        eng._seen_at["luna"] = clock[0]
+        eng._pos["mika"] = (1.0, 64.0, 1.0)  # moved under 3 blocks
+        await eng._direct("mika")
+        assert not commands
+        clock[0] += 31  # 61 s in the same spot
+        eng._seen_at["luna"] = clock[0]
+        await eng._direct("mika")
+        assert commands and commands[0].startswith("spreadplayers 10 20 ") and commands[0].endswith(" Mika")
+        sent = [m["message"] for _n, m in eng.link.sent]
+        assert "!stop" in sent and sent[-1].startswith("!goal(")
+        assert {"kind": "reload", "who": "mika"} in eng.pushed
+
+    asyncio.run(run())
+
+
+def test_a_jump_reloads_the_view(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+
+        async def nothing(*a, **k):
+            return None
+
+        eng._keep_together = nothing
+        eng.projects.update = nothing
+        eng._direct = nothing
+        await eng._state({"Mika": _state(0, 0)})
+        assert {"kind": "reload", "who": "mika"} not in eng.pushed
+        await eng._state({"Mika": _state(40, 0)})
+        assert {"kind": "reload", "who": "mika"} in eng.pushed
+
+    asyncio.run(run())

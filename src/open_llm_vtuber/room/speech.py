@@ -306,6 +306,18 @@ class CharacterVoices:
         }
 
 
+def playback_wait(audio_ms: float, estimate: float) -> float:
+    """How long to wait for the page to say the clip finished playing.
+
+    The page does not always answer (a hidden tab, a second client). Waiting
+    the estimate plus 12 s then held every next line for 20 s or more, so
+    the wait is the real clip length plus a small margin.
+    """
+    if audio_ms > 0:
+        return audio_ms / 1000.0 + 2.5
+    return estimate + 4.0
+
+
 # True inside a viewer interaction (set by the director for its own task and
 # every task it starts). The live handler holds ``lock`` for the whole
 # interaction, so a line spoken from inside it (the build acknowledgment, a
@@ -357,7 +369,10 @@ class SpeakingCoordinator:
 
         profile = self.session.room.get(character_id)
         target = self.session.speech_target()
-        text = " ".join(str(text or "").split())[:300]
+        from ..vr_agent.text_safety import strip_emoji
+
+        # Never read an emoji out loud ("smiling face with hearts").
+        text = strip_emoji(" ".join(str(text or "").split()))[:300]
         if not profile or not target or not text:
             return False
         engine = self.voices.engine(character_id)
@@ -365,7 +380,7 @@ class SpeakingCoordinator:
             self.session.record_failure(character_id, "tts unavailable")
             return False
         client_uid, send = target
-        produced = {"audio": 0, "silent": 0}
+        produced = {"audio": 0, "silent": 0, "ms": 0.0}
 
         async def tagged_send(payload: str) -> None:
             if payload.startswith('{"type": "audio"'):
@@ -374,6 +389,10 @@ class SpeakingCoordinator:
                 data["emotion_mode"] = "profile"
                 if data.get("audio"):
                     produced["audio"] += 1
+                    # The real length of the clip: volumes are one per slice.
+                    produced["ms"] += len(data.get("volumes") or []) * float(
+                        data.get("slice_length") or 20
+                    )
                 else:
                     produced["silent"] += 1
                 payload = json.dumps(data)
@@ -416,7 +435,9 @@ class SpeakingCoordinator:
                     await asyncio.sleep(0.01)
                 waiter = asyncio.create_task(
                     message_handler.wait_for_response(
-                        client_uid, "frontend-playback-complete", timeout=seconds + 12
+                        client_uid,
+                        "frontend-playback-complete",
+                        timeout=playback_wait(produced["ms"], seconds),
                     )
                 )
                 await asyncio.sleep(0)

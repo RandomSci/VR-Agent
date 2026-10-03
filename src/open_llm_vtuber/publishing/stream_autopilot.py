@@ -260,7 +260,12 @@ class StreamAutopilot:
                 logger.info(f"Stream autopilot: added to the playlist '{PLAYLISTS[show][0]}'")
             self._playlisted[show] = video_id
         except Exception as exc:
-            logger.warning(f"Playlist not updated: {exc}")
+            if "404" in str(exc) or "NotFound" in str(exc):
+                # A playlist made seconds ago is not ready on YouTube's side yet;
+                # the next call (a minute later) adds the stream.
+                logger.info("Playlist not ready on YouTube yet, the stream is added on the next try")
+            else:
+                logger.warning(f"Playlist not updated: {exc}")
 
     async def _playlist_id(self, client: Any, show: str) -> str:
         saved: dict[str, str] = {}

@@ -47,6 +47,8 @@ from typing import Any, Awaitable, Callable, Optional
 
 from loguru import logger
 
+from ..vr_agent.text_safety import strip_emoji
+
 MC_DIR = Path("minecraft")
 SERVER_DIR = MC_DIR / "server"
 MINDCRAFT_DIR = MC_DIR / "mindcraft"
@@ -57,7 +59,27 @@ MAX_SAY = 240
 LINE_MAX_AGE = 25.0  # a bot line older than this is shown, not spoken
 VIEWER_GAP = 8.0  # one message per viewer per this many seconds
 BOT_GAP = 6.0  # one viewer message per bot per this many seconds
-STUCK_SECONDS = 180  # no real movement this long: she is told to get out
+STUCK_SECONDS = 60  # within STILL_BLOCKS this long: she is teleported out and given her goal again
+STILL_BLOCKS = 3.0
+JUMP_BLOCKS = 16.0  # moved this far between two updates: a teleport or respawn, reload the view
+GOAL_RETRY = 30.0  # seconds between forced goal restarts for one bot
+VIEWER_LINE_MAX_AGE = 60.0  # an answer to a viewer is spoken even if it waited this long
+DIRECTOR = "Director"  # a plain command from this name runs right away in Mindcraft (no AI call)
+# Mindcraft's automatic behaviours. elbow_room fought our teleports (the HUD
+# showed "mode:elbow_room" for minutes) and idle_staring kept swinging the
+# camera around; hunting chased the farm animals and pets.
+MODES = {
+    "self_preservation": True,
+    "unstuck": True,
+    "cowardice": False,
+    "self_defense": True,
+    "hunting": False,
+    "item_collecting": True,
+    "torch_placing": True,
+    "elbow_room": False,
+    "idle_staring": False,
+    "cheat": False,
+}
 TOGETHER_BLOCKS = 10
 VIEWER_PORT_BASE = 3790  # the bots' first person views (Mindcraft's default 3000 often clashes)  # farther apart than this for a minute: one walks back
 
@@ -83,7 +105,8 @@ MOODS = (
 )
 NOT_SPEECH = re.compile(
     r"^\s*\[|\b(error|exception)\s*:|\btraceback\b|econnrefused|my brain disconnected|"
-    r"agent process|unknown command|^\s*code output|^\s*hello world! i am",
+    r"agent process|unknown command|^\s*code output|^\s*hello world! i am|agent stopped|"
+    r"self-prompting|auto-prompts|did not use command|^\s*(sure|ok)?[.!,]?\s*setting (my|the) goal",
     re.I,
 )
 COMMAND_RE = re.compile(r"!\w+\((?:[^()\"']|\"[^\"]*\"|'[^']*')*\)|!\w+")
@@ -107,6 +130,7 @@ def clean_line(message: str) -> tuple[str, str]:
     if NOT_SPEECH.search(text):
         return "", to  # an error or a system notice, not something she said
     text = COMMAND_RE.sub(" ", text)
+    text = strip_emoji(text)
     text = re.sub(r"\*[^*]{1,80}\*", " ", text)  # *picks up dirt* stage directions
     text = text.replace("*", " ").replace("`", " ")
     text = re.sub(r"\s+", " ", text).strip(" -:,")
@@ -260,6 +284,13 @@ class MinecraftEngine:
         self.cooldown = max(2.0, float(os.environ.get("VR_MINECRAFT_THINK_SECONDS", "10") or 10))
         self.link = MindLink(self.mind_port, self._event)
         self.lines: deque[dict[str, Any]] = deque(maxlen=4)
+        self.viewer_lines: deque[dict[str, Any]] = deque(maxlen=6)  # answers to chat, spoken first
+        self.said: deque[str] = deque(maxlen=6)  # the last spoken lines, context for answers
+        self._kind: dict[str, str] = {}  # Mindcraft activity: acting, thinking, chatting, stopped, idle
+        self._goal_at: dict[str, float] = {}
+        self._escaped_at: dict[str, float] = {}
+        self._goal_step = ""
+        self._llm: Any = None
         self.line_ready = asyncio.Event()
         self.outbox: deque[dict[str, Any]] = deque(maxlen=12)
         self.recent: deque[str] = deque(maxlen=12)
@@ -321,8 +352,20 @@ class MinecraftEngine:
             return
         self.last_viewer[author] = now
         targets = self._targets(text)
+        # The asked girl answers out loud right away (one short AI call here).
+        # Mindcraft alone took minutes: a bot drops its reply whenever another
+        # message reaches it while it is still thinking.
+        answer = targets[0] if len(targets) == 1 else self._quietest(targets)
+        asyncio.create_task(self._quick_reply(answer, author, text))
         for cid in targets:
-            self.outbox.append({"to": cid, "from": author, "text": text, "at": now})
+            note = (
+                " (You already answered out loud. Do not greet again: if this asks for something, "
+                "do it now with a command, otherwise keep working on your goal.)"
+                if cid == answer
+                else ""
+            )
+            # No emoji reaches the bots: they copy what they read.
+            self.outbox.append({"to": cid, "from": author, "text": (strip_emoji(text) or text) + note, "at": now})
         asyncio.create_task(
             self._push({"kind": "chat", "author": author, "text": text, "to": targets})
         )
@@ -372,8 +415,14 @@ class MinecraftEngine:
             return list(self.cast)
         if named:
             return named
+        here = self._present()
+        return [self._quietest(here)]
+
+    def _quietest(self, cids: list[str]) -> str:
+        """Whoever spoke least recently, so both girls get turns."""
         self.turn += 1
-        return [self.cast[self.turn % len(self.cast)]]
+        order = sorted(cids, key=lambda c: (self._spoke_at.get(c, 0), (self.cast.index(c) + self.turn) % 2))
+        return order[0]
 
     # ------------------------------------------------------------ main
     async def _run(self) -> None:
@@ -504,7 +553,7 @@ class MinecraftEngine:
             "load_memory": True,
             "init_message": (
                 f"You just logged in. You ({other}) are live on YouTube playing survival Minecraft as a team. "
-                f"You are standing next to each other. Say hi to your friend in one short line, then set your goal with !goal. "
+                f"You are standing next to each other. Say hi to your friend in one short line, then get to work. "
                 f"Stay close to each other the whole time, split the work (one gathers wood, the other stone and food), "
                 f"share items with !givePlayer and build ONE shared base together. Your long term goal: {self.goal}"
             ),
@@ -546,20 +595,22 @@ class MinecraftEngine:
             "Everything you write in chat is spoken out loud by your voice on stream, so write like you talk: "
             "one or two short, lively sentences with real personality and emotion, never lists, never robot talk, "
             "never call yourself a bot or an AI assistant. "
+            "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
             f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by name, "
             "react to them, and do what they ask when it is fun and possible, but you decide. "
             f"You and {friend} are a team: stay near her, "
             "split the work, give her items she needs, and build one shared base. "
             f"Banter with {friend} often, tease and help each other, celebrate finds and complain when things go wrong. "
             "Use commands right away when you act. "
-            "Play smart: when a search finds nothing, do NOT repeat it, travel far first with !moveAway(150) "
-            "(deserts and oceans have no trees, walk until you see a forest). Search with a big range like 128. "
+            "Play smart: stay within about 40 blocks of your base and of your friend. When a search finds nothing, "
+            "do NOT repeat it and do NOT wander far away: gather something else useful nearby instead. "
             "Never dig straight down. If an action fails twice, change the plan instead of retrying it. "
-            "Before night, have a shelter or bed, and eat when hunger is low."
+            "Every reply that is not pure chat must contain a command, so you keep doing something."
         )
         profile: dict[str, Any] = {
             "name": name,
             "model": self.model,
+            "modes": dict(MODES),
             "cooldown": int(self.cooldown * 1000),  # at most one AI call per bot this often
         }
         conversing = cache_friendly(_default_conversing(), style)
@@ -676,10 +727,15 @@ class MinecraftEngine:
                 "biome": str(game.get("biome") or "").replace("_", " "),
                 "items": [[k.replace("_", " "), v] for k, v in top],
             }
+            self._kind[cid] = str(action.get("kind") or "")
             pos = game.get("position") or {}
             if isinstance(pos, dict) and "x" in pos:
-                self._pos[cid] = (float(pos["x"]), float(pos.get("y", 0)), float(pos["z"]))
-                await self._stuck_check(cid)
+                new = (float(pos["x"]), float(pos.get("y", 0)), float(pos["z"]))
+                old = self._pos.get(cid)
+                self._pos[cid] = new
+                if old and ((new[0] - old[0]) ** 2 + (new[2] - old[2]) ** 2) ** 0.5 > JUMP_BLOCKS:
+                    await self._reload_view(cid)  # a teleport or respawn: the old chunks are gone
+                await self._direct(cid)
             before = self._health.get(cid)
             self._health[cid] = health
             if before is not None and health < before - 3:
@@ -703,29 +759,95 @@ class MinecraftEngine:
             self._hud_sent = now
             await self._push({"kind": "hud", "hud": hud})
 
-    async def _stuck_check(self, cid: str) -> None:
-        """Same few blocks for 3 minutes: tell her to get out and try another plan."""
+    # ------------------------------------------------------------ director
+    async def _command(self, cid: str, command: str) -> bool:
+        """A Mindcraft command that runs right away, without an AI call."""
+        return await self.link.emit("send-message", self.names[cid], {"from": DIRECTOR, "message": command})
+
+    def _friend(self, cid: str) -> str:
+        return next((c for c in self.cast if c != cid), cid)
+
+    def goal_for(self, cid: str) -> str:
+        friend = self.names[self._friend(cid)]
+        view = self.projects.view()
+        base = self.projects.state.get("base")
+        where = f" near the base at x {base[0]} z {base[2]}" if base else " near your base"
+        now = self.projects.current()
+        gather = now[1][1] if now else "gather useful materials and make the base prettier"
+        text = (
+            f"Team project with {friend}: {strip_emoji(view.get('title', ''))}, part {view.get('step', '')}. "
+            f"{gather[0].upper() + gather[1:]}{where}, staying within 40 blocks of it and close to {friend}. "
+            f"Use commands like collectBlocks and craftRecipe, give {friend} things she needs, "
+            "and chat with her and the viewers in short lines while you work."
+        )
+        return re.sub(r'["!\\]', "", text)[:400]
+
+    async def _set_goal(self, cid: str) -> None:
+        self._goal_at[cid] = time.time()
+        if await self._command(cid, f'!goal("{self.goal_for(cid)}")'):
+            logger.info(f"Minecraft: {self.names[cid]} was given her goal again ({self._kind.get(cid) or 'starting'})")
+
+    async def _direct(self, cid: str) -> None:
+        """Keeps her doing something: a goal when she has none, out when she is stuck."""
         x, y, z = self._pos[cid]
         now = time.time()
         anchor = self._anchor.get(cid)
-        if anchor is None or ((x - anchor[0]) ** 2 + (y - anchor[1]) ** 2 + (z - anchor[2]) ** 2) ** 0.5 > 4:
+        if anchor is None or ((x - anchor[0]) ** 2 + (y - anchor[1]) ** 2 + (z - anchor[2]) ** 2) ** 0.5 > STILL_BLOCKS:
             self._anchor[cid] = (x, y, z, now)
+            anchor = self._anchor[cid]
+        kind = self._kind.get(cid, "")
+        step = str(self.projects.view().get("step") or "")
+        if step != self._goal_step:  # a new project part: both get the new goal
+            self._goal_step = step
+            self._goal_at = {}
+        # Mindcraft stops a bot's goal for good after three replies without a
+        # command; she then stands there until someone talks to her.
+        if (kind in ("stopped", "idle") or cid not in self._goal_at) and now - self._goal_at.get(cid, 0) > GOAL_RETRY:
+            await self._set_goal(cid)
             return
-        if now - anchor[3] < STUCK_SECONDS:
+        if now - anchor[3] < STUCK_SECONDS or now - self._escaped_at.get(cid, 0) < STUCK_SECONDS:
             return
-        self._anchor[cid] = (x, y, z, now)  # next reminder only after another wait
-        await self.link.emit(
-            "send-message",
-            self.names[cid],
-            {
-                "from": "system",
-                "message": (
-                    "You have not moved for 3 minutes, you are stuck or looping. Stop with !stop, get out with "
-                    "!goToSurface or !moveAway(30), say something funny about it, then try a different plan."
-                ),
-            },
-        )
-        logger.info(f"Minecraft: {self.names[cid]} looked stuck, nudged")
+        await self._escape(cid)
+
+    async def _escape(self, cid: str) -> None:
+        """Same few blocks for a minute (a hole, a wall, a loop): out to the open, next to her friend."""
+        now = time.time()
+        self._escaped_at[cid] = now
+        name = self.names[cid]
+        friend = self._friend(cid)
+        if self._kind.get(cid) == "chatting" and friend != cid:
+            await self._command(cid, f'!endConversation("{self.names[friend]}")')
+        await self._command(cid, "!stop")
+        await asyncio.sleep(1.0)
+        center = None
+        friend_anchor = self._anchor.get(friend)
+        if (
+            friend != cid
+            and friend in self._pos
+            and now - self._seen_at.get(friend, 0) < 10
+            and not (friend_anchor and now - friend_anchor[3] > STUCK_SECONDS)
+        ):
+            center = self._pos[friend]
+        elif self.projects.state.get("base"):
+            base = self.projects.state["base"]
+            center = (float(base[0]), float(base[1]), float(base[2]))
+        else:
+            center = self._pos[cid]
+        # spreadplayers lands on the top block of a free spot: out of holes,
+        # caves and walls, never inside blocks.
+        reply = await rcon_command(f"spreadplayers {center[0]:.0f} {center[2]:.0f} 0 6 false {name}", reply=True)
+        ok = isinstance(reply, str) and "Spread" in reply
+        if not ok and friend != cid:
+            ok = await bring_into_view(name, self.names[friend])
+        self._anchor.pop(cid, None)
+        logger.info(f"Minecraft: {name} was stuck, {'moved out' if ok else 'could not be moved'} ({self._kind.get(cid) or '?'})")
+        await self._reload_view(cid)
+        await asyncio.sleep(1.0)
+        await self._set_goal(cid)
+
+    async def _reload_view(self, cid: str) -> None:
+        """Her camera after a jump: reload it once the new chunks are there."""
+        await self._push({"kind": "reload", "who": cid})
 
     async def _tell_both(self, text: str) -> None:
         for cid in self.cast:
@@ -757,6 +879,8 @@ class MinecraftEngine:
         # takes one second and keeps the show on the two of them together.
         if await bring_into_view(self.names[mover], self.names[friend]):
             logger.info(f"Minecraft: {self.names[mover]} teleported to {self.names[friend]}")
+            self._anchor.pop(mover, None)
+            await self._reload_view(mover)
             await self.link.emit(
                 "send-message",
                 self.names[mover],
@@ -804,6 +928,11 @@ class MinecraftEngine:
     # ------------------------------------------------------------ voice and body
     async def _speak_loop(self) -> None:
         while True:
+            if self.viewer_lines:  # answers to chat always go first
+                line = self.viewer_lines.popleft()
+                if time.time() - line["at"] <= VIEWER_LINE_MAX_AGE:
+                    await self._say(line["who"], line["text"], pick_mood(line["text"]))
+                continue
             if not self.lines:
                 self.line_ready.clear()
                 await self.line_ready.wait()
@@ -811,16 +940,85 @@ class MinecraftEngine:
             line = self.lines.popleft()
             if time.time() - line["at"] > LINE_MAX_AGE:
                 continue
-            await self._say(line["who"], line["text"], pick_mood(line["text"]))
+            await self._say(line["who"], line["text"], pick_mood(line["text"]), short=True)
 
-    async def _say(self, cid: str, text: str, mood: str = "") -> None:
+    async def _quick_reply(self, cid: str, author: str, text: str) -> None:
+        started = time.time()
+        line = await self.reply_text(cid, author, text)
+        if not line:
+            return
+        self.viewer_lines.append({"who": cid, "text": line, "at": time.time()})
+        self.line_ready.set()
+        logger.info(f"Minecraft: {self.names[cid]} answers {author} ({time.time() - started:.1f}s): {line}")
+
+    async def reply_text(self, cid: str, author: str, text: str) -> str:
+        """One or two short spoken sentences from her to a viewer."""
+        name = self.names[cid]
+        friend = self.names[self._friend(cid)]
+        doing = str((self.hud.get(cid) or {}).get("doing") or "playing").replace("action:", "")
+        view = self.projects.view()
+        persona = ""
+        prof = self.session.room.get(cid)
+        if prof is not None:
+            persona = re.sub(r"\s+", " ", getattr(prof, "persona", "") or "").strip()[:300]
+        recent = " | ".join(list(self.said)[-4:])
+        system = (
+            f"You are {name}. {persona} You are live on YouTube playing survival Minecraft with {friend}. "
+            f"Right now you are: {doing}. Team project: {strip_emoji(view.get('title', ''))}, working on {view.get('step', '')}. "
+            f"Just said on stream: {recent or 'nothing yet'}. "
+            "A viewer wrote in the live chat. Answer them out loud in one or two short sentences, under 25 words. "
+            "Say their name once. If they ask you to do something, say you will do it, or cheekily why not. "
+            "Plain spoken words only: no emojis, no emoticons, no symbols, no hashtags, no commands, no quotes."
+        )
+        reply = ""
+        key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+        if key:
+            try:
+                if self._llm is None:
+                    from openai import AsyncOpenAI
+
+                    self._llm = AsyncOpenAI(api_key=key, timeout=8.0, max_retries=1)
+                response = await self._llm.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": f"{author} wrote: {text}"},
+                    ],
+                    max_tokens=70,
+                    temperature=0.8,
+                )
+                reply = response.choices[0].message.content or ""
+                try:
+                    from ..vr_agent.usage import usage
+
+                    usage.record_llm("minecraft chat answer")
+                except Exception:
+                    pass
+            except Exception as exc:
+                logger.warning(f"Minecraft: quick answer failed ({exc}), short answer instead")
+        reply = strip_emoji(COMMAND_RE.sub(" ", reply)).strip().strip('"').strip()
+        if not re.search(r"[A-Za-z]", reply):
+            reply = random.choice(
+                (
+                    f"Hi {author}! I see you, give me a second!",
+                    f"Oh, {author}! Good one, hold on!",
+                    f"{author}, I hear you! Let me see what I can do.",
+                )
+            )
+        return reply[:220]
+
+    async def _say(self, cid: str, text: str, mood: str = "", short: bool = False) -> None:
         await self._wait_ready()
         if mood:
             await self._react(cid, mood)
         self.speaking = cid
         self._spoke_at[cid] = time.time()
+        self.said.append(f"{self.names[cid]}: {text[:120]}")
         try:
-            for chunk in chunks(text):
+            parts = chunks(text)
+            for i, chunk in enumerate(parts[:2] if short else parts):
+                if short and i and self.viewer_lines:
+                    break  # a viewer is waiting: the rest of the chatter can go
                 await self._push({"kind": "say", "who": cid, "text": chunk})
                 try:
                     spoken = await self.session.speech.say(cid, chunk)

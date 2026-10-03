@@ -24,6 +24,7 @@
   let focus = "";
   let focusAt = 0;
   const FOCUS_HOLD = 15000;
+  const CHAT_SHOW_MS = 2000; // a viewer comment stays on screen this long
 
   function build() {
     if (root) return;
@@ -138,6 +139,14 @@
   }
   setInterval(() => { if (focus && document.documentElement.classList.contains("minecraft-mode")) fresh(focus); }, REFRESH_MS);
 
+  // She was teleported or respawned: the view still shows the old place (or
+  // nothing, white sky). Load it again once the new chunks have arrived.
+  const reloadTimers = {};
+  function reloadSoon(id) {
+    clearTimeout(reloadTimers[id]);
+    reloadTimers[id] = setTimeout(() => { if (id === focus) fresh(id); }, 2500);
+  }
+
   function view(id) {
     const p = viewPane(id);
     if (!p) return;
@@ -202,7 +211,9 @@
     row.append(el("span", "", op.text || ""));
     box.prepend(row);
     while (box.children.length > 3) box.lastChild.remove();
-    setTimeout(() => row.classList.add("old"), 20000);
+    // On screen for 2 seconds at most, then gone.
+    setTimeout(() => row.classList.add("old"), CHAT_SHOW_MS - 350);
+    setTimeout(() => row.remove(), CHAT_SHOW_MS);
   }
 
   function status(op) {
@@ -246,6 +257,7 @@
       case "status": if (!root) return; status(op); break;
       case "project": if (!root) return; project(op); break;
       case "project_done": if (!root) return; projectDone(op); break;
+      case "reload": if (!root) return; reloadSoon(op.who); break;
       case "stop": leave(); break;
     }
   }

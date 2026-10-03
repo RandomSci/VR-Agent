@@ -56,8 +56,8 @@ html.minecraft-mode #mc-over { display: block; position: fixed; inset: 0; z-inde
 /* viewer chat that reached the bots, top centre over the split */
 #mc-chat { position: absolute; top: 18vh; left: 50%; transform: translateX(-50%); width: 30vw; display: flex; flex-direction: column; gap: .6vh; }
 .mc-msg { padding: .7vh .9vw; border-radius: 12px; background: #182040e6; box-shadow: 0 6px 18px #0007; font-size: clamp(12px, 1vw, 20px);
-  font-weight: 700; animation: mc-in .4s ease-out both; transition: opacity 1s; }
-.mc-msg.old { opacity: .55; }
+  font-weight: 700; animation: mc-in .25s ease-out both; transition: opacity .35s; }
+.mc-msg.old { opacity: 0; }
 .mc-msg b { color: #5fe3c8; margin-right: .4vw; } .mc-msg i { font-style: normal; color: #ffb55e; margin-right: .5vw; }
 @keyframes mc-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
 
