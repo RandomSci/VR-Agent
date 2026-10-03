@@ -393,7 +393,7 @@ def main_block(steps: list[dict[str, Any]]) -> str:
 
 
 # ---------------------------------------------------------------- block by block
-RUN = 5  # blocks a girl lays in one go before she moves on
+RUN = 8  # blocks a girl lays in one go before she moves on
 INSTANT = 400  # bigger fills (clearing the site, a lawn) happen in one go
 
 

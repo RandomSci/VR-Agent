@@ -410,6 +410,7 @@ class MinecraftEngine:
         self._build_now: Optional[str] = None  # a girl said !buildNext
         self._build_event = asyncio.Event()
         self._chose_at: dict[str, float] = {}
+        self._opped: set[str] = set()
         from .minecraft_net_show import NetShow
 
         self.net_show = NetShow(self.projects, lambda *a, **k: rcon_command(*a, **k), self._tell_one, self._push)
@@ -855,6 +856,10 @@ class MinecraftEngine:
             cid = self.ids.get(str(agent).lower())
             if not cid or not isinstance(state, dict) or "gameplay" not in state:
                 continue
+            if cid not in self._opped:
+                self._opped.add(cid)
+                # operators are never kicked for spamming (fast building sends a lot)
+                asyncio.create_task(rcon_command(f"op {self.names[cid]}"))
             self._seen_at[cid] = time.time()
             game = state.get("gameplay") or {}
             action = state.get("action") or {}
@@ -1211,7 +1216,7 @@ class MinecraftEngine:
         if last is None:
             return 2.5
         dist = sum((a - b) ** 2 for a, b in zip(hover, last)) ** 0.5
-        return min(3.0, dist / 9.0 + 0.35)
+        return min(2.0, dist / 18.0 + 0.2)
 
     async def _lay_runs(self, cid: str, runs: list[str], step: dict[str, Any]) -> bool:
         """She flies along and lays her runs one by one, facing them from the open side."""
@@ -1269,13 +1274,13 @@ class MinecraftEngine:
             last = hover
             for command in pixels[row * 5:(row + 1) * 5]:
                 await self.projects.place_one(command)
-                await asyncio.sleep(0.15)
+                await asyncio.sleep(0.06)
         out = (NET_X - 6, 16, LAYER_Z[2])
         await asyncio.sleep(await self._hop(drawer, out, (NET_X, 16, LAYER_Z[2]), last))
         await self.net_show.read(digit, image, drawn_by=self.names[drawer])
         bx, by, bz = base
         self.build_focus = (bx + NET_X, by + 16, bz + LAYER_Z[2])
-        await asyncio.sleep(6)  # let the guess sink in
+        await asyncio.sleep(4)  # let the guess sink in
         progress = float(self.projects.state.get("progress", 0.0)) + (time.time() - started) / total
         self.projects.state["progress"] = progress
         self.projects._save()
@@ -1293,7 +1298,7 @@ class MinecraftEngine:
         await self._command(cid, f"!flyTo({x:.1f}, {y:.1f}, {z:.1f}, {lx:.1f}, {ly:.1f}, {lz:.1f}, {cruise:.0f})")
         up = max(0.0, max(here[1] + 1, y + 3, cruise) - here[1])
         down = max(0.0, max(here[1] + 1, y + 3, cruise) - y)
-        return min(10.0, (up + across + down) / 9.0 + 0.8)
+        return min(6.0, (up + across + down) / 18.0 + 0.5)
 
     async def choice(self, cid: str, text: str) -> None:
         """Something a girl decided with one of her own commands."""
@@ -1692,7 +1697,7 @@ CAMERA_GLIDE = (
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v6)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v7)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -1714,7 +1719,8 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v6)
             bot.clearControlStates();
             bot.creative.startFlying();
             const look = new Vec3(lx, ly, lz);
-            const MAX_TURN = 0.11; // radians per tick, about 125 degrees a second
+            const FLY_STEP = 0.9; // blocks per tick, 18 a second: quick moves still read on a compressed stream
+            const MAX_TURN = 0.22; // radians per tick, about 250 degrees a second (fast reads better on stream)
             const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
             const turn = async () => {
                 const eye = bot.entity.position.offset(0, bot.entity.height || 1.62, 0);
@@ -1744,7 +1750,7 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v6)
                     // where she is, so stop trying this leg after a second
                     if (dist < best - 0.05) { best = dist; since = 0; } else if (++since > 20) break;
                     bot.entity.velocity = new Vec3(0, 0, 0);
-                    bot.entity.position = bot.entity.position.plus(delta.scaled(Math.min(0.45, dist) / dist));
+                    bot.entity.position = bot.entity.position.plus(delta.scaled(Math.min(FLY_STEP, dist) / dist));
                     await turn();
                     await new Promise((r) => setTimeout(r, 50));
                 }
@@ -1803,6 +1809,30 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v6)
 """
 
 
+# Every order from the engine was echoed into the game chat ("*Director used
+# flyTo*", then "Action output: ..."). Fast building sends several a second,
+# and the server kicked the girls for spamming. Orders from DIRECTOR stay quiet.
+ECHO_ORIGINAL = """                this.routeResponse(source, `*${source} used ${user_command_name.substring(1)}*`);
+                if (user_command_name === '!newAction') {
+                    // all user-initiated commands are ignored by the bot except for this one
+                    // add the preceding message to the history to give context for newAction
+                    this.history.add(source, message);
+                }
+                let execute_res = await executeCommand(this, message);
+                if (execute_res) 
+                    this.routeResponse(source, execute_res);"""
+ECHO_QUIET = """                const quiet = source === '""" + DIRECTOR + """'; // VR Agent: engine orders are not chat
+                if (!quiet) this.routeResponse(source, `*${source} used ${user_command_name.substring(1)}*`);
+                if (user_command_name === '!newAction') {
+                    // all user-initiated commands are ignored by the bot except for this one
+                    // add the preceding message to the history to give context for newAction
+                    this.history.add(source, message);
+                }
+                let execute_res = await executeCommand(this, message);
+                if (execute_res && !quiet)
+                    this.routeResponse(source, execute_res);"""
+
+
 def patch_mindcraft() -> list[str]:
     """Small, repeatable edits to Mindcraft's packages (safe to run every start).
 
@@ -1833,6 +1863,7 @@ def patch_mindcraft() -> list[str]:
             "    this.allowSprinting = false // VR Agent: walk, easier to watch\n",
         ),
         (MINDCRAFT_DIR / "src/agent/commands/actions.js", FLY_ANCHOR, FLY_COMMANDS + FLY_ANCHOR),
+        (MINDCRAFT_DIR / "src/agent/agent.js", ECHO_ORIGINAL, ECHO_QUIET),
     ]
     for path, old, new in edits:
         try:
