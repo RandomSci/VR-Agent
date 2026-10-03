@@ -22,6 +22,8 @@ characters, captions, the chat that reached them and a small HUD
     VR_MINDSERVER_PORT=8080          the Mindcraft control port
     VR_MINECRAFT_RAM=2G              Java heap for the server
     VR_MINECRAFT_GOAL=...            replaces the default long term goal
+    VR_MINECRAFT_THINK_SECONDS=10    at most one AI call per bot this often:
+                                     lower is livelier but costs more
 
 Nothing here raises into the stream: a crashed server or Mindcraft is started
 again with a growing pause, a lost socket reconnects by itself.
@@ -51,6 +53,8 @@ MAX_SAY = 240
 LINE_MAX_AGE = 25.0  # a bot line older than this is shown, not spoken
 VIEWER_GAP = 8.0  # one message per viewer per this many seconds
 BOT_GAP = 6.0  # one viewer message per bot per this many seconds
+STUCK_SECONDS = 180  # no real movement this long: she is told to get out
+TOGETHER_BLOCKS = 40  # farther apart than this for a minute: one walks back
 
 DEFAULT_GOAL = (
     "Survive and thrive together forever: gather wood and stone, make better tools, "
@@ -244,6 +248,8 @@ class MinecraftEngine:
         self.model = os.environ.get("VR_MINECRAFT_MODEL", "").strip() or "gpt-4o-mini"
         self.ram = os.environ.get("VR_MINECRAFT_RAM", "").strip() or "2G"
         self.goal = os.environ.get("VR_MINECRAFT_GOAL", "").strip() or DEFAULT_GOAL
+        # Seconds between AI calls per bot: the main cost knob (see the module doc).
+        self.cooldown = max(2.0, float(os.environ.get("VR_MINECRAFT_THINK_SECONDS", "10") or 10))
         self.link = MindLink(self.mind_port, self._event)
         self.lines: deque[dict[str, Any]] = deque(maxlen=4)
         self.line_ready = asyncio.Event()
@@ -257,6 +263,10 @@ class MinecraftEngine:
         self._hud_sent = 0.0
         self._health: dict[str, int] = {}
         self._state_at = 0.0
+        self._pos: dict[str, tuple[float, float, float]] = {}
+        self._apart_since = 0.0
+        self._anchor: dict[str, tuple[float, float, float, float]] = {}  # x, y, z, since
+        self._nudged_at = 0.0
         self.task: Optional[asyncio.Task] = None
         self._tasks: list[asyncio.Task] = []
         self.procs: dict[str, Any] = {}
@@ -467,9 +477,10 @@ class MinecraftEngine:
             "profiles": profiles,
             "load_memory": True,
             "init_message": (
-                f"You just logged in. You ({other}) are live on YouTube playing survival Minecraft together. "
-                f"Say hi to each other in one short line, then set your goal with !goal and start playing. "
-                f"Your long term goal: {self.goal}"
+                f"You just logged in. You ({other}) are live on YouTube playing survival Minecraft as a team. "
+                f"Say hi to your friend in one short line, then walk to her with !goToPlayer and set your goal with !goal. "
+                f"Stay close to each other the whole time, split the work (one gathers wood, the other stone and food), "
+                f"share items with !givePlayer and build ONE shared base together. Your long term goal: {self.goal}"
             ),
             "only_chat_with": [],
             "speak": False,
@@ -479,7 +490,8 @@ class MinecraftEngine:
             "allow_vision": False,
             "narrate_behavior": False,
             "chat_bot_messages": True,
-            "max_messages": 15,
+            "max_messages": 12,
+            "blocked_actions": BLOCKED_ACTIONS,
             "spawn_timeout": 90,
         }
 
@@ -498,15 +510,21 @@ class MinecraftEngine:
             "never call yourself a bot or an AI assistant. "
             f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by name, "
             "react to them, and do what they ask when it is fun and possible, but you decide. "
+            f"You and {friend} are a team: stay within about 15 blocks of her (use !goToPlayer when you drift apart), "
+            "split the work, give her items she needs, and build one shared base. "
             f"Banter with {friend} often, tease and help each other, celebrate finds and complain when things go wrong. "
-            "Use commands right away when you act."
+            "Use commands right away when you act. "
+            "Play smart: when a search finds nothing, do NOT repeat it, travel far first with !moveAway(150) "
+            "(deserts and oceans have no trees, walk until you see a forest). Search with a big range like 128. "
+            "Never dig straight down. If an action fails twice, change the plan instead of retrying it. "
+            "Before night, have a shelter or bed, and eat when hunger is low."
         )
-        conversing = _default_conversing()
-        if conversing and "Be a friendly, casual, effective, and efficient robot." in conversing:
-            conversing = conversing.replace("Be a friendly, casual, effective, and efficient robot.", style)
-        elif conversing:
-            conversing = conversing.replace("$SELF_PROMPT", "$SELF_PROMPT " + style, 1)
-        profile: dict[str, Any] = {"name": name, "model": self.model}
+        profile: dict[str, Any] = {
+            "name": name,
+            "model": self.model,
+            "cooldown": int(self.cooldown * 1000),  # at most one AI call per bot this often
+        }
+        conversing = cache_friendly(_default_conversing(), style)
         if conversing:
             profile["conversing"] = conversing
         return profile
@@ -527,6 +545,7 @@ class MinecraftEngine:
     async def _launch_mindcraft(self) -> Any:
         LOG_DIR.mkdir(exist_ok=True)
         await self._server_done()
+        await asyncio.to_thread(patch_mindcraft)
         env = dict(os.environ)
         env["SETTINGS_JSON"] = json.dumps(self.mindcraft_settings())
         # Mindcraft listens on "localhost": make that 127.0.0.1, not ::1.
@@ -604,12 +623,17 @@ class MinecraftEngine:
                 "biome": str(game.get("biome") or "").replace("_", " "),
                 "items": [[k.replace("_", " "), v] for k, v in top],
             }
+            pos = game.get("position") or {}
+            if isinstance(pos, dict) and "x" in pos:
+                self._pos[cid] = (float(pos["x"]), float(pos.get("y", 0)), float(pos["z"]))
+                await self._stuck_check(cid)
             before = self._health.get(cid)
             self._health[cid] = health
             if before is not None and health < before - 3:
                 await self._react(cid, "surprised")
         if not hud:
             return
+        await self._keep_together()
         self._state_at = time.time()
         self.hud = hud
         self.view["hud"] = hud
@@ -617,6 +641,60 @@ class MinecraftEngine:
         if now - self._hud_sent >= 2:
             self._hud_sent = now
             await self._push({"kind": "hud", "hud": hud})
+
+    async def _stuck_check(self, cid: str) -> None:
+        """Same few blocks for 3 minutes: tell her to get out and try another plan."""
+        x, y, z = self._pos[cid]
+        now = time.time()
+        anchor = self._anchor.get(cid)
+        if anchor is None or ((x - anchor[0]) ** 2 + (y - anchor[1]) ** 2 + (z - anchor[2]) ** 2) ** 0.5 > 4:
+            self._anchor[cid] = (x, y, z, now)
+            return
+        if now - anchor[3] < STUCK_SECONDS:
+            return
+        self._anchor[cid] = (x, y, z, now)  # next reminder only after another wait
+        await self.link.emit(
+            "send-message",
+            self.names[cid],
+            {
+                "from": "system",
+                "message": (
+                    "You have not moved for 3 minutes, you are stuck or looping. Stop with !stop, get out with "
+                    "!goToSurface or !moveAway(30), say something funny about it, then try a different plan."
+                ),
+            },
+        )
+        logger.info(f"Minecraft: {self.names[cid]} looked stuck, nudged")
+
+    async def _keep_together(self) -> None:
+        """Far apart for a minute: the one who wandered off walks back."""
+        if len(self.cast) < 2 or not all(c in self._pos for c in self.cast[:2]):
+            return
+        a, b = self.cast[0], self.cast[1]
+        (ax, _ay, az), (bx, _by, bz) = self._pos[a], self._pos[b]
+        far = ((ax - bx) ** 2 + (az - bz) ** 2) ** 0.5 > TOGETHER_BLOCKS
+        now = time.time()
+        if not far:
+            self._apart_since = 0.0
+            return
+        self._apart_since = self._apart_since or now
+        if now - self._apart_since < 60 or now - self._nudged_at < 120:
+            return
+        self._nudged_at = now
+        self.turn += 1
+        mover, friend = (a, b) if self.turn % 2 else (b, a)
+        await self.link.emit(
+            "send-message",
+            self.names[mover],
+            {
+                "from": "system",
+                "message": (
+                    f"You drifted far away from {self.names[friend]}. Go back to her now with "
+                    f'!goToPlayer("{self.names[friend]}", 3), say something to her, and keep working together.'
+                ),
+            },
+        )
+        logger.info(f"Minecraft: {self.names[mover]} walks back to {self.names[friend]}")
 
     # ------------------------------------------------------------ chat to bots
     async def _deliver_loop(self) -> None:
@@ -729,6 +807,100 @@ def setup_problem() -> str:
     if not os.environ.get("OPENAI_API_KEY"):
         return "OPENAI_API_KEY is missing in .env (the bots need it)"
     return ""
+
+
+VIEWER_ORIGINAL = """    function botPosition () {
+      const packet = { pos: bot.entity.position, yaw: bot.entity.yaw, addMesh: true }
+      if (firstPerson) {
+        packet.pitch = bot.entity.pitch
+      }
+      socket.emit('position', packet)
+      worldView.updatePosition(bot.entity.position)
+    }
+"""
+VIEWER_SMOOTH = """    // VR Agent: the camera turns smoothly instead of snapping with every head
+    // turn, and looks down only half as far, so viewers keep the horizon.
+    let camYaw = bot.entity.yaw
+    let camPitch = bot.entity.pitch
+    function botPosition () {
+      worldView.updatePosition(bot.entity.position)
+    }
+    const smoothCamera = setInterval(() => {
+      if (!bot.entity) return
+      let d = bot.entity.yaw - camYaw
+      d = Math.atan2(Math.sin(d), Math.cos(d))
+      camYaw += d * 0.1
+      camPitch += (bot.entity.pitch * 0.5 - camPitch) * 0.1
+      const packet = { pos: bot.entity.position, yaw: camYaw, addMesh: true }
+      if (firstPerson) packet.pitch = camPitch
+      socket.emit('position', packet)
+    }, 50)
+    socket.on('disconnect', () => clearInterval(smoothCamera))
+"""
+
+
+def patch_mindcraft() -> list[str]:
+    """Small, repeatable edits to Mindcraft's packages (safe to run every start).
+
+    * prismarine viewer: smooth camera (no whiplash on stream)
+    * pathfinder: walk instead of sprint, so moves are easy to follow
+    """
+    done: list[str] = []
+    edits = [
+        (MINDCRAFT_DIR / "node_modules/prismarine-viewer/lib/mineflayer.js", VIEWER_ORIGINAL, VIEWER_SMOOTH),
+        (
+            MINDCRAFT_DIR / "node_modules/mineflayer-pathfinder/lib/movements.js",
+            "    this.allowSprinting = true\n",
+            "    this.allowSprinting = false // VR Agent: walk, easier to watch\n",
+        ),
+    ]
+    for path, old, new in edits:
+        try:
+            text = path.read_text()
+        except Exception:
+            continue
+        if new in text:
+            continue
+        if old in text:
+            path.write_text(text.replace(old, new, 1))
+            done.append(path.name)
+        else:
+            logger.warning(f"Minecraft: {path.name} changed upstream, its stream patch was skipped")
+    return done
+
+
+# Commands the bots never need on stream. Fewer commands also means a shorter
+# prompt on every single AI call.
+BLOCKED_ACTIONS = [
+    "!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel",
+    "!newAction", "!restart", "!clearChat", "!stfu", "!setMode", "!help", "!searchWiki",
+    "!showVillagerTrades", "!tradeWithVillager", "!attackPlayer", "!digDown",
+    "!lookAtPlayer", "!lookAtPosition",
+]
+ROBOT_LINE = "Be a friendly, casual, effective, and efficient robot."
+
+
+def cache_friendly(default: str, style: str) -> str:
+    """The system prompt with everything that never changes first.
+
+    OpenAI reuses (and bills at a fraction) a prompt start it saw recently,
+    but only up to the first changed character. Mindcraft puts the live stats
+    near the top, so nothing was reused. Here the persona and the long command
+    list come first; memory, stats, inventory and examples follow.
+    """
+    if not default:
+        return ""
+    body = default.replace("$COMMAND_DOCS\n", "").replace("$COMMAND_DOCS", "")
+    body = body.replace("$SELF_PROMPT ", "").replace("$SELF_PROMPT", "")
+    if ROBOT_LINE in body:
+        body = body.replace(ROBOT_LINE, style)
+    else:
+        body = body.replace("\n", "\n" + style + " ", 1)
+    marker = "\nSummarized memory:"
+    if marker not in body:
+        return body + "\n$COMMAND_DOCS\n$SELF_PROMPT"
+    head, tail = body.split(marker, 1)
+    return head + "\n$COMMAND_DOCS\n$SELF_PROMPT" + marker + tail
 
 
 def _default_conversing() -> str:
