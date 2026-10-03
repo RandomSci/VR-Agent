@@ -37,7 +37,9 @@
       <div id="mc-panes"></div>
       <div id="mc-chat"></div>
       <div id="mc-problem"></div>
-      <div id="mc-status"></div>`;
+      <div id="mc-status"></div>
+      <div id="mc-project"><div class="mc-ptitle"></div><div class="mc-pstep"></div><i><b></b></i><div class="mc-psteps"></div></div>
+      <div id="mc-done"></div>`;
     document.body.append(root, over);
   }
 
@@ -98,6 +100,7 @@
     focusAt = 0; // the first speaker may take the camera right away
     problem(op.problem);
     if (op.hud) hud(op.hud);
+    if (op.project) project(op.project);
     clearInterval(layoutTimer);
     let tries = 0;
     const place = () => {
@@ -210,6 +213,28 @@
     setTimeout(() => box.classList.remove("show"), 8000);
   }
 
+  function project(op) {
+    const box = $("mc-project");
+    if (!box) return;
+    box.classList.add("show");
+    box.querySelector(".mc-ptitle").textContent = op.title || "";
+    box.querySelector(".mc-pstep").textContent = op.step ? `Building: ${op.step}` : "";
+    box.querySelector("i b").style.width = `${Math.round(Math.min(1, op.progress || 0) * 100)}%`;
+    box.querySelector(".mc-psteps").replaceChildren(
+      ...(op.steps || []).map((s) => el("span", s.done ? "done" : (s.name === op.step ? "now" : ""), s.name))
+    );
+  }
+
+  function projectDone(op) {
+    const box = $("mc-done");
+    if (!box) return;
+    box.textContent = `✨ ${op.step} finished! ✨`;
+    box.classList.remove("show");
+    void box.offsetWidth;
+    box.classList.add("show");
+    setTimeout(() => box.classList.remove("show"), 7000);
+  }
+
   function apply(op) {
     if (!op) return;
     switch (op.kind) {
@@ -219,6 +244,8 @@
       case "said": if (!root) return; said(op); break;
       case "chat": if (!root) return; chat(op); break;
       case "status": if (!root) return; status(op); break;
+      case "project": if (!root) return; project(op); break;
+      case "project_done": if (!root) return; projectDone(op); break;
       case "stop": leave(); break;
     }
   }

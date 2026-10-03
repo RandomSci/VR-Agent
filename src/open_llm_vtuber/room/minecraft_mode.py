@@ -283,6 +283,9 @@ class MinecraftEngine:
         self.problem = ""
         self.view: dict[str, Any] = {"active": False}
         self.on_start: Optional[Callable[..., Awaitable[None]]] = None
+        from .minecraft_projects import ProjectTracker
+
+        self.projects = ProjectTracker(list(self.names.values()), rcon_command, self._push, self._tell_both)
 
     # ------------------------------------------------------------ public
     @property
@@ -653,6 +656,7 @@ class MinecraftEngine:
 
     async def _state(self, states: dict[str, Any]) -> None:
         hud: dict[str, Any] = {}
+        counts_of: dict[str, dict[str, int]] = {}
         for agent, state in states.items():
             cid = self.ids.get(str(agent).lower())
             if not cid or not isinstance(state, dict) or "gameplay" not in state:
@@ -661,6 +665,7 @@ class MinecraftEngine:
             game = state.get("gameplay") or {}
             action = state.get("action") or {}
             counts = ((state.get("inventory") or {}).get("counts") or {})
+            counts_of[cid] = {str(k): int(v) for k, v in counts.items() if isinstance(v, (int, float))}
             top = sorted(counts.items(), key=lambda kv: -kv[1])[:4]
             health = int(game.get("health") or 0)
             hud[cid] = {
@@ -682,6 +687,14 @@ class MinecraftEngine:
         if not hud:
             return
         await self._keep_together()
+        try:
+            await self.projects.update(
+                {self.names[c]: self._pos[c] for c in hud if c in self._pos},
+                {self.names[c]: counts_of.get(c, {}) for c in hud},
+            )
+            self.view["project"] = self.projects.view()
+        except Exception as exc:
+            logger.debug(f"Minecraft project update failed: {exc}")
         self._state_at = time.time()
         self.hud = hud
         self.view["hud"] = hud
@@ -714,10 +727,19 @@ class MinecraftEngine:
         )
         logger.info(f"Minecraft: {self.names[cid]} looked stuck, nudged")
 
+    async def _tell_both(self, text: str) -> None:
+        for cid in self.cast:
+            await self.link.emit("send-message", self.names[cid], {"from": "system", "message": text})
+        for cid in self.cast:
+            await self._react(cid, "celebrate")
+
     async def _keep_together(self) -> None:
         """Far apart for a minute: the one who wandered off walks back."""
-        if len(self.cast) < 2 or not all(c in self._pos for c in self.cast[:2]):
-            return
+        now = time.time()
+        if len(self.cast) < 2 or not all(
+            c in self._pos and now - self._seen_at.get(c, 0) < 10 for c in self.cast[:2]
+        ):
+            return  # someone is not in the world right now: nothing to do
         a, b = self.cast[0], self.cast[1]
         (ax, _ay, az), (bx, _by, bz) = self._pos[a], self._pos[b]
         far = ((ax - bx) ** 2 + (az - bz) ** 2) ** 0.5 > TOGETHER_BLOCKS
@@ -1053,7 +1075,7 @@ def enable_rcon() -> None:
 
 
 async def bring_into_view(mover: str, friend: str) -> bool:
-    """Put `mover` a few blocks in front of `friend`, facing her, so the
+    """Put `mover` a few blocks in front of `friend` so the
     camera (through the friend's eyes) shows both girls. Spots that are not
     free (a wall, a tree, a slope) are skipped, so nobody ends up inside
     blocks; a plain tp is the last resort."""
@@ -1061,7 +1083,7 @@ async def bring_into_view(mover: str, friend: str) -> bool:
         command = (
             f"execute at {friend} rotated ~ 0 positioned ^ ^{up} ^{ahead} "
             f"if block ~ ~ ~ minecraft:air if block ~ ~1 ~ minecraft:air "
-            f"run tp {mover} ~ ~ ~ facing entity {friend}"
+            f"run tp {mover} ~ ~ ~"
         )
         reply = await rcon_command(command, reply=True)
         if reply is False:
