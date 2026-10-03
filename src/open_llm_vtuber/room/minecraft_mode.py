@@ -31,6 +31,9 @@ characters, captions, the chat that reached them and a small HUD
                                      and they build each project piece by piece
                                      in front of the camera (0 = survival, the
                                      old gather and the build appears)
+    VR_MINECRAFT_CAMERA=director     with VR_MINECRAFT_PLAYER: your camera floats
+                                     behind both girls and what they build
+                                     ("eyes" = through the eyes of who talks)
     VR_MINECRAFT_PLAYER=YourName     your Minecraft name: when you join the
                                      world with the real game, you become an
                                      invisible spectator that looks through
@@ -90,7 +93,11 @@ CREATIVE_BLOCKED = [
     "!startConversation", "!endConversation",
 ]
 PIECE_SECONDS = (4.0, 20.0)  # creative: at least / at most this long per piece
-CAMERA_HOLD = 15.0  # the camera stays on one girl at least this long
+CAMERA_HOLD = 15.0  # "eyes": the camera stays on one girl at least this long
+# "director": your camera floats behind both girls, aimed at them and what they
+# build, and glides to a new angle when they move. "eyes": through her eyes.
+CAMERA_SHOT_SECONDS = 8.0  # a new angle at most this often
+CAMERA_MOVE = (2.0, 15)  # seconds, steps per second of a camera move
 CAMERA_REFRESH = 20.0  # spectate again this often (a respawn ends it)
 DIRECTOR = "Director"  # a plain command from this name runs right away in Mindcraft (no AI call)
 # Mindcraft's automatic behaviours. elbow_room fought our teleports (the HUD
@@ -338,6 +345,10 @@ class MinecraftEngine:
         self.cam_focus = ""
         self._cam_focus_at = 0.0
         self._cam_sent_at = 0.0
+        self.camera_style = (os.environ.get("VR_MINECRAFT_CAMERA", "") or "director").strip().lower()
+        self._shot: Optional[tuple[tuple[float, float, float], tuple[float, float, float]]] = None
+        self._shot_at = 0.0
+        self.build_focus: Optional[tuple[float, float, float]] = None  # absolute, what is being built
         self.line_ready = asyncio.Event()
         self.outbox: deque[dict[str, Any]] = deque(maxlen=12)
         self.recent: deque[str] = deque(maxlen=12)
@@ -969,7 +980,10 @@ class MinecraftEngine:
             return
         here = self.camera_player.lower() in online
         if here and not self.camera_on:
+            # creative first: switching modes also ends any old "spectate" (through her eyes)
+            await rcon_command(f"gamemode creative {self.camera_player}")
             await rcon_command(f"gamemode spectator {self.camera_player}")
+            self._shot = None
             self.camera_on = True
             self._cam_sent_at = 0.0
             self.view["camera"] = "client"
@@ -985,6 +999,9 @@ class MinecraftEngine:
         bots = [c for c in self.cast if self.names[c].lower() in online]
         if not bots:
             return
+        if self.camera_style != "eyes":
+            await self._director_shot([c for c in self.cast if c in bots])
+            return
         if self.cam_focus not in bots:
             self.cam_focus = bots[0]
             self._cam_focus_at = time.time()
@@ -997,8 +1014,67 @@ class MinecraftEngine:
         await rcon_command(f"spectate {self.names[self.cam_focus]} {self.camera_player}")
         await self._push({"kind": "focus", "who": self.cam_focus})
 
+    def shot_for(self, girls: list[tuple[float, float, float]]) -> Optional[tuple[tuple[float, float, float], tuple[float, float, float]]]:
+        """Where the camera floats and what it looks at: both girls and the build in one picture."""
+        if not girls:
+            return None
+        mx = sum(p[0] for p in girls) / len(girls)
+        my = sum(p[1] for p in girls) / len(girls)
+        mz = sum(p[2] for p in girls) / len(girls)
+        fx, fy, fz = self.build_focus or (mx, my, mz)
+        lx, ly, lz = (mx + fx) / 2, (my + fy) / 2, (mz + fz) / 2
+        dx, dz = fx - mx, fz - mz
+        length = (dx * dx + dz * dz) ** 0.5
+        if length < 1.5:  # nothing in front of them: keep the old side, or look east
+            if self._shot:
+                (cx, _cy, cz), (ox, _oy, oz) = self._shot
+                dx, dz, length = ox - cx, oz - cz, max(0.1, ((ox - cx) ** 2 + (oz - cz) ** 2) ** 0.5)
+            else:
+                dx, dz, length = 1.0, 0.0, 1.0
+        dx, dz = dx / length, dz / length
+        spread = max([((p[0] - lx) ** 2 + (p[2] - lz) ** 2) ** 0.5 for p in girls] + [length / 2])
+        back = min(28.0, max(9.0, 6.0 + spread * 1.3))
+        top = max(p[1] for p in girls)
+        camera = (lx - dx * back, max(top + 3.0, ly + back * 0.35), lz - dz * back)
+        return camera, (lx, ly + 0.8, lz)
+
+    async def _director_shot(self, here: list[str]) -> None:
+        girls = [self._pos[c] for c in here if c in self._pos and time.time() - self._seen_at.get(c, 0) < 10]
+        shot = self.shot_for(girls)
+        if shot is None:
+            return
+        now = time.time()
+        if self._shot:
+            (cx, cy, cz), (ox, oy, oz) = self._shot
+            (nx, ny, nz), (tx, ty, tz) = shot
+            moved = ((nx - cx) ** 2 + (ny - cy) ** 2 + (nz - cz) ** 2) ** 0.5
+            turned = ((tx - ox) ** 2 + (ty - oy) ** 2 + (tz - oz) ** 2) ** 0.5
+            if (moved < 4 and turned < 4) or now - self._shot_at < CAMERA_SHOT_SECONDS:
+                return
+        await self._glide(shot)
+
+    async def _glide(self, shot: tuple[tuple[float, float, float], tuple[float, float, float]]) -> None:
+        """Move the camera smoothly (a teleport every frame-ish) to the new angle."""
+        seconds, rate = CAMERA_MOVE
+        old = self._shot or shot
+        steps = max(1, int(seconds * rate)) if self._shot else 1
+        for i in range(1, steps + 1):
+            t = i / steps
+            t = t * t * (3 - 2 * t)  # ease in and out
+            c = [a + (b - a) * t for a, b in zip(old[0], shot[0])]
+            look = [a + (b - a) * t for a, b in zip(old[1], shot[1])]
+            await rcon_command(
+                f"tp {self.camera_player} {c[0]:.2f} {c[1]:.2f} {c[2]:.2f} facing {look[0]:.2f} {look[1]:.2f} {look[2]:.2f}"
+            )
+            if i < steps:
+                await asyncio.sleep(1.0 / rate)
+        self._shot = shot
+        self._shot_at = time.time()
+
     async def _camera_to(self, cid: str) -> None:
         """The one who talks gets the camera (held CAMERA_HOLD so it does not flicker)."""
+        if self.camera_style != "eyes":
+            return  # the director camera already shows both
         if not self.camera_on or cid == self.cam_focus or time.time() - self._cam_focus_at < CAMERA_HOLD:
             return
         if time.time() - self._seen_at.get(cid, 0) > 15:
@@ -1022,6 +1098,8 @@ class MinecraftEngine:
                     continue
                 total = max(60.0, self.projects.minutes * 60)
                 if self.projects.timed():  # the network trains: they hover in front of it and watch
+                    bx, by, bz = base
+                    self.build_focus = (bx + 40, by + 16, bz - 6)
                     if time.time() - watched_at > 60:
                         watched_at = time.time()
                         for i, cid in enumerate(here):
@@ -1038,6 +1116,8 @@ class MinecraftEngine:
                     await self.projects.advance()
                     continue
                 step = steps[done]
+                bx, by, bz = base
+                self.build_focus = (bx + step["focus"][0], by + step["focus"][1], bz + step["focus"][2])
                 self._builder_turn += 1
                 cid = here[self._builder_turn % len(here)]
                 started = time.time()

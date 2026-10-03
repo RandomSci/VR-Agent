@@ -254,6 +254,7 @@ def test_a_jump_reloads_the_view(monkeypatch):
 def test_real_game_camera_follows_the_speaker(monkeypatch):
     async def run():
         monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
+        monkeypatch.setenv("VR_MINECRAFT_CAMERA", "eyes")
         eng = _live_engine(monkeypatch)
         clock = [1000.0]
         monkeypatch.setattr(mm.time, "time", lambda: clock[0])
@@ -273,7 +274,9 @@ def test_real_game_camera_follows_the_speaker(monkeypatch):
         assert not eng.camera_on and not commands  # not in the world yet: web views
         online.add("selwyn")
         await eng._camera_tick()
-        assert eng.camera_on and commands[:2] == ["gamemode spectator Selwyn", "spectate Mika Selwyn"]
+        assert eng.camera_on and commands[:3] == [
+            "gamemode creative Selwyn", "gamemode spectator Selwyn", "spectate Mika Selwyn"
+        ]
         assert {"kind": "camera", "mode": "client"} in eng.pushed
         eng._seen_at["luna"] = clock[0]
         await eng._camera_to("luna")
@@ -329,3 +332,49 @@ def test_the_flight_patch_replaces_an_older_version(tmp_path, monkeypatch):
     assert text.count(mm.FLY_MARK) == 1 and mm.FLY_COMMANDS in text and "(v1)" not in text
     mm.patch_mindcraft()
     assert actions.read_text() == text
+
+
+def test_director_camera_frames_both_girls_and_the_build(monkeypatch):
+    async def run():
+        monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
+        monkeypatch.delenv("VR_MINECRAFT_CAMERA", raising=False)
+        eng = _live_engine(monkeypatch)
+        clock = [1000.0]
+        monkeypatch.setattr(mm.time, "time", lambda: clock[0])
+
+        async def no_wait(_s):
+            return None
+
+        monkeypatch.setattr(mm.asyncio, "sleep", no_wait)
+        commands = []
+
+        async def rcon(cmd, reply=False):
+            commands.append(cmd)
+            return True
+
+        async def who():
+            return {"mika", "luna", "selwyn"}
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        monkeypatch.setattr(mm, "rcon_online", who)
+        for cid, pos in (("mika", (0.0, 70.0, 0.0)), ("luna", (0.0, 70.0, 6.0))):
+            eng._pos[cid] = pos
+            eng._seen_at[cid] = clock[0]
+        eng.build_focus = (20.0, 72.0, 3.0)
+        await eng._camera_tick()
+        assert not any(c.startswith("spectate") for c in commands)
+        tp = [c for c in commands if c.startswith("tp Selwyn")]
+        assert len(tp) == 1 and " facing " in tp[0]
+        cx, cy, cz = map(float, tp[0].split()[2:5])
+        assert cx < 0 and cy > 70  # behind and above the girls, looking at them and the build
+        await eng._camera_tick()
+        assert len([c for c in commands if c.startswith("tp Selwyn")]) == 1  # nothing moved: same shot
+        clock[0] += mm.CAMERA_SHOT_SECONDS + 1
+        eng._seen_at = {"mika": clock[0], "luna": clock[0]}
+        eng.build_focus = (-30.0, 72.0, 3.0)  # the next piece is on the other side
+        await eng._camera_tick()
+        glide = [c for c in commands if c.startswith("tp Selwyn")][1:]
+        assert len(glide) == int(mm.CAMERA_MOVE[0] * mm.CAMERA_MOVE[1])  # a smooth move, not a jump
+        assert float(glide[-1].split()[2]) > 0  # now from the other side
+
+    asyncio.run(run())
