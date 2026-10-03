@@ -27,6 +27,14 @@ characters, captions, the chat that reached them and a small HUD
     VR_MINECRAFT_GOAL=...            replaces the default long term goal
     VR_MINECRAFT_THINK_SECONDS=10    at most one AI call per bot this often:
                                      lower is livelier but costs more
+    VR_MINECRAFT_PLAYER=YourName     your Minecraft name: when you join the
+                                     world with the real game, you become an
+                                     invisible spectator that looks through
+                                     the eyes of whoever talks, and the Stage
+                                     page turns see-through so OBS shows your
+                                     game window under it (real graphics, no
+                                     black or white web view). Without you in
+                                     the world the web views are used.
 
 Nothing here raises into the stream: a crashed server or Mindcraft is started
 again with a growing pause, a lost socket reconnects by itself.
@@ -64,6 +72,13 @@ STILL_BLOCKS = 3.0
 JUMP_BLOCKS = 16.0  # moved this far between two updates: a teleport or respawn, reload the view
 GOAL_RETRY = 30.0  # seconds between forced goal restarts for one bot
 VIEWER_LINE_MAX_AGE = 60.0  # an answer to a viewer is spoken even if it waited this long
+# Every new project part: a kit for each girl, so they always have materials.
+KIT = (
+    ("stone", 64), ("oak_planks", 64), ("sand", 32), ("glass", 32), ("torch", 16),
+    ("bread", 16), ("stone_pickaxe", 1), ("stone_axe", 1), ("stone_shovel", 1),
+)
+CAMERA_HOLD = 15.0  # the camera stays on one girl at least this long
+CAMERA_REFRESH = 20.0  # spectate again this often (a respawn ends it)
 DIRECTOR = "Director"  # a plain command from this name runs right away in Mindcraft (no AI call)
 # Mindcraft's automatic behaviours. elbow_room fought our teleports (the HUD
 # showed "mode:elbow_room" for minutes) and idle_staring kept swinging the
@@ -111,6 +126,8 @@ NOT_SPEECH = re.compile(
 )
 COMMAND_RE = re.compile(r"!\w+\((?:[^()\"']|\"[^\"]*\"|'[^']*')*\)|!\w+")
 TO_RE = re.compile(r"^\s*\(To ([^)]+)\)\s*")
+# "draw 7", "predict a 3", "can it guess number 5": the neural network reads that digit
+DIGIT_ASK = re.compile(r"\b(?:draw|write|show|predict|guess|read|test|try|number|digit)\b\D{0,14}?\b([0-9])\b", re.I)
 
 
 def minecraft_mode_enabled() -> bool:
@@ -291,6 +308,12 @@ class MinecraftEngine:
         self._escaped_at: dict[str, float] = {}
         self._goal_step = ""
         self._llm: Any = None
+        # The real game as the camera (VR_MINECRAFT_PLAYER).
+        self.camera_player = re.sub(r"[^\w]", "", os.environ.get("VR_MINECRAFT_PLAYER", ""))[:16]
+        self.camera_on = False
+        self.cam_focus = ""
+        self._cam_focus_at = 0.0
+        self._cam_sent_at = 0.0
         self.line_ready = asyncio.Event()
         self.outbox: deque[dict[str, Any]] = deque(maxlen=12)
         self.recent: deque[str] = deque(maxlen=12)
@@ -317,6 +340,9 @@ class MinecraftEngine:
         from .minecraft_projects import ProjectTracker
 
         self.projects = ProjectTracker(list(self.names.values()), rcon_command, self._push, self._tell_both)
+        from .minecraft_net_show import NetShow
+
+        self.net_show = NetShow(self.projects, lambda *a, **k: rcon_command(*a, **k), self._tell_one, self._push)
 
     # ------------------------------------------------------------ public
     @property
@@ -352,11 +378,15 @@ class MinecraftEngine:
             return
         self.last_viewer[author] = now
         targets = self._targets(text)
+        ask = DIGIT_ASK.search(text)
+        heard = text  # what the girls get; the screen shows the comment as typed
+        if ask and self.net_show.request(int(ask.group(1)), author):
+            heard += f" (The neural network will read a {ask.group(1)} on the board in a moment.)"
         # The asked girl answers out loud right away (one short AI call here).
         # Mindcraft alone took minutes: a bot drops its reply whenever another
         # message reaches it while it is still thinking.
         answer = targets[0] if len(targets) == 1 else self._quietest(targets)
-        asyncio.create_task(self._quick_reply(answer, author, text))
+        asyncio.create_task(self._quick_reply(answer, author, heard))
         for cid in targets:
             note = (
                 " (You already answered out loud. Do not greet again: if this asks for something, "
@@ -365,7 +395,7 @@ class MinecraftEngine:
                 else ""
             )
             # No emoji reaches the bots: they copy what they read.
-            self.outbox.append({"to": cid, "from": author, "text": (strip_emoji(text) or text) + note, "at": now})
+            self.outbox.append({"to": cid, "from": author, "text": (strip_emoji(heard) or heard) + note, "at": now})
         asyncio.create_task(
             self._push({"kind": "chat", "author": author, "text": text, "to": targets})
         )
@@ -434,6 +464,7 @@ class MinecraftEngine:
                 "cast": self.cast,
                 "names": self.names,
                 "viewers": ports,
+                "camera": "web",
                 "problem": self.problem,
             }
             await self._wait_ready()
@@ -448,6 +479,8 @@ class MinecraftEngine:
                 asyncio.create_task(self._deliver_loop(), name="mc-deliver"),
                 asyncio.create_task(self._fidget_loop(), name="mc-fidget"),
                 asyncio.create_task(self._watchdog(), name="mc-watchdog"),
+                asyncio.create_task(self._camera_loop(), name="mc-camera"),
+                asyncio.create_task(self._net_loop(), name="mc-net"),
             ]
             self._tasks.append(asyncio.create_task(self._title_loop(), name="mc-title"))
             await self._wait_live()
@@ -797,9 +830,10 @@ class MinecraftEngine:
             anchor = self._anchor[cid]
         kind = self._kind.get(cid, "")
         step = str(self.projects.view().get("step") or "")
-        if step != self._goal_step:  # a new project part: both get the new goal
+        if step != self._goal_step:  # a new project part: both get the new goal and a kit
             self._goal_step = step
             self._goal_at = {}
+            asyncio.create_task(self._give_kits())
         # Mindcraft stops a bot's goal for good after three replies without a
         # command; she then stands there until someone talks to her.
         if (kind in ("stopped", "idle") or cid not in self._goal_at) and now - self._goal_at.get(cid, 0) > GOAL_RETRY:
@@ -808,6 +842,12 @@ class MinecraftEngine:
         if now - anchor[3] < STUCK_SECONDS or now - self._escaped_at.get(cid, 0) < STUCK_SECONDS:
             return
         await self._escape(cid)
+
+    async def _give_kits(self) -> None:
+        for cid in self.cast:
+            for item, count in KIT:
+                await rcon_command(f"give {self.names[cid]} minecraft:{item} {count}")
+        logger.info("Minecraft: both got a kit of materials for the new project part")
 
     async def _escape(self, cid: str) -> None:
         """Same few blocks for a minute (a hole, a wall, a loop): out to the open, next to her friend."""
@@ -848,6 +888,88 @@ class MinecraftEngine:
     async def _reload_view(self, cid: str) -> None:
         """Her camera after a jump: reload it once the new chunks are there."""
         await self._push({"kind": "reload", "who": cid})
+        if self.camera_on and cid == self.cam_focus:
+            self._cam_sent_at = 0.0  # spectate again on the next camera tick
+
+    # ------------------------------------------------------------ real game camera
+    async def _camera_loop(self) -> None:
+        """Your own Minecraft as the camera: spectator, through her eyes."""
+        if not self.camera_player:
+            return
+        logger.info(f"Minecraft: join the world as {self.camera_player} with the real game to be the camera")
+        while True:
+            try:
+                await self._camera_tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug(f"Minecraft camera: {exc}")
+            await asyncio.sleep(2.0)
+
+    async def _camera_tick(self) -> None:
+        online = await rcon_online()
+        if online is None:
+            return
+        here = self.camera_player.lower() in online
+        if here and not self.camera_on:
+            await rcon_command(f"gamemode spectator {self.camera_player}")
+            self.camera_on = True
+            self._cam_sent_at = 0.0
+            self.view["camera"] = "client"
+            await self._push({"kind": "camera", "mode": "client"})
+            logger.info(f"Minecraft: {self.camera_player} is the camera now (real game)")
+        elif not here and self.camera_on:
+            self.camera_on = False
+            self.view["camera"] = "web"
+            await self._push({"kind": "camera", "mode": "web"})
+            logger.info(f"Minecraft: {self.camera_player} left, back to the web views")
+        if not self.camera_on:
+            return
+        bots = [c for c in self.cast if self.names[c].lower() in online]
+        if not bots:
+            return
+        if self.cam_focus not in bots:
+            self.cam_focus = bots[0]
+            self._cam_focus_at = time.time()
+            self._cam_sent_at = 0.0
+        if time.time() - self._cam_sent_at >= CAMERA_REFRESH:
+            await self._spectate()
+
+    async def _spectate(self) -> None:
+        self._cam_sent_at = time.time()
+        await rcon_command(f"spectate {self.names[self.cam_focus]} {self.camera_player}")
+        await self._push({"kind": "focus", "who": self.cam_focus})
+
+    async def _camera_to(self, cid: str) -> None:
+        """The one who talks gets the camera (held CAMERA_HOLD so it does not flicker)."""
+        if not self.camera_on or cid == self.cam_focus or time.time() - self._cam_focus_at < CAMERA_HOLD:
+            return
+        if time.time() - self._seen_at.get(cid, 0) > 15:
+            return  # not in the world right now
+        self.cam_focus = cid
+        self._cam_focus_at = time.time()
+        await self._spectate()
+
+    async def _tell_one(self, text: str) -> None:
+        """A note for one girl (whoever spoke least), so only one AI call answers it."""
+        cid = self._quietest(self._present())
+        await self.link.emit("send-message", self.names[cid], {"from": "system", "message": text})
+
+    async def _net_loop(self) -> None:
+        """The real neural network: trains live, reads digits on the wall."""
+        last = 0.0
+        while True:
+            await asyncio.sleep(2.0)
+            if not self.net_show.requests and time.time() - last < 15:
+                continue
+            last = time.time()
+            try:
+                await self.net_show.tick()
+                self.view["net"] = self.net_show.stats()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"Minecraft: neural network step failed: {exc}")
 
     async def _tell_both(self, text: str) -> None:
         for cid in self.cast:
@@ -965,7 +1087,7 @@ class MinecraftEngine:
         system = (
             f"You are {name}. {persona} You are live on YouTube playing survival Minecraft with {friend}. "
             f"Right now you are: {doing}. Team project: {strip_emoji(view.get('title', ''))}, working on {view.get('step', '')}. "
-            f"Just said on stream: {recent or 'nothing yet'}. "
+            f"Just said on stream: {recent or 'nothing yet'}. {self.net_show.describe()} "
             "A viewer wrote in the live chat. Answer them out loud in one or two short sentences, under 25 words. "
             "Say their name once. If they ask you to do something, say you will do it, or cheekily why not. "
             "Plain spoken words only: no emojis, no emoticons, no symbols, no hashtags, no commands, no quotes."
@@ -1013,6 +1135,7 @@ class MinecraftEngine:
             await self._react(cid, mood)
         self.speaking = cid
         self._spoke_at[cid] = time.time()
+        await self._camera_to(cid)
         self.said.append(f"{self.names[cid]}: {text[:120]}")
         try:
             parts = chunks(text)

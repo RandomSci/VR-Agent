@@ -26,6 +26,7 @@ for arg in "$@"; do
                 echo "Minecraft is not set up yet. Run this once first:  ./minecraft/setup.sh"
                 exit 1
             fi
+            python3 minecraft/add_server.py >/dev/null 2>&1 || true
             echo "Minecraft mode: Mika and Luna play, chat steers them"
             ;;
     esac

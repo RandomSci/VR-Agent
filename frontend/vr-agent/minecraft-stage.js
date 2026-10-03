@@ -25,6 +25,9 @@
   let focusAt = 0;
   const FOCUS_HOLD = 15000;
   const CHAT_SHOW_MS = 2000; // a viewer comment stays on screen this long
+  // "client": the owner's real Minecraft is the camera (OBS window capture
+  // under this page), so the page is see-through and the web views stay off.
+  let camera = "web";
 
   function build() {
     if (root) return;
@@ -40,7 +43,8 @@
       <div id="mc-problem"></div>
       <div id="mc-status"></div>
       <div id="mc-project"><div class="mc-ptitle"></div><div class="mc-pstep"></div><i><b></b></i><div class="mc-psteps"></div></div>
-      <div id="mc-done"></div>`;
+      <div id="mc-done"></div>
+      <div id="mc-net"><b>🧠 Neural network</b><span class="mc-nstats"></span><span class="mc-nlast"></span></div>`;
     document.body.append(root, over);
   }
 
@@ -102,6 +106,8 @@
     problem(op.problem);
     if (op.hud) hud(op.hud);
     if (op.project) project(op.project);
+    if (op.net) net(op.net);
+    setCamera(op.camera || "web");
     clearInterval(layoutTimer);
     let tries = 0;
     const place = () => {
@@ -112,7 +118,17 @@
     place();
   }
 
+  function setCamera(mode) {
+    camera = mode === "client" ? "client" : "web";
+    document.documentElement.classList.toggle("mc-client", camera === "client");
+    document.querySelectorAll("#mc-views iframe").forEach((f) => {
+      if (camera === "client") f.src = "about:blank";
+    });
+    if (camera === "web" && focus) fresh(focus);
+  }
+
   function leave() {
+    document.documentElement.classList.remove("mc-client");
     clearInterval(layoutTimer);
     document.documentElement.classList.remove("minecraft-mode");
     if (window.vrRoom && window.vrRoom.normal) window.vrRoom.normal();
@@ -132,6 +148,7 @@
   // and every few minutes on the view being watched.
   const REFRESH_MS = 6 * 60 * 1000;
   function fresh(id) {
+    if (camera === "client") return;
     const p = viewPane(id);
     if (!p || !loaded[id] || id !== focus) return;
     const frame = p.querySelector("iframe");
@@ -167,7 +184,7 @@
       if (!p) continue;
       view(id);
       // The watched one is not in the world (dead, restarting): show the other.
-      if (!seen[focus] || Date.now() - seen[focus] > 15000) setFocus(id, true);
+      if (camera !== "client" && (!seen[focus] || Date.now() - seen[focus] > 15000)) setFocus(id, true);
       const hearts = Math.max(0, Math.min(10, Math.ceil((h.health || 0) / 2)));
       const food = Math.max(0, Math.min(10, Math.ceil((h.hunger || 0) / 2)));
       p.querySelector(".mc-hearts").textContent = "♥".repeat(hearts) + "♡".repeat(10 - hearts);
@@ -184,7 +201,7 @@
   function say(op) {
     const p = pane(op.who);
     if (!p) return;
-    if (seen[op.who] && Date.now() - seen[op.who] < 15000) setFocus(op.who);
+    if (camera !== "client" && seen[op.who] && Date.now() - seen[op.who] < 15000) setFocus(op.who);
     const bubble = p.querySelector(".mc-bubble");
     bubble.textContent = op.text || "";
     bubble.classList.remove("show");
@@ -236,6 +253,21 @@
     );
   }
 
+  // The real network: live training numbers and its last guess.
+  function net(op) {
+    const box = $("mc-net");
+    if (!box) return;
+    box.classList.add("show");
+    const acc = Math.round((op.accuracy || 0) * 100);
+    box.querySelector(".mc-nstats").textContent =
+      `${op.training ? "training · " : ""}${op.steps || 0} steps · loss ${(op.loss || 0).toFixed(2)} · accuracy ${acc}%`;
+    const last = op.last || {};
+    const tag = box.querySelector(".mc-nlast");
+    if (last.digit === undefined) { tag.textContent = ""; return; }
+    tag.textContent = `${last.author ? last.author + ": " : ""}${last.digit} → guessed ${last.guess} ${last.right ? "✓" : "✗"} ${Math.round((last.confidence || 0) * 100)}%`;
+    tag.className = `mc-nlast ${last.right ? "right" : "wrong"}`;
+  }
+
   function projectDone(op) {
     const box = $("mc-done");
     if (!box) return;
@@ -258,6 +290,9 @@
       case "project": if (!root) return; project(op); break;
       case "project_done": if (!root) return; projectDone(op); break;
       case "reload": if (!root) return; reloadSoon(op.who); break;
+      case "camera": if (!root) return; setCamera(op.mode); break;
+      case "net": if (!root) return; net(op); break;
+      case "focus": if (!root) return; if (camera === "client") setFocus(op.who, true); break;
       case "stop": leave(); break;
     }
   }

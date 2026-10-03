@@ -1,5 +1,5 @@
-"""The long goals of the Minecraft show: a castle that grows, then a green
-farm, a flower garden and pets.
+"""The long goals of the Minecraft show: a castle that grows, a giant neural
+network built from scratch, then a green farm, a flower garden and pets.
 
 The cheap AI brains cannot build a castle block by block, so the work is
 split: Mika and Luna gather (their inventory and time count as progress) and
@@ -15,6 +15,7 @@ same castle in the same place.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -27,6 +28,8 @@ from loguru import logger
 
 STATE_FILE = Path("data/minecraft_project.json")
 VIEW_SPOT = (24, -4)  # x, z from the base: outside every build, with a view of the castle
+LOADED = (-24, -36, 52, 32)  # x1, z1, x2, z2 from the base: every build is inside this box
+REFUSED = ("Unknown", "Incorrect", "Invalid", "Expected", "error", "Could not", "not loaded")
 
 # Each milestone: name, what the girls should gather meanwhile, and the build
 # (commands with x, y, z relative to the base; "{X}" style placeholders are
@@ -160,6 +163,38 @@ def _garden_pond_trees() -> Build:
     ]
 
 
+# ---------------------------------------------------------------- neural network
+# A real digit reading network (digit_net.py), drawn by minecraft_net_show.py.
+def _net_input() -> Build:
+    from .minecraft_net_show import build_input
+
+    return build_input()
+
+
+def _net_hidden() -> Build:
+    from .minecraft_net_show import build_hidden
+
+    return build_hidden()
+
+
+def _net_output() -> Build:
+    from .minecraft_net_show import build_output
+
+    return build_output()
+
+
+def _net_weights() -> Build:
+    from .minecraft_net_show import build_weights
+
+    return build_weights()
+
+
+def _net_training() -> Build:
+    from .minecraft_net_show import build_trained
+
+    return build_trained()
+
+
 def _pets() -> Build:
     # pets for both girls: tamed by their (offline) player id
     return [
@@ -181,6 +216,17 @@ PROJECTS: list[dict[str, Any]] = [
             ("Battlements", "gather stone for the battlements on the walls", _castle_battlements),
             ("The keep", "gather wood and glass materials (sand) for the big keep in the middle", _castle_keep),
             ("Gate and flags", "gather wool or anything colorful for the flags and the gate", _castle_flags),
+        ],
+    },
+    {
+        "id": "neural_net",
+        "title": "🧠 Neural Network From Scratch",
+        "milestones": [
+            ("Input layer", "gather stone and sand for the lab floor and the 35 pixel input board", _net_input),
+            ("Hidden layers", "gather more stone and wood for the sixteen hidden neurons", _net_hidden),
+            ("Output layer", "gather wood and stone for the ten output neurons, one for each digit", _net_output),
+            ("Weights", "gather lots of sand for the glass weights that connect every neuron", _net_weights),
+            ("Training", "gather anything useful while the network really trains with backpropagation, and argue about whether it is learning", _net_training),
         ],
     },
     {
@@ -347,19 +393,29 @@ class ProjectTracker:
         owners = {n: offline_uuid_ints(n) for n in self.names}
         x0, y0, z0 = base
         # Nobody may stand where blocks appear (a bot inside a block gets
-        # kicked): both go to a spot outside everything first.
-        names = " ".join(self.names)
-        await self.rcon(f"spreadplayers {x0 + VIEW_SPOT[0]} {z0 + VIEW_SPOT[1]} 1 3 false {names}", reply=True)
+        # kicked): each girl goes to a spot outside everything first.
+        # (spreadplayers takes one target: two names in one command failed.)
+        for girl in self.names:
+            await self.rcon(f"spreadplayers {x0 + VIEW_SPOT[0]} {z0 + VIEW_SPOT[1]} 0 3 false {girl}", reply=True)
+        # Every build stays inside this box; keep its chunks loaded while
+        # building (parts far from the girls were "not loaded" and skipped).
+        area = f"{x0 + LOADED[0]} {z0 + LOADED[1]} {x0 + LOADED[2]} {z0 + LOADED[3]}"
+        await self.rcon(f"forceload add {area}", reply=True)
+        await asyncio.sleep(2.0)
         built = 0
-        for command in build():
-            reply = await self.rcon(place(command, base, owners), reply=True)
-            if reply is False:
-                logger.warning("Minecraft: no server console, the project part was not built (restart the stream)")
-                self.state["progress"] = 0.95
-                return
-            if isinstance(reply, str) and any(w in reply for w in ("Unknown", "Incorrect", "Invalid", "Expected", "error", "Could not")):
-                logger.warning(f"Minecraft build step refused: {reply[:160]} ({command[:80]})")
-            built += 1
+        try:
+            for command in dict.fromkeys(build()):  # lines that cross share blocks: once is enough
+                reply = await self.rcon(place(command, base, owners), reply=True)
+                if reply is False:
+                    logger.warning("Minecraft: no server console, the project part was not built (restart the stream)")
+                    self.state["progress"] = 0.95
+                    return
+                # "Could not set the block" only means it is already that block.
+                if isinstance(reply, str) and any(w in reply for w in REFUSED) and "Could not set the block" not in reply:
+                    logger.warning(f"Minecraft build step refused: {reply[:160]} ({command[:80]})")
+                built += 1
+        finally:
+            await self.rcon(f"forceload remove {area}", reply=True)
         logger.info(f"Minecraft: {project['title']}: {name} built ({built} commands)")
 
         await self.push({"kind": "project_done", "title": project["title"], "step": name})

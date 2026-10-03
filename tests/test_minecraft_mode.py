@@ -247,3 +247,52 @@ def test_a_jump_reloads_the_view(monkeypatch):
         assert {"kind": "reload", "who": "mika"} in eng.pushed
 
     asyncio.run(run())
+
+
+def test_real_game_camera_follows_the_speaker(monkeypatch):
+    async def run():
+        monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
+        eng = _live_engine(monkeypatch)
+        clock = [1000.0]
+        monkeypatch.setattr(mm.time, "time", lambda: clock[0])
+        commands = []
+        online = {"mika", "luna"}
+
+        async def rcon(cmd, reply=False):
+            commands.append(cmd)
+            return True
+
+        async def who():
+            return set(online)
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        monkeypatch.setattr(mm, "rcon_online", who)
+        await eng._camera_tick()
+        assert not eng.camera_on and not commands  # not in the world yet: web views
+        online.add("selwyn")
+        await eng._camera_tick()
+        assert eng.camera_on and commands[:2] == ["gamemode spectator Selwyn", "spectate Mika Selwyn"]
+        assert {"kind": "camera", "mode": "client"} in eng.pushed
+        eng._seen_at["luna"] = clock[0]
+        await eng._camera_to("luna")
+        assert commands[-1] == "spectate Mika Selwyn"  # held, Mika only just got it
+        clock[0] += mm.CAMERA_HOLD + 1
+        eng._seen_at["luna"] = clock[0]
+        await eng._camera_to("luna")
+        assert commands[-1] == "spectate Luna Selwyn" and {"kind": "focus", "who": "luna"} in eng.pushed
+        online.discard("selwyn")
+        await eng._camera_tick()
+        assert not eng.camera_on and {"kind": "camera", "mode": "web"} in eng.pushed
+
+    asyncio.run(run())
+
+
+def test_neural_network_is_the_project_after_the_castle():
+    from src.open_llm_vtuber.room import minecraft_projects as mp
+
+    net = mp.PROJECTS[1]
+    assert net["id"] == "neural_net" and len(net["milestones"]) == 5
+    for _name, _gather, build in net["milestones"]:
+        for command in build():
+            placed = mp.place(command, (8, 62, -81), {})
+            assert "{" not in placed

@@ -98,3 +98,4 @@ data/class/
 # Minecraft mode runtime state (castle progress, playlist ids) stays on each PC
 data/minecraft_project.json
 data/youtube_playlists.json
+data/minecraft_net.json

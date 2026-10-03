@@ -1,8 +1,11 @@
-"""Adds "Mika and Luna (local)" to your Minecraft multiplayer list.
+"""Adds "Mika and Luna (local)" to your Minecraft multiplayer list, and lets
+your game keep running when it is not the focused window.
 
-Optional: the stream shows the bots' own views, so you only need this to
-walk around in their world yourself. Your existing servers are kept and the
-old list is backed up as servers.dat.bak.
+Joining that server with your own game makes it the stream camera (see
+VR_MINECRAFT_PLAYER in room/minecraft_mode.py). Your existing servers are
+kept and the old list is backed up as servers.dat.bak. In options.txt only
+pauseOnLostFocus is changed (a backup is kept as options.txt.bak): without
+it, the pause menu covers the stream whenever you click OBS.
 """
 
 from __future__ import annotations
@@ -92,7 +95,28 @@ def _write(out: io.BytesIO, tag: int, value) -> None:
         out.write(struct.pack(">i", len(value)) + struct.pack(f">{len(value)}q", *value))
 
 
+def keep_running_unfocused(game_dir: Path) -> None:
+    path = game_dir / "options.txt"
+    if not path.exists():
+        return
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if "pauseOnLostFocus:false" in lines:
+        return
+    out = [line for line in lines if not line.startswith("pauseOnLostFocus:")]
+    out.append("pauseOnLostFocus:false")
+    shutil.copy2(path, path.with_suffix(".txt.bak"))
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    print("Minecraft keeps running when OBS is the focused window (pauseOnLostFocus:false).")
+
+
 def main() -> int:
+    game_dir = Path.home() / ".minecraft"
+    if game_dir.exists():
+        keep_running_unfocused(game_dir)
+    return add_server()
+
+
+def add_server() -> int:
     port = os.environ.get("VR_MINECRAFT_PORT", "25565")
     address = "localhost" if port == "25565" else f"localhost:{port}"
     game_dir = Path.home() / ".minecraft"
