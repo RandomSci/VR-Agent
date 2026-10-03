@@ -1587,6 +1587,7 @@ class MinecraftEngine:
     async def _net_loop(self) -> None:
         """The real neural network: trains live, reads digits on the wall."""
         last = 0.0
+        self._net_seen = getattr(self.net_show, "last", None)  # a guess from before is old news
         while True:
             await asyncio.sleep(2.0)
             if not self.net_show.requests and time.time() - last < 15:
@@ -1779,8 +1780,13 @@ class MinecraftEngine:
         """One answer at a time, however busy chat gets: each AI call answers
         up to three viewers, and nothing waits behind a pile of old answers."""
         while self.chat_queue:
-            while len(self.viewer_lines) >= 2:  # she still has answers to speak: let her catch up
+            waited = 0.0
+            while len(self.viewer_lines) >= 2 and waited < 30:  # she still has answers to speak: let her catch up
                 await asyncio.sleep(0.5)
+                waited += 0.5
+                now = time.time()
+                while self.viewer_lines and now - self.viewer_lines[0]["at"] > VIEWER_LINE_MAX_AGE:
+                    self.viewer_lines.popleft()  # never spoken (speech stuck): too old now
             batch = self._next_batch()
             if not batch:
                 return
