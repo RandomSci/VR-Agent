@@ -22,7 +22,9 @@ class TTSFactory:
         elif engine_type == "edge_tts":
             from .edge_tts import TTSEngine as EdgeTTSEngine
 
-            return EdgeTTSEngine(kwargs.get("voice"))
+            return EdgeTTSEngine(
+                kwargs.get("voice"), kwargs.get("pitch") or "+0Hz", kwargs.get("rate") or "+0%"
+            )
         elif engine_type == "pyttsx3_tts":
             from .pyttsx3_tts import TTSEngine as Pyttsx3TTSEngine
 
