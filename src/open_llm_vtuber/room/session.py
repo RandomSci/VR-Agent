@@ -44,6 +44,7 @@ OP_KINDS = (
     "teaching",
     "coding",
     "class",
+    "minecraft",
 )
 
 
@@ -108,6 +109,7 @@ class RoomSession:
         self.traces: deque[dict[str, Any]] = deque(maxlen=300)
         # Set by the websocket handler when VR_CLASS_MODE is on (class_mode.ClassEngine).
         self.class_engine: Any = None
+        self.mode_engine: Any = None  # Minecraft mode (room/minecraft_mode.py)
 
     def trace(self, name: str, **data: Any) -> None:
         """Observability: where time goes in each interaction (developer only)."""
@@ -244,7 +246,9 @@ class RoomSession:
             platform=message.platform,
             user=message.display_name,
         )
-        if self.class_engine is not None and self.class_engine.active:
+        if (self.class_engine is not None and self.class_engine.active) or (
+            self.mode_engine is not None and self.mode_engine.active
+        ):
             return False  # class mode: no games or camera commands, chat goes to the class
         camera_ops = self._camera_request(message)
         if camera_ops is not None:
@@ -420,6 +424,7 @@ class RoomSession:
             "teaching": self.teaching.session.snapshot(),
             # Class mode: the slide, the notebook cells and an open quiz.
             "class": self.class_engine.snapshot() if self.class_engine else None,
+            "minecraft": self.mode_engine.snapshot() if self.mode_engine else None,
         }
 
     async def _send(self, client_uid: str, payload: dict[str, Any]) -> None:

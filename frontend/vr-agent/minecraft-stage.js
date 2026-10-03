@@ -1,0 +1,193 @@
+// Minecraft mode on the Stage: both bots' first person views side by side,
+// Mika and Luna in the bottom corners, speech bubbles, the chat that reached
+// them and a small HUD. Driven by "minecraft" ops (room/minecraft_mode.py).
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  };
+
+  let root = null;
+  let cast = ["mika", "luna"];
+  let names = { mika: "Mika", luna: "Luna" };
+  let ports = { mika: 3000, luna: 3001 };
+  const seen = {}; // character id -> last time the bot was in the world
+  const loaded = {}; // character id -> the view iframe was pointed at the bot
+  let layoutTimer = 0;
+  const bubbleTimers = {};
+
+  function build() {
+    if (root) return;
+    // Two layers: the game views under the Live2D canvas, the HUD above it.
+    root = el("section");
+    root.id = "mc-stage";
+    root.innerHTML = `<div id="mc-views"></div>`;
+    const over = el("section");
+    over.id = "mc-over";
+    over.innerHTML = `
+      <div id="mc-panes"></div>
+      <div id="mc-chat"></div>
+      <div id="mc-problem"></div>
+      <div id="mc-status"></div>`;
+    document.body.append(root, over);
+  }
+
+  function side(i) { return i === 0 ? "left" : "right"; }
+
+  function views() {
+    const box = $("mc-views"), top = $("mc-panes");
+    box.replaceChildren();
+    top.replaceChildren();
+    cast.forEach((id, i) => {
+      const view = el("div", `mc-view mc-${side(i)}`);
+      view.dataset.who = id;
+      view.innerHTML = `
+        <div class="mc-wait"><b></b><span>is joining the world…</span></div>
+        <iframe title="view" scrolling="no" tabindex="-1"></iframe>`;
+      view.querySelector(".mc-wait b").textContent = names[id] || id;
+      const hudPane = el("div", `mc-pane mc-${side(i)}`);
+      hudPane.dataset.who = id;
+      hudPane.innerHTML = `
+        <header class="mc-tag"><span class="mc-name"></span><span class="mc-hearts"></span><span class="mc-food"></span></header>
+        <div class="mc-doing"></div>
+        <div class="mc-items"></div>
+        <div class="mc-bubble"></div>`;
+      hudPane.querySelector(".mc-name").textContent = names[id] || id;
+      box.appendChild(view);
+      top.appendChild(hudPane);
+    });
+  }
+
+  function pane(id) { return document.querySelector(`#mc-panes .mc-pane[data-who="${id}"]`); }
+  function viewPane(id) { return document.querySelector(`#mc-views .mc-view[data-who="${id}"]`); }
+
+  function enter(op) {
+    build();
+    cast = (op.cast && op.cast.length ? op.cast : cast).slice(0, 2);
+    names = op.names || names;
+    ports = op.viewers || ports;
+    document.documentElement.classList.add("minecraft-mode");
+    views();
+    problem(op.problem);
+    if (op.hud) hud(op.hud);
+    clearInterval(layoutTimer);
+    let tries = 0;
+    const place = () => {
+      const ok = window.vrRoom && typeof window.vrRoom.minecraft === "function" && window.vrRoom.minecraft(cast[0], cast[1]);
+      if (ok || ++tries > 60) clearInterval(layoutTimer);
+    };
+    layoutTimer = setInterval(place, 500);
+    place();
+  }
+
+  function leave() {
+    clearInterval(layoutTimer);
+    document.documentElement.classList.remove("minecraft-mode");
+    if (window.vrRoom && window.vrRoom.normal) window.vrRoom.normal();
+  }
+
+  function problem(text) {
+    const box = $("mc-problem");
+    if (!box) return;
+    box.textContent = text || "";
+    box.classList.toggle("show", !!text);
+  }
+
+  // The bot's view only exists once it is in the world: point the frame at it
+  // then, and again after the bot was gone for a while (a restart).
+  function view(id) {
+    const p = viewPane(id);
+    if (!p) return;
+    const now = Date.now();
+    const gone = !seen[id] || now - seen[id] > 20000;
+    seen[id] = now;
+    if (loaded[id] && !gone) return;
+    loaded[id] = true;
+    const frame = p.querySelector("iframe");
+    setTimeout(() => {
+      frame.src = `http://${location.hostname || "127.0.0.1"}:${ports[id] || 3000}/?t=${now}`;
+      p.classList.add("live");
+    }, 2500);
+  }
+
+  function hud(all) {
+    for (const [id, h] of Object.entries(all || {})) {
+      const p = pane(id);
+      if (!p) continue;
+      view(id);
+      const hearts = Math.max(0, Math.min(10, Math.ceil((h.health || 0) / 2)));
+      const food = Math.max(0, Math.min(10, Math.ceil((h.hunger || 0) / 2)));
+      p.querySelector(".mc-hearts").textContent = "♥".repeat(hearts) + "♡".repeat(10 - hearts);
+      p.querySelector(".mc-food").textContent = `🍗 ${food}/10`;
+      p.classList.toggle("hurt", (h.health || 0) <= 6);
+      const doing = [h.doing, h.time, h.biome].filter(Boolean).join(" · ");
+      p.querySelector(".mc-doing").textContent = doing;
+      const items = p.querySelector(".mc-items");
+      items.replaceChildren(...(h.items || []).map(([name, n]) => el("span", "", `${name} ×${n}`)));
+    }
+  }
+
+  function say(op) {
+    const p = pane(op.who);
+    if (!p) return;
+    const bubble = p.querySelector(".mc-bubble");
+    bubble.textContent = op.text || "";
+    bubble.classList.remove("show");
+    void bubble.offsetWidth;
+    bubble.classList.add("show");
+    clearTimeout(bubbleTimers[op.who]);
+    bubbleTimers[op.who] = setTimeout(() => bubble.classList.remove("show"), 12000);
+  }
+
+  function said(op) {
+    const p = pane(op.who);
+    if (!p) return;
+    clearTimeout(bubbleTimers[op.who]);
+    bubbleTimers[op.who] = setTimeout(() => p.querySelector(".mc-bubble").classList.remove("show"), 2500);
+  }
+
+  function chat(op) {
+    const box = $("mc-chat");
+    if (!box) return;
+    const row = el("div", "mc-msg");
+    row.append(el("b", "", op.author || "viewer"));
+    const to = (op.to || []).map((id) => names[id] || id).join(" & ");
+    if (to) row.append(el("i", "", `→ ${to}`));
+    row.append(el("span", "", op.text || ""));
+    box.prepend(row);
+    while (box.children.length > 3) box.lastChild.remove();
+    setTimeout(() => row.classList.add("old"), 20000);
+  }
+
+  function status(op) {
+    const box = $("mc-status");
+    if (!box) return;
+    box.textContent = op.text || "";
+    box.classList.add("show");
+    setTimeout(() => box.classList.remove("show"), 8000);
+  }
+
+  function apply(op) {
+    if (!op) return;
+    switch (op.kind) {
+      case "start": enter(op); break;
+      case "hud": if (!root) return; hud(op.hud); break;
+      case "say": if (!root) return; say(op); break;
+      case "said": if (!root) return; said(op); break;
+      case "chat": if (!root) return; chat(op); break;
+      case "status": if (!root) return; status(op); break;
+      case "stop": leave(); break;
+    }
+  }
+
+  function restore(viewState) {
+    if (!viewState || !viewState.active) return;
+    enter(viewState);
+  }
+
+  window.minecraftStage = { apply, restore };
+})();

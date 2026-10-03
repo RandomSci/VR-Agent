@@ -16,6 +16,7 @@ Viewer text never reaches this module.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -665,7 +666,11 @@ def load_room(
         _clamp(games.get("end_after_seconds"), 30, 3600, 180),
     )
 
-    cast = [str(c).strip().lower() for c in (spec.get("cast") or []) if str(c).strip()]
+    cast_spec = spec.get("cast") or []
+    override = os.environ.get("VR_ROOM_CAST", "").strip()
+    if override:  # e.g. VR_ROOM_CAST=mika,luna for Minecraft mode
+        cast_spec = [c for c in override.split(",") if c.strip()]
+    cast = [str(c).strip().lower() for c in cast_spec if str(c).strip()]
     if not cast:
         room.problems.append("cast is empty")
     models = _load_model_dict(project_root)

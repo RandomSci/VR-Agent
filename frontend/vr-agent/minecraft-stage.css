@@ -1,0 +1,57 @@
+/* Minecraft mode: two first person views side by side, HUD above the Live2D layer. */
+#mc-stage, #mc-over { display: none; }
+html.minecraft-mode #coding-workspace, html.minecraft-mode #class-stage { display: none !important; }
+html.minecraft-mode body { background: #0b0f17 !important; }
+html.minecraft-mode #mc-stage { display: block; position: fixed; inset: 0; z-index: 2; }
+html.minecraft-mode #mc-over { display: block; position: fixed; inset: 0; z-index: 6; pointer-events: none;
+  font-family: Nunito, Quicksand, "DejaVu Sans", "Liberation Sans", sans-serif; color: #fff; }
+
+#mc-views { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: #0b0f17; }
+.mc-view { position: relative; overflow: hidden; background: radial-gradient(900px 600px at 50% 30%, #253a5e, #0b0f17); }
+.mc-view iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity 1.2s; }
+.mc-view.live iframe { opacity: 1; }
+.mc-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1vh;
+  font-weight: 800; font-size: clamp(16px, 1.6vw, 32px); color: #cfe0ff; }
+.mc-wait b { font-size: clamp(28px, 3.2vw, 64px); font-weight: 900; }
+.mc-view.live .mc-wait { display: none; }
+
+#mc-panes { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.mc-pane { position: relative; }
+.mc-tag { position: absolute; top: 1.6vh; display: flex; align-items: center; gap: .8vw; padding: .7vh 1vw; border-radius: 14px;
+  background: #0b0f17c8; box-shadow: 0 6px 20px #0006; font-weight: 900; font-size: clamp(14px, 1.3vw, 26px); white-space: nowrap; }
+.mc-left .mc-tag { left: 15vw; } /* clear of the LIVE badge */ .mc-right .mc-tag { right: 1.2vw; }
+.mc-left .mc-name { color: #ffb347; } .mc-right .mc-name { color: #9ecbff; }
+.mc-hearts { color: #ff4d6d; letter-spacing: .05em; font-size: .85em; }
+.mc-pane.hurt .mc-hearts { animation: mc-blink .6s steps(2) infinite; }
+@keyframes mc-blink { 50% { opacity: .3; } }
+.mc-food { font-size: .8em; color: #ffe2a8; }
+.mc-doing { position: absolute; top: 7.4vh; padding: .5vh .8vw; border-radius: 10px; background: #0b0f17a8;
+  font-weight: 800; font-size: clamp(11px, .95vw, 19px); color: #d9e6ff; max-width: 26vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc-doing:empty, .mc-items:empty { display: none; }
+.mc-left .mc-doing { left: 15vw; } .mc-right .mc-doing { right: 1.2vw; }
+.mc-items { position: absolute; top: 12vh; display: flex; flex-wrap: wrap; gap: .4vw; max-width: 24vw; }
+.mc-left .mc-items { left: 15vw; } .mc-right .mc-items { right: 1.2vw; justify-content: flex-end; }
+.mc-items span { padding: .3vh .6vw; border-radius: 8px; background: #0b0f1790; font-weight: 800; font-size: clamp(10px, .8vw, 16px); color: #eaf1ff; }
+
+/* the speech bubble sits above the character's head */
+.mc-bubble { position: absolute; bottom: 47vh; max-width: 24vw; padding: 1.2vh 1.1vw; border-radius: 18px; background: #fffdf8; color: #1d2433;
+  font-weight: 800; font-size: clamp(14px, 1.25vw, 26px); line-height: 1.25; box-shadow: 0 10px 30px #0008;
+  opacity: 0; transform: translateY(10px) scale(.96); transition: opacity .25s, transform .25s; }
+.mc-bubble.show { opacity: 1; transform: none; }
+.mc-left .mc-bubble { left: 3vw; border-bottom-left-radius: 4px; }
+.mc-right .mc-bubble { right: 3vw; border-bottom-right-radius: 4px; }
+
+/* viewer chat that reached the bots, top centre over the split */
+#mc-chat { position: absolute; top: 18vh; left: 50%; transform: translateX(-50%); width: 30vw; display: flex; flex-direction: column; gap: .6vh; }
+.mc-msg { padding: .7vh .9vw; border-radius: 12px; background: #182040e6; box-shadow: 0 6px 18px #0007; font-size: clamp(12px, 1vw, 20px);
+  font-weight: 700; animation: mc-in .4s ease-out both; transition: opacity 1s; }
+.mc-msg.old { opacity: .55; }
+.mc-msg b { color: #5fe3c8; margin-right: .4vw; } .mc-msg i { font-style: normal; color: #ffb55e; margin-right: .5vw; }
+@keyframes mc-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+
+#mc-problem { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); display: none; max-width: 50vw; padding: 2vh 2vw;
+  border-radius: 18px; background: #3a0d1ae8; font-weight: 900; font-size: clamp(16px, 1.5vw, 30px); text-align: center; }
+#mc-problem.show { display: block; }
+#mc-status { position: absolute; left: 50%; bottom: 2vh; transform: translateX(-50%); padding: .6vh 1vw; border-radius: 10px; background: #0b0f17c8;
+  font-weight: 800; font-size: clamp(11px, .9vw, 18px); opacity: 0; transition: opacity .4s; }
+#mc-status.show { opacity: 1; }

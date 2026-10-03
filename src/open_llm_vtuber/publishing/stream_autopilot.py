@@ -116,6 +116,8 @@ class StreamAutopilot:
         self.task: Optional[asyncio.Task] = None
         self._last_title = ""
         self._ended = False
+        self.farewell = "That's the end of today's stream! Thanks for learning with us, see you next session 👋"
+        self.goodbye_timeout = 15.0
 
     # ------------------------------------------------------------ helpers
     @property
@@ -187,13 +189,20 @@ class StreamAutopilot:
 
     # ------------------------------------------------------------ per lesson
     async def lesson_started(self, course: str, number: int, total: int, lesson: str, goals: str = "") -> None:
+        title = stream_title(course, number, total, lesson)
+        await self._rename(title, stream_description(course, number, total, lesson, goals))
+
+    async def mode_started(self, title: str, head: str) -> None:
+        """Minecraft and other modes: their own title, their text above the channel text."""
+        self.goodbye_timeout = 35.0  # the goodbye also stops the game processes
+        await self._rename(title[:100], head + STREAM_BODY)
+
+    async def _rename(self, title: str, body: str) -> None:
         if not (self.ready and self.auto_title):
             return
-        title = stream_title(course, number, total, lesson)
         if title == self._last_title:
             return
         self._last_title = title
-        body = stream_description(course, number, total, lesson, goals)
         if self.settings.dry_run:
             logger.info(f"Dry run: would rename the stream to: {title}")
             return
@@ -225,11 +234,11 @@ class StreamAutopilot:
         self._ended = True
         logger.warning(f"Stream autopilot: ending the stream ({reason})")
         chat = asyncio.create_task(
-            self.post_chat("That's the end of today's stream! Thanks for learning with us, see you next session 👋")
+            self.post_chat(self.farewell)
         )
         if self.goodbye:
             try:
-                await asyncio.wait_for(self.goodbye(reason), timeout=15)
+                await asyncio.wait_for(self.goodbye(reason), timeout=self.goodbye_timeout)
             except Exception as exc:
                 logger.warning(f"Goodbye failed: {exc}")
         try:

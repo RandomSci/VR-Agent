@@ -1226,6 +1226,9 @@
     class(op) {
       if (window.classStage) window.classStage.apply(op);
     },
+    minecraft(op) {
+      if (window.minecraftStage) window.minecraftStage.apply(op);
+    },
     coding(op) {
       if (window.teachingStage && typeof window.teachingStage.coding === "function") {
         window.teachingStage.coding(op);
@@ -1386,6 +1389,10 @@
       case "vr-room-config":
         configReceived = true;
         applyConfig(payload).then(() => {
+          if (payload.minecraft && payload.minecraft.active && window.minecraftStage) {
+            window.minecraftStage.restore(payload.minecraft);
+            return;
+          }
           if (payload.class && payload.class.active && window.classStage) {
             window.classStage.restore(payload.class);
             return;
@@ -1767,6 +1774,30 @@
       const spots = [
         [String(teacherId || "").toLowerCase(), 0.8, 0.6],
         [String(sidekickId || "").toLowerCase(), 0.925, 0.54],
+      ];
+      for (const [id, x, scale] of spots) {
+        const c = room.characters.get(id);
+        const base = c && room._teachingView && room._teachingView.saved.get(id);
+        if (!c || !c.model || !base) continue;
+        c.model.visible = true;
+        c.move = null;
+        c.model.scale.set(base.scaleX * scale, base.scaleY * scale);
+        c.model.position.set(STAGE_W * x, STAGE_H * 1.03);
+        c.home = { x: c.model.position.x, y: c.model.position.y };
+        c.baseX = c.model.position.x;
+        c.lane = { min: c.model.position.x, max: c.model.position.x };
+        c.direct("VIEWER", 60 * 60 * 1000, 0);
+      }
+      return true;
+    },
+    // Minecraft mode: both characters small in the bottom corners, over
+    // their own bot's view.
+    minecraft: (leftId, rightId) => {
+      const left = String(leftId || "").toLowerCase();
+      if (!window.vrRoom.teaching(left)) return false;
+      const spots = [
+        [left, 0.105, 0.5],
+        [String(rightId || "").toLowerCase(), 0.895, 0.5],
       ];
       for (const [id, x, scale] of spots) {
         const c = room.characters.get(id);

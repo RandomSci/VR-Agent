@@ -351,7 +351,11 @@ class WebSocketHandler:
     # ------------------------------------------------------------------
     def _maybe_start_class(self, client_uid: str, websocket: WebSocket) -> None:
         from .room.class_mode import ClassEngine, class_mode_enabled
+        from .room.minecraft_mode import minecraft_mode_enabled
 
+        if minecraft_mode_enabled():
+            self._maybe_start_minecraft(client_uid, websocket)
+            return
         if not class_mode_enabled():
             return
         try:
@@ -366,6 +370,24 @@ class WebSocketHandler:
             engine.start()
         except Exception as exc:
             logger.error(f"Class mode could not start: {exc}")
+
+    def _maybe_start_minecraft(self, client_uid: str, websocket: WebSocket) -> None:
+        """VR_MODE=minecraft: Mika and Luna play Minecraft, chat steers them."""
+        from .room.minecraft_mode import MinecraftEngine
+
+        try:
+            self._room_director_ready(client_uid, websocket)
+            engine = self.room_session.mode_engine
+            if engine is None:
+                engine = MinecraftEngine(self._room_runtimes, self.room_session)
+                self.room_session.mode_engine = engine
+            autopilot = getattr(self, "autopilot", None)
+            if autopilot is not None:
+                engine.on_start = autopilot.mode_started
+                autopilot.farewell = "That's the end of today's Minecraft stream! Thanks for playing with us, see you next session 👋"
+            engine.start()
+        except Exception as exc:
+            logger.error(f"Minecraft mode could not start: {exc}")
 
     def _start_autopilot(self, runtimes) -> None:
         """Title, description, channel page and the 11h55m limit (YouTube)."""
@@ -397,6 +419,10 @@ class WebSocketHandler:
         from .room.speech import INSIDE_INTERACTION
 
         session = self.room_session
+        mode = getattr(session, "mode_engine", None)
+        if mode is not None:
+            await self._mode_goodbye(mode, reason)
+            return
         if not session.active or not session.speech_target():
             return
         engine = session.class_engine
@@ -421,13 +447,38 @@ class WebSocketHandler:
                 sidekick, "Bye bye! Keep practicing, and your projects are in the description!"
             )
 
+    async def _mode_goodbye(self, mode, reason: str) -> None:
+        """Minecraft and other modes: the goodbye lines, then their processes stop."""
+        from .room.speech import INSIDE_INTERACTION
+
+        session = self.room_session
+        INSIDE_INTERACTION.set(True)
+        try:
+            if session.active and session.speech_target():
+                cast = [c.id for c in session.room.characters] or ["mika"]
+                logger.info("Saying goodbye on stream")
+                for i, line in enumerate(mode.goodbye_lines(reason)):
+                    await session.speech.say(cast[i % len(cast)], line)
+        finally:
+            try:
+                await asyncio.wait_for(mode.stop(), timeout=30)
+            except Exception as exc:
+                logger.warning(f"Mode stop failed: {exc}")
+
+    def _chat_engine(self):
+        session = self.room_session
+        for name in ("mode_engine", "class_engine"):
+            engine = getattr(session, name, None)
+            if engine is not None and engine.active:
+                return engine
+        return None
+
     def class_active(self) -> bool:
-        engine = getattr(self.room_session, "class_engine", None)
-        return bool(engine is not None and engine.active)
+        return self._chat_engine() is not None
 
     def class_message(self, message) -> None:
-        """Chat during class: a quiz answer or a question for between steps."""
-        engine = self.room_session.class_engine
+        """Chat during class or a mode: a quiz answer, a question, or a message for the bots."""
+        engine = self._chat_engine()
         if engine is None:
             return
         self.room_session.note_viewer_activity()

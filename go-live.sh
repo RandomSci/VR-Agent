@@ -6,11 +6,24 @@
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
-# ./go-live.sh --fresh   starts the course again from lesson 1
-if [ "${1:-}" = "--fresh" ]; then
-    rm -f data/class/progress.json
-    echo "Class progress cleared: starting from lesson 1"
-fi
+# ./go-live.sh --fresh       starts the course again from lesson 1
+# ./go-live.sh --minecraft   Mika and Luna play Minecraft (run ./minecraft/setup.sh once first)
+for arg in "$@"; do
+    case "$arg" in
+        --fresh)
+            rm -f data/class/progress.json
+            echo "Class progress cleared: starting from lesson 1"
+            ;;
+        --minecraft)
+            export VR_MODE=minecraft VR_CLASS_MODE=0 VR_ROOM_CAST="${VR_ROOM_CAST:-mika,luna}"
+            if [ ! -f minecraft/server/server.jar ] || [ ! -d minecraft/mindcraft/node_modules ]; then
+                echo "Minecraft is not set up yet. Run this once first:  ./minecraft/setup.sh"
+                exit 1
+            fi
+            echo "Minecraft mode: Mika and Luna play, chat steers them"
+            ;;
+    esac
+done
 
 # The notebook and the coding runs use VR_CODING_PYTHON from .env.
 CODING_PY="$(grep -E '^VR_CODING_PYTHON=' .env 2>/dev/null | cut -d= -f2- | tr -d '"')"
@@ -42,6 +55,11 @@ while [ "$stop" -eq 0 ]; do
     echo "Server stopped (exit $code). Restarting in 5 seconds, Ctrl+C to quit."
     sleep 5
 done
+
+# The Minecraft server and the bots stop with the stream (the world is saved).
+if [ "${VR_MODE:-}" = "minecraft" ]; then
+    ./minecraft/stop.sh
+fi
 
 # Whatever happened above, OBS never stays open streaming on its own.
 if grep -qE '^VR_START_OBS=(1|true)' .env 2>/dev/null && pgrep -x obs >/dev/null; then
