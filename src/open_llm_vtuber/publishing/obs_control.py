@@ -148,36 +148,64 @@ async def _stage_source(obs: OBS) -> tuple[str, str]:
     return stage, scene
 
 
+async def _reload_stage(obs: OBS, stage: str, scene: str, hard: bool) -> None:
+    """Reload the Stage without cache. hard: also hide and show the source,
+    the same as clicking it off and on in OBS (fixes a page stuck on black)."""
+    if hard:
+        item = await obs.call("GetSceneItemId", {"sceneName": scene, "sourceName": stage})
+        item_id = item.get("sceneItemId")
+        await obs.call("SetSceneItemEnabled", {"sceneName": scene, "sceneItemId": item_id, "sceneItemEnabled": False})
+        await asyncio.sleep(1.5)
+        await obs.call("SetSceneItemEnabled", {"sceneName": scene, "sceneItemId": item_id, "sceneItemEnabled": True})
+        await asyncio.sleep(0.5)
+    await obs.call("PressInputPropertiesButton", {"inputName": stage, "propertyName": "refreshnocache"})
+
+
+async def _ready_stage(obs: OBS, stage_loaded_since: Callable[[float], bool]) -> bool:
+    """Scene with the Stage on air, page reloaded until Mika and Luna are drawn."""
+    stage, scene = await _stage_source(obs)
+    await obs.call("SetCurrentProgramScene", {"sceneName": scene})
+    for attempt in range(4):
+        reloaded_at = time.time()
+        await _reload_stage(obs, stage, scene, hard=attempt > 0)
+        logger.info(
+            f"OBS: scene '{scene}', Stage reloaded without cache"
+            + (" (hidden and shown again)" if attempt else "")
+            + ", waiting for Mika and Luna"
+        )
+        for _ in range(25):
+            await asyncio.sleep(1)
+            if stage_loaded_since(reloaded_at):
+                logger.info("OBS: the Stage is drawn")
+                return True
+        logger.warning("OBS: the Stage did not load in 25 s, reloading it again")
+    return False
+
+
 async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
     """The whole start sequence. Sets STREAM_LIVE when the stream is up."""
     if not manage_obs():
         STREAM_LIVE.set()
         return False
     started = time.time()
+    logger.info("OBS: waiting for OBS to answer (WebSocket server)")
     obs = await _connect_when_ready(180)
     if obs is None:
         STREAM_LIVE.set()  # teach anyway; you can start streaming yourself
         return False
+    logger.info("OBS: connected")
     try:
-        status = await obs.call("GetStreamStatus")
-        if status.get("outputActive"):
-            logger.info("OBS: already streaming")
-            STREAM_LIVE.set()
-            return True
-        stage, scene = await _stage_source(obs)
-        await obs.call("SetCurrentProgramScene", {"sceneName": scene})
-        refreshed_at = time.time()
-        await obs.call("PressInputPropertiesButton", {"inputName": stage, "propertyName": "refreshnocache"})
-        logger.info(f"OBS: scene '{scene}', Stage reloaded without cache, waiting for Mika and Luna")
-        for _ in range(120):
-            if stage_loaded_since(refreshed_at):
-                break
-            await asyncio.sleep(1)
+        streaming = (await obs.call("GetStreamStatus")).get("outputActive")
+        ready = await _ready_stage(obs, stage_loaded_since)
+        if streaming:
+            logger.info("OBS: already streaming (the Stage was reloaded)")
         else:
-            logger.warning("OBS: the Stage did not report loaded characters in 2 minutes, streaming anyway")
-        await asyncio.sleep(2)  # first frames drawn
-        await obs.call("StartStream")
-        logger.info(f"OBS: streaming started ({time.time() - started:.0f}s after the server)")
+            if not ready:
+                logger.error("OBS: the Stage never loaded, so the stream is NOT started. Check the Browser source.")
+                return False
+            await asyncio.sleep(2)  # first frames drawn
+            await obs.call("StartStream")
+            logger.info(f"OBS: streaming started ({time.time() - started:.0f}s after the server)")
     except Exception as exc:
         logger.warning(f"OBS: start sequence failed: {exc}")
         STREAM_LIVE.set()
