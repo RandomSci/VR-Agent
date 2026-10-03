@@ -376,12 +376,21 @@ class WebSocketHandler:
 
             self.autopilot = StreamAutopilot(runtimes.publisher)
             self.autopilot.goodbye = self.say_goodbye
-            # A Stage page whose characters have loaded (OBS shows a picture).
-            self.autopilot.stage_ready = self.room_session.stage_loaded
             self.autopilot.shutdown = lambda: (getattr(self, "request_shutdown", None) or (lambda: None))()
             self.autopilot.start()
         except Exception as exc:
             logger.warning(f"Stream autopilot unavailable: {exc}")
+
+    async def end_session(self, reason: str = "stop") -> None:
+        """Ctrl+C: goodbye, end the YouTube broadcast, stop and close OBS."""
+        autopilot = getattr(self, "autopilot", None)
+        if autopilot is not None:
+            await autopilot.end_stream(reason)
+        else:
+            await self.say_goodbye(reason)
+            from .publishing.obs_control import stop_and_close
+
+            await stop_and_close()
 
     async def say_goodbye(self, reason: str = "stop") -> None:
         """Mika and Luna say bye before the server stops (Ctrl+C or the 12 hour limit)."""
@@ -411,9 +420,6 @@ class WebSocketHandler:
             await session.speech.say(
                 sidekick, "Bye bye! Keep practicing, and your projects are in the description!"
             )
-        autopilot = getattr(self, "autopilot", None)
-        if autopilot is not None and reason != "limit":
-            await autopilot.post_chat("Stream is ending for now, thanks for hanging out! See you next session 👋")
 
     def class_active(self) -> bool:
         engine = getattr(self.room_session, "class_engine", None)

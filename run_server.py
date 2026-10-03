@@ -171,15 +171,16 @@ def run(console_log_level: str):
             log_level=console_log_level.lower(),
         )
     )
-    uv_server.goodbye = server.ws_handler.say_goodbye
+    uv_server.goodbye = server.ws_handler.end_session
     # The 12 hour limit stops the server cleanly (go-live.sh then does not restart).
     server.ws_handler.request_shutdown = lambda: setattr(uv_server, "should_exit", True)
     uv_server.run()
 
 
 class GoodbyeServer(uvicorn.Server):
-    """First Ctrl+C: Mika and Luna say goodbye on stream, then the server stops.
-    Second Ctrl+C: stop right away."""
+    """First Ctrl+C: goodbye on stream, the YouTube broadcast ends, OBS stops
+    and closes, then the server stops. Second Ctrl+C: stop right away (the
+    stream is left as it is)."""
 
     goodbye = None
     _bye_task = None
@@ -192,7 +193,7 @@ class GoodbyeServer(uvicorn.Server):
 
         async def bye() -> None:
             try:
-                await asyncio.wait_for(self.goodbye("stop"), timeout=30)
+                await asyncio.wait_for(self.goodbye("stop"), timeout=50)
             except Exception as exc:
                 logger.warning(f"Goodbye skipped: {exc}")
             uvicorn.Server.handle_exit(self, sig, frame)

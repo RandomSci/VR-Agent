@@ -36,8 +36,8 @@
       <section id="class-notebook">
         <header id="class-nb-bar"><span class="dot"></span><span>notebook.ipynb</span><span id="class-nb-state">Python 3 · ready</span></header>
         <div id="class-cells"></div>
-        <div id="class-chat"></div>
-      </section>`;
+      </section>
+      <div id="class-chat"></div>`;
     document.body.appendChild(root);
   }
 

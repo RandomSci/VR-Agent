@@ -105,8 +105,9 @@ html.class-mode body { background: radial-gradient(1400px 900px at 10% 0%, #2c3f
 .tk-com { color: #8a93a8; font-style: italic; } .tk-fn { color: #1b63c6; } .tk-bi { color: #b35c00; }
 
 /* chat question toast */
-#class-chat { position: absolute; right: 1.2vw; bottom: 12vh; max-width: 30vw; display: none; padding: 1.1vh 1vw; border-radius: 16px;
-  background: #182040; color: #fff; box-shadow: 0 12px 30px #0008; z-index: 4; }
+/* Chat bubble: in the free space above Mika and Luna, never over the notebook. */
+#class-chat { position: fixed; left: 75vw; right: 1.6vw; top: 12vh; display: none; padding: 1.4vh 1.1vw; border-radius: 18px;
+  background: #182040ee; color: #fff; box-shadow: 0 12px 30px #0008; z-index: 6; }
 #class-chat.show { display: block; animation: class-in .4s both; }
 #class-chat small { display: block; color: #ffb55e; font-weight: 900; letter-spacing: .06em; font-size: clamp(10px, .9vw, 18px); }
 #class-chat div { margin-top: .4vh; font-weight: 700; font-size: clamp(13px, 1.2vw, 24px); }

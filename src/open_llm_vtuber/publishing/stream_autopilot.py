@@ -17,9 +17,6 @@ it would do. Nothing here ever raises into the stream.
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
-import json
 import os
 import time
 from datetime import datetime
@@ -134,23 +131,9 @@ class StreamAutopilot:
 
     # ------------------------------------------------------------ start
     def start(self) -> None:
-        if not getattr(self, "_obs_started", False):
-            self._obs_started = True
-            asyncio.create_task(self._start_obs_when_ready())
         if not self.ready or (self.task and not self.task.done()):
             return
         self.task = asyncio.create_task(self._run(), name="stream-autopilot")
-
-    async def _start_obs_when_ready(self) -> None:
-        """Go live only once the Stage has really drawn (models loaded), so
-        viewers never get minutes of black screen while it loads."""
-        probe = getattr(self, "stage_ready", None)
-        for _ in range(180):
-            if probe is None or probe():
-                break
-            await asyncio.sleep(1)
-        await asyncio.sleep(4)  # the first frames, the slide fading in
-        await start_obs_stream()
 
     async def _run(self) -> None:
         if self.auto_channel:
@@ -235,20 +218,26 @@ class StreamAutopilot:
 
     # ------------------------------------------------------------ ending
     async def end_stream(self, reason: str = "limit") -> None:
-        """Goodbye on stream, a chat message, the broadcast ends, OBS stops,
-        then the server stops (go-live.sh does not restart it)."""
+        """Goodbye (chat message at the same time), the broadcast ends through
+        the YouTube API, OBS stops and closes, then the server stops."""
         if self._ended:
             return
         self._ended = True
         logger.warning(f"Stream autopilot: ending the stream ({reason})")
+        chat = asyncio.create_task(
+            self.post_chat("That's the end of today's stream! Thanks for learning with us, see you next session 👋")
+        )
         if self.goodbye:
             try:
-                await asyncio.wait_for(self.goodbye(reason), timeout=40)
+                await asyncio.wait_for(self.goodbye(reason), timeout=30)
             except Exception as exc:
                 logger.warning(f"Goodbye failed: {exc}")
-        await self.post_chat("That's the end of today's stream! Thanks for learning with us, see you next session 👋")
-        await asyncio.sleep(3)
-        if not self.settings.dry_run:
+        try:
+            await asyncio.wait_for(chat, timeout=5)
+        except Exception:
+            pass
+        await asyncio.sleep(2)  # the last words reach viewers (stream delay)
+        if not self.settings.dry_run and self.settings.youtube_ready:
             try:
                 client = self.publisher._youtube_factory()
                 video_id = await self._client_call(self._video_id, client)
@@ -257,7 +246,9 @@ class StreamAutopilot:
                     logger.info("Stream autopilot: YouTube broadcast ended")
             except Exception as exc:
                 logger.warning(f"Could not end the broadcast through YouTube: {exc}")
-        await stop_obs_stream()
+        from .obs_control import stop_and_close
+
+        await stop_and_close()
         if self.shutdown:
             self.shutdown()
 
@@ -276,63 +267,3 @@ class StreamAutopilot:
                 await self._client_call(client.post_chat_message, chat_id, text)
         except Exception as exc:
             logger.debug(f"Goodbye chat message failed: {exc}")
-
-
-async def stop_obs_stream() -> bool:
-    """Tell OBS to stop streaming (obs-websocket 5). False when not set up."""
-    return await obs_request("StopStream")
-
-
-async def start_obs_stream(tries: int = 12) -> bool:
-    """VR_START_OBS=1: once the Stage is up, OBS starts streaming by itself
-    (retried while OBS is still opening). Already streaming is fine."""
-    if not _flag("VR_START_OBS", "0"):
-        return False
-    for _ in range(tries):
-        status = await obs_request("GetStreamStatus", want_reply=True)
-        if isinstance(status, dict):
-            if status.get("outputActive"):
-                logger.info("OBS is already streaming")
-                return True
-            if await obs_request("StartStream"):
-                logger.info("OBS started streaming")
-                return True
-        await asyncio.sleep(10)
-    logger.warning("OBS did not start streaming: is OBS open with the WebSocket server on?")
-    return False
-
-
-async def obs_request(request_type: str, want_reply: bool = False) -> Any:
-    """One obs-websocket 5 request. False (or None) when OBS is not reachable."""
-    password = os.environ.get("OBS_WEBSOCKET_PASSWORD", "").strip()
-    url = os.environ.get("OBS_WEBSOCKET_URL", "ws://127.0.0.1:4455").strip()
-    if not password and not _flag("OBS_STOP_STREAM", "0"):
-        return False
-    try:
-        import websockets
-
-        async with websockets.connect(url, open_timeout=5) as ws:
-            hello = json.loads(await asyncio.wait_for(ws.recv(), 5))
-            identify: dict[str, Any] = {"rpcVersion": 1}
-            auth = (hello.get("d") or {}).get("authentication")
-            if auth:
-                secret = base64.b64encode(
-                    hashlib.sha256((password + auth["salt"]).encode()).digest()
-                ).decode()
-                identify["authentication"] = base64.b64encode(
-                    hashlib.sha256((secret + auth["challenge"]).encode()).digest()
-                ).decode()
-            await ws.send(json.dumps({"op": 1, "d": identify}))
-            await asyncio.wait_for(ws.recv(), 5)  # Identified
-            await ws.send(json.dumps({"op": 6, "d": {"requestType": request_type, "requestId": "vr"}}))
-            reply = json.loads(await asyncio.wait_for(ws.recv(), 5))
-        data = reply.get("d") or {}
-        ok = bool((data.get("requestStatus") or {}).get("result"))
-        if want_reply:
-            return data.get("responseData") or {} if ok else None
-        if ok and request_type == "StopStream":
-            logger.info("Stream autopilot: OBS stopped streaming")
-        return ok
-    except Exception as exc:
-        logger.debug(f"OBS {request_type} failed: {exc}")
-        return None if want_reply else False

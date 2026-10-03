@@ -208,9 +208,12 @@ class RoomSession:
                 return client_uid, send
         return None
 
-    def stage_loaded(self) -> bool:
-        """A Stage page has reported its characters as loaded."""
-        return any((m or {}).get("loaded") for m in self._client_models.values())
+    def stage_loaded(self, since: float = 0.0) -> bool:
+        """A Stage page has reported its characters as loaded (after ``since``)."""
+        return any(
+            (m or {}).get("loaded") and (m or {}).get("at", 0) >= since
+            for m in self._client_models.values()
+        )
 
     def speech_allowed(self, now: Optional[float] = None) -> bool:
         """TTS may only run for viewer-triggered work: someone chatted recently."""
@@ -387,7 +390,11 @@ class RoomSession:
         known = set(self.state.characters)
         loaded_ids = [str(x) for x in (loaded or []) if str(x) in known]
         failed_ids = [str(x) for x in (failed or []) if str(x) in known]
-        self._client_models[client_uid] = {"loaded": loaded_ids, "failed": failed_ids}
+        self._client_models[client_uid] = {
+            "loaded": loaded_ids,
+            "failed": failed_ids,
+            "at": time.time(),
+        }
         if failed_ids:
             logger.warning(f"VR Room: client {client_uid} could not load {failed_ids}")
         self._recompute_availability()

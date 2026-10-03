@@ -6,6 +6,7 @@ the WebSocket connections, serves static files, and manages the web tool.
 It uses FastAPI for the server and Starlette for static file serving.
 """
 
+import asyncio
 import os
 import shutil
 
@@ -188,6 +189,11 @@ class WebSocketServer:
                 await self.youtube_live_service.start()
             else:
                 runtime.set(VRAgentState.IDLE, "youtube live disabled")
+            # VR_START_OBS=1: OBS gets the Stage ready, then starts streaming.
+            from .publishing.obs_control import go_live
+
+            session = self.ws_handler.room_session
+            self._go_live_task = asyncio.create_task(go_live(lambda since: session.stage_loaded(since)))
 
         @self.app.on_event("shutdown")
         async def stop_youtube_live_service():

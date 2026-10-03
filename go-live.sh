@@ -29,18 +29,22 @@ fi
 
 echo "Stage for OBS: http://127.0.0.1:12393/vr-agent/teaching-stage.html"
 
-# VR_START_OBS=1 in .env: OBS opens minimized, and the server tells it to
-# start streaming once the Stage page is up (OBS_WEBSOCKET_PASSWORD needed).
-# The 11h55m limit stops it again. You never have to click anything in OBS.
+# VR_START_OBS=1 in .env: OBS opens now (minimized). The server then picks
+# the Stage scene, reloads the page without cache, waits for Mika and Luna,
+# and only then starts streaming. Ctrl+C ends the stream and closes OBS.
+# setsid: Ctrl+C in this terminal must not kill OBS before the goodbye.
 if grep -qE '^VR_START_OBS=(1|true)' .env 2>/dev/null && ! pgrep -x obs >/dev/null; then
     if command -v obs >/dev/null; then
         echo "Opening OBS (minimized)"
-        (sleep 15; obs --minimize-to-tray --disable-shutdown-check >/dev/null 2>&1) &
+        setsid obs --minimize-to-tray --disable-shutdown-check >/dev/null 2>&1 &
     elif command -v flatpak >/dev/null && flatpak info com.obsproject.Studio >/dev/null 2>&1; then
         echo "Opening OBS (minimized)"
-        (sleep 15; flatpak run com.obsproject.Studio --minimize-to-tray --disable-shutdown-check >/dev/null 2>&1) &
+        setsid flatpak run com.obsproject.Studio --minimize-to-tray --disable-shutdown-check >/dev/null 2>&1 &
+    else
+        echo "VR_START_OBS=1 but OBS was not found: open it yourself"
     fi
 fi
+
 stop=0
 trap 'stop=1' INT TERM
 while [ "$stop" -eq 0 ]; do

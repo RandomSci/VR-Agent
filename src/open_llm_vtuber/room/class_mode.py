@@ -414,7 +414,8 @@ class ClassEngine:
                 course_id, progress["lesson"] = self.course_id, 0  # the setting wins
             index = int(progress.get("lesson") or 0)
             course_id, index, title, _goals = lesson_at(course_id, index)
-            self._lesson_task(course_id, index)  # written while the intro is spoken
+            self._lesson_task(course_id, index)  # written while OBS goes live
+            await self._wait_live()
             await self._open(course_id, title)
             while True:
                 course_id, index, title, _goals = lesson_at(course_id, index)
@@ -434,6 +435,15 @@ class ClassEngine:
             raise
         except Exception as exc:
             logger.exception(f"Class mode stopped: {exc}")
+
+    async def _wait_live(self) -> None:
+        """Do not welcome an empty room: wait until OBS is really streaming."""
+        from ..publishing.obs_control import STREAM_LIVE
+
+        try:
+            await asyncio.wait_for(STREAM_LIVE.wait(), timeout=300)
+        except asyncio.TimeoutError:
+            pass
 
     async def _open(self, course_id: str, title: str) -> None:
         info = course(course_id)
