@@ -115,19 +115,43 @@ def prepare_obs_config(stream_key: str = "") -> None:
     the current profile (so Start Streaming never asks to pick a broadcast)."""
     if obs_running():
         return
-    path = _settings_ini()
-    if path is not None:
+    # Wherever this OBS version keeps the WebSocket settings (user.ini or
+    # global.ini on new versions, config.json on old ones): server on, and the
+    # password from .env when there is one, so both sides always agree.
+    password = os.environ.get("OBS_WEBSOCKET_PASSWORD", "").strip()
+    base = _obs_dir()
+    for name in ("user.ini", "global.ini"):
+        path = base / name if base else None
+        if not (path and path.is_file()):
+            continue
         ini = _ini(path)
         if not ini.has_section("OBSWebSocket"):
-            ini.add_section("OBSWebSocket")
-        if ini["OBSWebSocket"].get("ServerEnabled", "").lower() != "true":
-            ini["OBSWebSocket"]["ServerEnabled"] = "true"
-            ini["OBSWebSocket"].setdefault("ServerPort", "4455")
+            continue
+        sec = ini["OBSWebSocket"]
+        changed = sec.get("ServerEnabled", "").lower() != "true" or (password and sec.get("ServerPassword") != password)
+        if changed:
+            sec["ServerEnabled"] = "true"
+            if password:
+                sec["ServerPassword"] = password
+                sec["AuthRequired"] = "true"
             try:
                 _write_ini(path, ini)
-                logger.info("OBS: WebSocket server switched on in OBS settings")
+                logger.info(f"OBS: WebSocket settings checked ({name})")
             except Exception as exc:
-                logger.warning(f"OBS: could not switch the WebSocket server on: {exc}")
+                logger.warning(f"OBS: could not update {name}: {exc}")
+    legacy = base / "plugin_config/obs-websocket/config.json" if base else None
+    if legacy and legacy.is_file():
+        try:
+            config = json.loads(legacy.read_text())
+            if not config.get("server_enabled") or (password and config.get("server_password") != password):
+                config["server_enabled"] = True
+                if password:
+                    config["server_password"] = password
+                    config["auth_required"] = True
+                legacy.write_text(json.dumps(config, indent=4))
+                logger.info("OBS: WebSocket settings checked (config.json)")
+        except Exception as exc:
+            logger.warning(f"OBS: could not update config.json: {exc}")
     if stream_key:
         _write_stream_key(stream_key)
 
@@ -193,16 +217,11 @@ async def close_obs(timeout: float = 15) -> None:
 class OBS:
     """One authenticated obs-websocket connection: ``async with OBS() as obs``."""
 
-    def __init__(self) -> None:
+    def __init__(self, password: Optional[str] = None) -> None:
         _path, config = _obs_config()
         port = config.get("server_port") or 4455
-        if config and not config.get("auth_required", True):
-            config = {**config, "server_password": ""}
         self.url = os.environ.get("OBS_WEBSOCKET_URL", "").strip() or f"ws://127.0.0.1:{port}"
-        # OBS's own settings file wins: it is always the current password.
-        self.password = str(config.get("server_password") or "") or os.environ.get(
-            "OBS_WEBSOCKET_PASSWORD", ""
-        ).strip()
+        self.password = password if password is not None else (_passwords() or [""])[0]
         self.ws = None
         self._ids = itertools.count(1)
 
@@ -251,18 +270,40 @@ class OBS:
                 return body.get("responseData") or {}
 
 
+def _passwords() -> list[str]:
+    """Every password worth trying: .env first, then OBS's own settings files."""
+    found = [os.environ.get("OBS_WEBSOCKET_PASSWORD", "").strip()]
+    base = _obs_dir()
+    if base:
+        for name in ("user.ini", "global.ini"):
+            path = base / name
+            if path.is_file():
+                found.append(_ini(path).get("OBSWebSocket", "ServerPassword", fallback=""))
+        try:
+            found.append(json.loads((base / "plugin_config/obs-websocket/config.json").read_text()).get("server_password", ""))
+        except Exception:
+            pass
+    return list(dict.fromkeys(p for p in found if p)) or [""]
+
+
 async def _connect_when_ready(wait_seconds: float) -> Optional[OBS]:
     deadline = time.time() + wait_seconds
     last = ""
     while time.time() < deadline:
-        try:
-            return await OBS().__aenter__()
-        except OBSError as exc:
-            logger.error(f"OBS: {exc}")
+        refused = 0
+        candidates = _passwords()
+        for password in candidates:
+            try:
+                return await OBS(password).__aenter__()
+            except OBSError:
+                refused += 1
+            except Exception as exc:
+                last = str(exc)
+                break
+        if refused == len(candidates):
+            logger.error("OBS: OBS refused every known WebSocket password (check OBS_WEBSOCKET_PASSWORD)")
             return None
-        except Exception as exc:
-            last = str(exc)
-            await asyncio.sleep(3)
+        await asyncio.sleep(3)
     logger.warning(f"OBS: no answer after {wait_seconds:.0f}s ({last[:80]}). Is OBS open with its WebSocket server on?")
     return None
 
@@ -430,7 +471,10 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
 async def stop_and_close() -> None:
     """Stop streaming, then close OBS (only when VR_START_OBS manages it)."""
     try:
-        async with OBS() as obs:
+        obs = await _connect_when_ready(6)
+        if obs is None:
+            raise OBSError("no remote control")
+        try:
             status = await obs.call("GetStreamStatus")
             if status.get("outputActive"):
                 await obs.call("StopStream")
@@ -439,6 +483,8 @@ async def stop_and_close() -> None:
                     await asyncio.sleep(0.5)
                     if not (await obs.call("GetStreamStatus")).get("outputActive"):
                         break
+        finally:
+            await obs.__aexit__()
     except Exception as exc:
         logger.warning(f"OBS: could not stop streaming: {exc}")
     if manage_obs():
