@@ -276,6 +276,11 @@ class YouTubePlaywrightChatSource:
         common = dict(
             headless=self.config.playwright_headless,
             args=launch_args,
+            # The first Ctrl+C starts the goodbye; the chat browser must keep
+            # running until the server stops it ("chat page closed" before).
+            handle_sigint=False,
+            handle_sigterm=False,
+            handle_sighup=False,
         )
         context_opts = dict(
             locale="en-US",

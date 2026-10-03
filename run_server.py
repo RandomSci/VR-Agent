@@ -186,6 +186,16 @@ def run(console_log_level: str):
         uv_server.run()
     except KeyboardInterrupt:
         pass
+    finally:
+        # The best moments of the stream, ready to cut (also in logs/clips-*.txt).
+        from src.open_llm_vtuber.live.clip_marks import CLIPS
+
+        CLIPS.finish()
+
+
+# Ctrl+C: goodbye (at most ~15 s of speech), Minecraft saved and stopped,
+# the YouTube broadcast ended, then OBS stopped and closed (up to ~30 s).
+GOODBYE_LIMIT = 120  # normally done in about 30 s
 
 
 class GoodbyeServer(uvicorn.Server):
@@ -211,14 +221,22 @@ class GoodbyeServer(uvicorn.Server):
             self._captured_signals.clear()  # a clean exit, no KeyboardInterrupt trace
             return
         self._first_press = _time.time()
-        logger.info("Ending the stream: goodbye, YouTube, OBS (about 20 s)")
+        logger.info("Ending the stream: goodbye, YouTube, OBS (up to a minute; Ctrl+C again to stop right away)")
         loop = asyncio.get_event_loop()
 
         async def bye() -> None:
             try:
-                await asyncio.wait_for(self.goodbye("stop"), timeout=30)
+                await asyncio.wait_for(self.goodbye("stop"), timeout=GOODBYE_LIMIT)
             except Exception as exc:
-                logger.warning(f"Goodbye skipped: {exc}")
+                logger.warning(f"Goodbye cut short: {exc!r}")
+                # Whatever happened above, the stream itself must stop: it used
+                # to stay live with OBS open when the goodbye ran out of time.
+                try:
+                    from src.open_llm_vtuber.publishing.obs_control import stop_and_close
+
+                    await asyncio.wait_for(stop_and_close(), timeout=30)
+                except Exception as exc2:
+                    logger.warning(f"OBS could not be stopped: {exc2!r}")
             uvicorn.Server.handle_exit(self, sig, frame)
             self._captured_signals.clear()
 

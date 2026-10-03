@@ -197,6 +197,9 @@ class StreamAutopilot:
             return 0.0
         started = datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
         logger.info(f"Stream autopilot: live since {iso}")
+        from ..live.clip_marks import CLIPS
+
+        CLIPS.set_live(started, video_id)
         return started
 
     # ------------------------------------------------------------ channel
@@ -234,7 +237,7 @@ class StreamAutopilot:
         """Minecraft and other modes: their own title, their text above the
         channel text, their thumbnail and their playlist. True once the title
         is on the live video (the caller tries again until then)."""
-        self.goodbye_timeout = 35.0  # the goodbye also stops the game processes
+        self.goodbye_timeout = 50.0  # the goodbye (15 s at most) also stops the game processes (save the world)
         renamed = await self._rename(title[:100], head + STREAM_BODY)
         if not renamed:
             return False

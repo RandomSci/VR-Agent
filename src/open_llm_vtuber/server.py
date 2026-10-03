@@ -193,7 +193,10 @@ class WebSocketServer:
             from .publishing.obs_control import go_live
 
             session = self.ws_handler.room_session
+            from .publishing.obs_control import keep_task
+
             self._go_live_task = asyncio.create_task(go_live(lambda since: session.stage_loaded(since)))
+            keep_task(self._go_live_task)  # Ctrl+C during the start cancels it
 
         @self.app.on_event("shutdown")
         async def stop_youtube_live_service():

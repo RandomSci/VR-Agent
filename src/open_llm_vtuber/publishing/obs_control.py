@@ -602,6 +602,7 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
             pass
     await asyncio.sleep(8)  # YouTube needs a few seconds to show the stream
     STREAM_LIVE.set()
+    _clips_live()
     _keep_task(asyncio.create_task(ensure_youtube_live(stream_key), name="youtube-go-live"))
     return True
 
@@ -615,7 +616,14 @@ async def _terminal_stream(stream_key: str) -> None:
         await asyncio.sleep(20)
         logger.info("OBS: reopened with streaming on")
     STREAM_LIVE.set()
+    _clips_live()
     _keep_task(asyncio.create_task(ensure_youtube_live(stream_key), name="youtube-go-live"))
+
+
+def _clips_live() -> None:
+    from ..live.clip_marks import CLIPS
+
+    CLIPS.set_live(time.time(), exact=False)
 
 
 _TASKS: set = set()
@@ -824,8 +832,19 @@ async def _really_streaming(obs: "OBS", seconds: float = 15) -> bool:
     return False
 
 
+def keep_task(task: asyncio.Task) -> None:
+    """A background OBS/YouTube task that stop_and_close cancels (go-live)."""
+    _keep_task(task)
+
+
 async def stop_and_close() -> None:
     """Stop streaming, then close OBS (only when VR_START_OBS manages it)."""
+    # A start still running (waiting for OBS, reopening it, YouTube's Go live)
+    # would open OBS again right after it is closed: stop those first.
+    me = asyncio.current_task()
+    for task in list(_TASKS):
+        if task is not me and not task.done():
+            task.cancel()
     try:
         obs = await _connect_when_ready(6)
         if obs is None:

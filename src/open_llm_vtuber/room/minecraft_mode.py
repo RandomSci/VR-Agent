@@ -63,6 +63,7 @@ from typing import Any, Awaitable, Callable, Optional
 from loguru import logger
 
 from ..vr_agent.text_safety import strip_emoji
+from ..live.clip_marks import CLIPS
 from .minecraft_projects import MATERIALS, center, hand_blocks, hand_item, lay, place_sound
 
 MC_DIR = Path("minecraft")
@@ -99,7 +100,10 @@ PERSONAL_SPACE = 3.0  # closer than this (sideways) and she moves further aside
 CHAT_MAX_AGE = 40.0  # a comment not answered by then is skipped (busy chat moves on)
 ANSWER_BATCH = 3  # one spoken answer covers up to this many viewers
 BOT_BATCH = 4  # one message to a bot carries up to this many comments
-EXCLAIM_GAP = 20.0  # at most one engine exclamation this often
+EXCLAIM_GAP = 20.0
+CLIP_WEIGHT = {"done": 1.0, "wrong": 2.5}  # how good a moment is for a short clip
+CHAT_BURST = 6  # this many comments in 30 s: chat went wild (a clip)
+BIG_REACTION = re.compile(r"\b(argh+|no{3,}|yes{3,}|wait,? what|oh my god|omg|woo+hoo+|we did it)\b", re.I)  # at most one engine exclamation this often
 ARRIVE_TELEPORT = 12.0  # farther than this from her spot after the flight: teleported there
 HAND_WAIT = 8.0  # seconds (plus some per block) for a run laid by hand before the rest just appears
 PART_DISTANCE = 4.5  # overlapping anyway: the other girl flies this far aside
@@ -438,6 +442,9 @@ class MinecraftEngine:
         self._answer_task: Optional[asyncio.Task] = None
         self._answered: set[str] = set()  # viewers who already got an answer (newcomers go first)
         self._exclaimed_at = 0.0
+        self._chat_times: deque[float] = deque(maxlen=50)
+        self._burst_marked = 0.0
+        self._reaction_marked = 0.0
         self._net_seen: Any = None
         self._jobs: dict[int, dict[str, Any]] = {}  # runs being laid by hand
         self._job_seq = 0
@@ -481,6 +488,11 @@ class MinecraftEngine:
         if now - self.last_viewer.get(author, 0) < VIEWER_GAP:
             return
         self.last_viewer[author] = now
+        self._chat_times.append(now)
+        burst = sum(1 for t in self._chat_times if now - t <= 30)
+        if burst >= CHAT_BURST and now - self._burst_marked > 60:
+            self._burst_marked = now
+            CLIPS.mark("chat", f"chat went wild ({burst} comments in 30 s)", 2.0)
         targets = self._targets(text)
         ask = DIGIT_ASK.search(text)
         heard = text  # what the girls get; the screen shows the comment as typed
@@ -507,10 +519,11 @@ class MinecraftEngine:
         )
 
     async def stop(self) -> None:
-        for task in self._tasks:
+        tasks = [t for t in [*self._tasks, self.task, self._answer_task] if t is not None]
+        for task in tasks:
             task.cancel()
-        if self.task:
-            self.task.cancel()
+        # wait until they are really stopped, so nothing starts the game again
+        await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.to_thread(stop_processes)
         self.view = {"active": False}
         await self._push({"kind": "stop"})
@@ -676,12 +689,12 @@ class MinecraftEngine:
             "force-gamemode": "true",  # everyone who joins gets it (the camera becomes a spectator after)
             "allow-flight": "true",
         })
-        log = open(LOG_DIR / "minecraft-server.log", "ab")
-        proc = await asyncio.create_subprocess_exec(
-            "java", f"-Xms{self.ram}", f"-Xmx{self.ram}", "-jar", "server.jar", "nogui",
-            cwd=str(SERVER_DIR), stdin=asyncio.subprocess.DEVNULL, stdout=log, stderr=log,
-            start_new_session=True,  # Ctrl+C on the terminal does not kill the world mid save
-        )
+        with open(LOG_DIR / "minecraft-server.log", "ab") as log:  # the server keeps its own copy
+            proc = await asyncio.create_subprocess_exec(
+                "java", f"-Xms{self.ram}", f"-Xmx{self.ram}", "-jar", "server.jar", "nogui",
+                cwd=str(SERVER_DIR), stdin=asyncio.subprocess.DEVNULL, stdout=log, stderr=log,
+                start_new_session=True,  # Ctrl+C on the terminal does not kill the world mid save
+            )
         _write_pid("server", proc.pid)
         logger.info(f"Minecraft: server starting on port {self.port} (log: logs/minecraft-server.log)")
         return proc
@@ -818,12 +831,12 @@ class MinecraftEngine:
         # Mindcraft listens on "localhost": make that 127.0.0.1, not ::1.
         env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " --dns-result-order=ipv4first").strip()
         env["VR_VIEWER_PORT_BASE"] = str(VIEWER_PORT_BASE)
-        log = open(LOG_DIR / "mindcraft.log", "ab")
-        proc = await asyncio.create_subprocess_exec(
-            "node", "main.js",
-            cwd=str(MINDCRAFT_DIR), env=env, stdin=asyncio.subprocess.DEVNULL, stdout=log, stderr=log,
-            start_new_session=True,
-        )
+        with open(LOG_DIR / "mindcraft.log", "ab") as log:  # Mindcraft keeps its own copy
+            proc = await asyncio.create_subprocess_exec(
+                "node", "main.js",
+                cwd=str(MINDCRAFT_DIR), env=env, stdin=asyncio.subprocess.DEVNULL, stdout=log, stderr=log,
+                start_new_session=True,
+            )
         _write_pid("mindcraft", proc.pid)
         logger.info(f"Minecraft: {' and '.join(self.names.values())} are joining (log: logs/mindcraft.log)")
         return proc
@@ -880,6 +893,9 @@ class MinecraftEngine:
             return
         self.recent.append(key)
         logger.info(f"Minecraft {self.names[cid]}: {text}")
+        if BIG_REACTION.search(text) and time.time() - self._reaction_marked > 30:
+            self._reaction_marked = time.time()
+            CLIPS.mark("reaction", f"{self.names[cid]}: {text[:80]}", 1.5)
         await self._push({"kind": "line", "who": cid, "text": text, "to": to})
         # A reply to a viewer jumps the queue; the oldest chatter is dropped.
         line = {"who": cid, "text": text, "at": time.time()}
@@ -1728,6 +1744,11 @@ class MinecraftEngine:
     def _exclaim(self, cid: str, kind: str, info: Optional[dict[str, Any]] = None) -> None:
         """A loud, quick reaction at a big moment, said by the engine (no AI call)."""
         now = time.time()
+        if kind in CLIP_WEIGHT:  # a moment worth a short clip, said out loud or not
+            what = {"done": "piece built", "wrong": "network guessed wrong"}[kind]
+            if info:
+                what += f" ({info.get('guess')} for a {info.get('digit')})"
+            CLIPS.mark(kind, f"{self.names.get(cid, cid)}: {what}", CLIP_WEIGHT[kind])
         if now - self._exclaimed_at < EXCLAIM_GAP or cid not in self.names:
             return
         self._exclaimed_at = now
@@ -2594,8 +2615,33 @@ def _write_pid(name: str, pid: int) -> None:
 
 def stop_processes(timeout: float = 20.0) -> None:
     """Mindcraft first (the bots log out), then the server (it saves the world)."""
-    for name in ("mindcraft", "server"):
-        stop_one(name, timeout)
+    stop_one("mindcraft", min(timeout, 8.0))
+    stop_one("server", timeout)
+
+
+# What each process runs: a pid file from before a reboot can name some
+# other program now, and that one must never be stopped.
+PROCESS_NAMES = {"mindcraft": ("node", "main.js"), "server": ("java", "server.jar")}
+
+
+def _is_ours(name: str, pid: int) -> bool:
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+    except FileNotFoundError:
+        return not Path("/proc").is_dir()  # no /proc (macOS): trust the pid file
+    except Exception:
+        return True
+    return all(part in cmdline for part in PROCESS_NAMES.get(name, ()))
+
+
+def _group_alive(pid: int) -> bool:
+    try:
+        os.killpg(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except Exception:
+        return True
 
 
 def stop_one(name: str, timeout: float = 20.0) -> None:
@@ -2603,6 +2649,10 @@ def stop_one(name: str, timeout: float = 20.0) -> None:
     try:
         pid = int(pid_file.read_text().strip())
     except Exception:
+        return
+    if not _is_ours(name, pid):
+        logger.info(f"Minecraft: {name}.pid is old (that process is something else now), removed")
+        pid_file.unlink(missing_ok=True)
         return
     try:
         os.killpg(pid, signal.SIGTERM)
@@ -2613,10 +2663,8 @@ def stop_one(name: str, timeout: float = 20.0) -> None:
         logger.debug(f"Minecraft: could not stop {name}: {exc}")
         return
     end = time.time() + timeout
-    while time.time() < end:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+    while time.time() < end:  # the whole group: Mindcraft runs one process per bot
+        if not _group_alive(pid):
             break
         time.sleep(0.3)
     else:

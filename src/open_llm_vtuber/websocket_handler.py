@@ -453,12 +453,20 @@ class WebSocketHandler:
 
         session = self.room_session
         INSIDE_INTERACTION.set(True)
+        async def speak() -> None:
+            cast = [c.id for c in session.room.characters] or ["mika"]
+            logger.info("Saying goodbye on stream")
+            for i, line in enumerate(mode.goodbye_lines(reason)):
+                await session.speech.say(cast[i % len(cast)], line)
+
         try:
             if session.active and session.speech_target():
-                cast = [c.id for c in session.room.characters] or ["mika"]
-                logger.info("Saying goodbye on stream")
-                for i, line in enumerate(mode.goodbye_lines(reason)):
-                    await session.speech.say(cast[i % len(cast)], line)
+                # A stage that never confirms playback made this take 30 s,
+                # and the stream was never ended: speech gets 15 s at most.
+                try:
+                    await asyncio.wait_for(speak(), timeout=15)
+                except asyncio.TimeoutError:
+                    logger.warning("Goodbye speech took too long, moving on")
         finally:
             try:
                 await asyncio.wait_for(mode.stop(), timeout=30)

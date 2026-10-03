@@ -779,6 +779,11 @@ class ProjectTracker:
             return
         project, (name, _gather, _build) = current
         await self.push({"kind": "project_done", "title": project["title"], "step": name})
+        from ..live.clip_marks import CLIPS
+
+        p_next = int(self.state["milestone"]) + 1 >= len(project["milestones"])
+        CLIPS.mark("built", f"{project['title']} COMPLETE" if p_next else f"{name} finished ({project['title']})",
+                   4.0 if p_next else 3.0)
         p, m = int(self.state["project"]), int(self.state["milestone"]) + 1
         finished_project = m >= len(project["milestones"])
         if finished_project:
