@@ -827,19 +827,3 @@ def test_regular_viewers_are_remembered_between_streams(tmp_path):
     second.saw("MathUnlockedYT", "hi again")
     text = second.describe("MathUnlockedYT")
     assert "regular" in text and "number 2" in text and "build more layers" in text
-
-
-def test_the_voice_follows_the_feeling(monkeypatch):
-    from src.open_llm_vtuber.room import speech
-
-    engine = NS(rate="+6%", pitch="+18Hz")
-    with speech.emotional_voice(engine, "Argh!!! It guessed a nine!"):
-        assert (engine.rate, engine.pitch) == ("+16%", "+12Hz")
-    assert (engine.rate, engine.pitch) == ("+6%", "+18Hz")  # back to her normal voice
-    with speech.emotional_voice(engine, "Nooo, so close."):
-        assert engine.rate == "-4%"
-    with speech.emotional_voice(engine, "We are building the wall."):
-        assert engine.rate == "+6%"  # calm: unchanged
-    monkeypatch.setenv("VR_EMOTIONAL_VOICE", "0")
-    with speech.emotional_voice(engine, "Yesss!!!"):
-        assert engine.rate == "+6%"

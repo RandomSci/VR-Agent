@@ -17,8 +17,6 @@ import asyncio
 import contextlib
 import contextvars
 import json
-import os
-import re
 import time
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -308,49 +306,6 @@ class CharacterVoices:
         }
 
 
-# How a line feels, from its words: edge-tts has no acting styles, but speed
-# and pitch per line already make "Argh!!!" sound different from "Nooo...".
-# (rate %, pitch Hz) added to the voice's own tuning. VR_EMOTIONAL_VOICE=0: off.
-PROSODY = (
-    ("frustrated", re.compile(r"\b(argh+|ugh+|hmph|grr+|come on|seriously)\b", re.I), 10, -6),
-    ("sad", re.compile(r"\b(no{3,}|oh no|sorry|so close|nooo|aww+)\b", re.I), -10, -14),
-    ("surprised", re.compile(r"\b(wait,? what|whoa|woah|what\?!|no way|omg|oh my)\b", re.I), 8, 28),
-    ("excited", re.compile(r"\b(yes{2,}|woo+(hoo+)?|wheee+|yay+|nailed it|we did it|amazing)\b|!{2,}", re.I), 12, 22),
-)
-
-
-def _shift(value: str, delta: int, unit: str) -> str:
-    match = re.match(r"^\s*([+-]?\d+)", str(value or "0"))
-    number = int(match.group(1)) if match else 0
-    return f"{number + delta:+d}{unit}"
-
-
-def emotion_prosody(text: str) -> Optional[tuple[str, int, int]]:
-    """(mood, rate %, pitch Hz) for a line, or None when it is calm."""
-    if os.environ.get("VR_EMOTIONAL_VOICE", "1").strip().lower() in ("0", "false", "no", "off"):
-        return None
-    for mood, pattern, rate, pitch in PROSODY:
-        if pattern.search(text):
-            return mood, rate, pitch
-    return None
-
-
-@contextlib.contextmanager
-def emotional_voice(engine: Any, text: str):
-    """The voice for this one line (edge-tts style engines with rate and pitch)."""
-    feel = emotion_prosody(text)
-    if feel is None or not hasattr(engine, "rate") or not hasattr(engine, "pitch"):
-        yield
-        return
-    old = (engine.rate, engine.pitch)
-    engine.rate = _shift(engine.rate, feel[1], "%")
-    engine.pitch = _shift(engine.pitch, feel[2], "Hz")
-    try:
-        yield
-    finally:
-        engine.rate, engine.pitch = old
-
-
 def playback_wait(audio_ms: float, estimate: float) -> float:
     """How long to wait for the page to say the clip finished playing.
 
@@ -462,8 +417,6 @@ class SpeakingCoordinator:
             )
             manager = TTSTaskManager()
             ok = False
-            feel = contextlib.ExitStack()
-            feel.enter_context(emotional_voice(engine, text))  # one line at a time: the turn lock holds
             try:
                 await manager.speak(
                     tts_text=text,
@@ -506,7 +459,6 @@ class SpeakingCoordinator:
                 logger.error(f"VR Room: speech for {character_id} failed: {exc}")
                 self.session.record_failure(character_id, f"speech: {exc}")
             finally:
-                feel.close()
                 manager.clear()
                 if character:
                     character.speaking = False
