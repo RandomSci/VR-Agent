@@ -94,6 +94,7 @@ html.class-mode body { background: radial-gradient(1400px 900px at 10% 0%, #2c3f
 .nb-result { grid-column: 2; margin-top: .6vh; }
 .nb-result pre { margin: 0; padding: .7vh 1vw; white-space: pre-wrap; word-break: break-word; font: 500 clamp(12px, 1.22vw, 26px)/1.4 "VR Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", monospace; color: #1d2433; }
 .nb-result .value { color: #0f5132; }
+.nb-result .value.plain { padding-top: 0; color: #6b7280; font-size: clamp(11px, 1vw, 20px); }
 .nb-result .latex { padding: .8vh 1vw; font-size: clamp(15px, 1.5vw, 32px); overflow-x: auto; }
 .nb-result img { display: block; max-width: 100%; max-height: 38vh; margin: .6vh 0 0 1vw; border-radius: 10px; border: 1px solid #e1e5ee; }
 .nb-error { margin: .4vh 0 0; padding: 1vh 1vw; border-radius: 10px; background: #fff0f1; border: 2px solid #ffc9cf; }

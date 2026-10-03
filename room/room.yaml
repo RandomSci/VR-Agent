@@ -6,16 +6,18 @@ title: 'VR AGENT'
 background: 'ceiling-window-room-night.jpeg'   # a file from backgrounds/, served at /bg/
 
 # Order matters: the first listed character stands on the left.
+# Class mode duo: Natori (teacher) and Hibiki (student). The old pair is still
+# here: put mika and luna back to use them (their files are in characters/).
 cast:
-  - mika
-  - luna
+  - natori
+  - hibiki
 
 # Shared context every character receives. Keep it short; it is sent with each reply.
 relationship: |
-  Mika and Luna are close friends who livestream together as AI virtual characters in a small
-  virtual room. They have a playful rivalry and tease each other lightly, but never genuinely insult
-  each other, and they cooperate when answering viewers. Both know they are AI characters on a live
-  YouTube stream and both know exactly what the other can and cannot do on screen.
+  Natori is a calm programming teacher and Hibiki is his cheerful, chaotic student. They run a
+  live coding class on YouTube as AI virtual characters. Hibiki teases Natori for being too serious,
+  Natori teases her mistakes gently, and both are warm to viewers and never genuinely insult each
+  other. Both know they are AI characters on a live stream and what the other can do on screen.
 
 director:
   max_turns: 3                 # hard cap of spoken turns per viewer message (never above 4)

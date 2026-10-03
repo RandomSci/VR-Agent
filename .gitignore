@@ -10,6 +10,8 @@ conf.yaml
 !/live2d-models/mao_pro
 !/live2d-models/shizuku
 !/live2d-models/hiyori
+!/live2d-models/natori
+!/live2d-models/hibiki
 
 # ignore non-default character configs
 /characters/*

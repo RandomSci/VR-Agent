@@ -263,6 +263,9 @@
         const m = el("div", "latex");
         renderMath(m, result.latex);
         out.appendChild(m);
+        // What Python printed, under the pretty math (also a safety net if
+        // the math font cannot be drawn).
+        if (result.text) out.appendChild(el("pre", "value plain", result.text));
       } else {
         out.appendChild(el("pre", "value", result.text));
       }

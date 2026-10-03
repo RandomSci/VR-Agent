@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "model": "hibiki",
+  "_comment": "Hibiki (Live2D sample, Free Material License). Cubism 2 style parameter names.",
+  "actions": {
+    "blush": {
+      "type": "expression",
+      "expression": "Blushing",
+      "label": "blush",
+      "description": "a shy blush",
+      "intents": [
+        "blush",
+        "shy"
+      ],
+      "hold_seconds": 4.0
+    },
+    "surprised": {
+      "type": "expression",
+      "expression": "Surprised",
+      "label": "surprised face",
+      "description": "wide-eyed surprise",
+      "intents": [
+        "surprised"
+      ],
+      "hold_seconds": 3.0
+    },
+    "sad": {
+      "type": "expression",
+      "expression": "Sad",
+      "label": "sad face",
+      "description": "a sad face",
+      "intents": [
+        "sad"
+      ],
+      "hold_seconds": 3.0
+    },
+    "pout": {
+      "type": "expression",
+      "expression": "Angry",
+      "label": "pout",
+      "description": "a pouty angry face",
+      "intents": [
+        "angry",
+        "pout"
+      ],
+      "hold_seconds": 3.0
+    },
+    "sulk": {
+      "type": "expression",
+      "expression": "f01",
+      "label": "sulk",
+      "description": "a sulky look",
+      "intents": [
+        "suspicious",
+        "sulk"
+      ],
+      "hold_seconds": 3.0
+    },
+    "nod": {
+      "type": "motion",
+      "motion": "motion/hibiki_01.motion3.json",
+      "label": "nod",
+      "description": "a quick nod",
+      "intents": [
+        "nod",
+        "yes"
+      ],
+      "idle": true
+    },
+    "wink": {
+      "type": "motion",
+      "motion": "motion/hibiki_02.motion3.json",
+      "label": "wink",
+      "description": "a nod with a wink",
+      "intents": [
+        "wink",
+        "smile",
+        "happy"
+      ],
+      "idle": true
+    },
+    "sway": {
+      "type": "motion",
+      "motion": "motion/hibiki_03.motion3.json",
+      "label": "sway",
+      "description": "sways her head happily",
+      "intents": [
+        "happy",
+        "dance"
+      ],
+      "idle": true
+    },
+    "wave": {
+      "type": "motion",
+      "motion": "motion/hibiki_04.motion3.json",
+      "label": "wave",
+      "description": "waves her arm",
+      "intents": [
+        "wave",
+        "greet",
+        "cheer"
+      ],
+      "idle": true
+    },
+    "excited": {
+      "type": "motion",
+      "motion": "motion/hibiki_05.motion3.json",
+      "label": "excited",
+      "description": "excited arm and head tilt",
+      "intents": [
+        "excited",
+        "cheer"
+      ],
+      "idle": true
+    }
+  },
+  "alternatives": {
+    "smile": "wink",
+    "cheer": "wave",
+    "greet": "wave",
+    "clap": "excited",
+    "thumbs_up": "wink",
+    "dance": "sway",
+    "jump": "excited",
+    "bow": "nod",
+    "yes": "nod",
+    "heart": "wink",
+    "peace": "wink"
+  },
+  "idle": {
+    "large_motion_actions": [
+      "sway"
+    ],
+    "large_motion_min_gap_seconds": 60
+  }
+}

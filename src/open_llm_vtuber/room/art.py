@@ -42,6 +42,14 @@ STYLE = (
 
 # The image model has never seen our characters: describe them.
 CHARACTERS = {
+    "natori": (
+        "Natori, a calm young anime teacher with dark navy hair, thin glasses, a purple "
+        "suit with a white waistcoat, a blue tie and white gloves"
+    ),
+    "hibiki": (
+        "Hibiki, a cheerful anime schoolgirl with long dark hair, a red ribbon and a "
+        "school uniform"
+    ),
     "mika": (
         "Mika, a cheerful anime witch girl with short orange-blonde hair, big "
         "blue eyes, a navy witch hat with a white bunny charm and a red feather, "

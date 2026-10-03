@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "model": "natori",
+  "_comment": "Jin Natori (Live2D sample, Free Material License). Motion names from their parameter curves: watch, glasses push, shrug, hand gestures.",
+  "actions": {
+    "smile": {
+      "type": "expression",
+      "expression": "Smile",
+      "label": "smile",
+      "description": "a calm, confident smile",
+      "intents": [
+        "smile",
+        "happy",
+        "laugh"
+      ],
+      "hold_seconds": 4.0
+    },
+    "blush": {
+      "type": "expression",
+      "expression": "Blushing",
+      "label": "blush",
+      "description": "a slightly embarrassed blush",
+      "intents": [
+        "blush",
+        "shy"
+      ],
+      "hold_seconds": 4.0
+    },
+    "surprised": {
+      "type": "expression",
+      "expression": "Surprised",
+      "label": "surprised face",
+      "description": "raised brows, surprised",
+      "intents": [
+        "surprised"
+      ],
+      "hold_seconds": 3.0
+    },
+    "sad": {
+      "type": "expression",
+      "expression": "Sad",
+      "label": "sad face",
+      "description": "a disappointed face",
+      "intents": [
+        "sad"
+      ],
+      "hold_seconds": 3.0
+    },
+    "stern": {
+      "type": "expression",
+      "expression": "Angry",
+      "label": "stern face",
+      "description": "a stern teacher look",
+      "intents": [
+        "angry",
+        "stern"
+      ],
+      "hold_seconds": 3.0
+    },
+    "explain": {
+      "type": "motion",
+      "motion": "motions/mtn_01.motion3.json",
+      "label": "explain",
+      "description": "an open-hand explaining gesture",
+      "intents": [
+        "explain",
+        "talk"
+      ],
+      "idle": true
+    },
+    "think": {
+      "type": "motion",
+      "motion": "motions/mtn_02.motion3.json",
+      "label": "think",
+      "description": "looks aside, thinking",
+      "intents": [
+        "think",
+        "hmm"
+      ],
+      "idle": true
+    },
+    "check_watch": {
+      "type": "motion",
+      "motion": "motions/mtn_03.motion3.json",
+      "label": "check watch",
+      "description": "opens his pocket watch",
+      "intents": [
+        "time",
+        "watch",
+        "timer"
+      ],
+      "idle": true
+    },
+    "push_glasses": {
+      "type": "motion",
+      "motion": "motions/mtn_04.motion3.json",
+      "label": "push glasses",
+      "description": "pushes up his glasses, glint",
+      "intents": [
+        "smart",
+        "glasses",
+        "correct"
+      ],
+      "idle": true
+    },
+    "present": {
+      "type": "motion",
+      "motion": "motions/mtn_05.motion3.json",
+      "label": "present",
+      "description": "raises a hand to present",
+      "intents": [
+        "present",
+        "show"
+      ],
+      "idle": true
+    },
+    "shrug": {
+      "type": "motion",
+      "motion": "motions/mtn_06.motion3.json",
+      "label": "shrug",
+      "description": "a shrug",
+      "intents": [
+        "shrug",
+        "oops"
+      ],
+      "idle": true
+    },
+    "look_around": {
+      "type": "motion",
+      "motion": "motions/mtn_07.motion3.json",
+      "label": "look around",
+      "description": "looks left and right",
+      "intents": [
+        "look"
+      ],
+      "idle": true
+    }
+  },
+  "alternatives": {
+    "wave": "present",
+    "greet": "present",
+    "nod": "explain",
+    "yes": "explain",
+    "bow": "present",
+    "cheer": "push_glasses",
+    "clap": "present",
+    "thumbs_up": "push_glasses",
+    "dance": "shrug",
+    "jump": "shrug",
+    "wink": "smile",
+    "heart": "smile",
+    "peace": "smile"
+  },
+  "idle": {
+    "large_motion_actions": [
+      "check_watch",
+      "push_glasses"
+    ],
+    "large_motion_min_gap_seconds": 60
+  }
+}

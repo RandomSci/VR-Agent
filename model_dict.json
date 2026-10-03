@@ -51,5 +51,55 @@
                 "": 1
             }
         }
+    },
+    {
+        "name": "natori",
+        "description": "Official Live2D sample Jin Natori (Free Material License). Teacher.",
+        "url": "/live2d-models/natori/runtime/natori_pro_t06.model3.json",
+        "kScale": 0.5,
+        "initialXshift": 0,
+        "initialYshift": 0,
+        "kXOffset": 1150,
+        "idleMotionGroupName": "Idle",
+        "emotionMap": {
+            "neutral": 2,
+            "anger": 0,
+            "disgust": 0,
+            "fear": 5,
+            "joy": 4,
+            "smirk": 4,
+            "sadness": 3,
+            "surprise": 5
+        },
+        "tapMotions": {
+            "HitArea": {
+                "": 1
+            }
+        }
+    },
+    {
+        "name": "hibiki",
+        "description": "Official Live2D sample Hibiki (Free Material License). Student.",
+        "url": "/live2d-models/hibiki/runtime/hibiki.model3.json",
+        "kScale": 0.5,
+        "initialXshift": 0,
+        "initialYshift": 0,
+        "kXOffset": 1150,
+        "idleMotionGroupName": "Idle",
+        "emotionMap": {
+            "neutral": 3,
+            "anger": 0,
+            "disgust": 2,
+            "fear": 5,
+            "joy": 1,
+            "smirk": 2,
+            "sadness": 4,
+            "surprise": 5
+        },
+        "tapMotions": {
+            "HitArea": {
+                "": 1
+            }
+        }
     }
 ]
