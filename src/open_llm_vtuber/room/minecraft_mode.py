@@ -58,7 +58,7 @@ LINE_MAX_AGE = 25.0  # a bot line older than this is shown, not spoken
 VIEWER_GAP = 8.0  # one message per viewer per this many seconds
 BOT_GAP = 6.0  # one viewer message per bot per this many seconds
 STUCK_SECONDS = 180  # no real movement this long: she is told to get out
-TOGETHER_BLOCKS = 20
+TOGETHER_BLOCKS = 10
 VIEWER_PORT_BASE = 3790  # the bots' first person views (Mindcraft's default 3000 often clashes)  # farther apart than this for a minute: one walks back
 
 DEFAULT_GOAL = (
@@ -733,7 +733,7 @@ class MinecraftEngine:
         mover, friend = (a, b) if self._spoke_at.get(a, 0) <= self._spoke_at.get(b, 0) else (b, a)
         # Walking back across a desert took Luna the whole stream; a teleport
         # takes one second and keeps the show on the two of them together.
-        if await rcon_command(f"tp {self.names[mover]} {self.names[friend]}"):
+        if await bring_into_view(self.names[mover], self.names[friend]):
             logger.info(f"Minecraft: {self.names[mover]} teleported to {self.names[friend]}")
             await self.link.emit(
                 "send-message",
@@ -1050,6 +1050,25 @@ def enable_rcon() -> None:
         "rcon.password": _rcon_password(),
         "broadcast-rcon-to-ops": "false",
     })
+
+
+async def bring_into_view(mover: str, friend: str) -> bool:
+    """Put `mover` a few blocks in front of `friend`, facing her, so the
+    camera (through the friend's eyes) shows both girls. Spots that are not
+    free (a wall, a tree, a slope) are skipped, so nobody ends up inside
+    blocks; a plain tp is the last resort."""
+    for up, ahead in ((0, 3), (1, 3), (0, 2), (1, 2), (2, 3), (0, 4)):
+        command = (
+            f"execute at {friend} rotated ~ 0 positioned ^ ^{up} ^{ahead} "
+            f"if block ~ ~ ~ minecraft:air if block ~ ~1 ~ minecraft:air "
+            f"run tp {mover} ~ ~ ~ facing entity {friend}"
+        )
+        reply = await rcon_command(command, reply=True)
+        if reply is False:
+            return False  # no RCON at all
+        if isinstance(reply, str) and reply.startswith("Teleported"):
+            return True
+    return bool(await rcon_command(f"tp {mover} {friend}"))
 
 
 async def rcon_online() -> Optional[set[str]]:
