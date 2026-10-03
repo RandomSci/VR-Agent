@@ -97,6 +97,13 @@ CREATIVE_BLOCKED = [
 PIECE_SECONDS = (4.0, 20.0)  # creative: at least / at most this long per piece
 SIDE_GAP = 2.5  # each girl hovers this far to her own side of a shared spot (they are 5 apart)
 PERSONAL_SPACE = 3.0  # closer than this (sideways) and she moves further aside
+MEMORY_LINES = 8  # what just happened, in every answer (about 300 tokens)
+MEMORY_SECONDS = 300.0
+VIEWERS_FILE = Path("data/minecraft_viewers.json")
+# The first spoken piece: a full sentence of at least a few words (so a lone
+# "Argh!" is not followed by a pause), cut where the sentence ends.
+FIRST_SENTENCE = re.compile(r"^.{18,}?[.!?]+[\"')\]]*\s")
+ANSWER_HOLD = 5.0  # bot chatter waits at most this long for an answer being written
 CHAT_MAX_AGE = 40.0  # a comment not answered by then is skipped (busy chat moves on)
 ANSWER_BATCH = 3  # one spoken answer covers up to this many viewers
 BOT_BATCH = 4  # one message to a bot carries up to this many comments
@@ -132,6 +139,13 @@ EXCLAIM = {
               "Ugh, so close! It said {guess}, it was a {digit}.", "Wait, what?! {guess}? Little network, focus!"),
     "back": ("Okay okay, back to building!", "Right, where was I? Back to work!", "Hmph, fine, back to the build!"),
 }
+# Who they are when they talk to chat: characters, not assistants.
+PERSONALITY = (
+    "Be a character, not an assistant: have opinions, tease the viewer and your friend, be a little sassy or dramatic, "
+    "start a running joke when it fits. Never generic praise (no 'great idea', no 'our little genius' again), never "
+    "the same phrase twice in a row. Open with a real reaction when it fits (Argh!, Yesss!, Ooh!, Hmph!, Wait, what?!). "
+    "Keep it friendly for YouTube: playful roasting yes, mean no. "
+)
 # What the girls know about themselves and the show (true facts).
 SYSTEM_FACTS = (
     "True facts about you and this stream, share them when someone asks: you are AI characters made by Selwyn "
@@ -438,6 +452,10 @@ class MinecraftEngine:
         self._build_event = asyncio.Event()
         self._chose_at: dict[str, float] = {}
         self._opped: set[str] = set()
+        self.memory: deque[tuple[float, str]] = deque(maxlen=24)  # what just happened, both girls share it
+        self.viewers = ViewerMemory(VIEWERS_FILE)  # regulars, across streams
+        self._streaming = 0  # answers still being written
+        self._held_since = 0.0
         self.chat_queue: deque[dict[str, Any]] = deque(maxlen=40)  # comments waiting for a spoken answer
         self._answer_task: Optional[asyncio.Task] = None
         self._answered: set[str] = set()  # viewers who already got an answer (newcomers go first)
@@ -503,17 +521,15 @@ class MinecraftEngine:
         # message reaches it while it is still thinking.
         answer = targets[0] if len(targets) == 1 else self._quietest(targets)
         first_time = author not in self._answered
+        self.viewers.saw(author, text)
+        self._remember(f"viewer {author} wrote: {text[:90]}")
         self.chat_queue.append({"who": answer, "author": author, "text": heard, "at": now, "first": first_time})
         self._kick_answers()
         for cid in targets:
-            note = (
-                " (You already answered out loud. Do not greet again: if this asks for something, "
-                "do it now with a command, otherwise keep working on your goal.)"
-                if cid == answer
-                else ""
-            )
+            if cid == answer:
+                continue  # her bot gets it with her spoken answer (_answer_loop)
             # No emoji reaches the bots: they copy what they read.
-            self.outbox.append({"to": cid, "from": author, "text": (strip_emoji(heard) or heard) + note, "at": now})
+            self.outbox.append({"to": cid, "from": author, "text": strip_emoji(heard) or heard, "at": now})
         asyncio.create_task(
             self._push({"kind": "chat", "author": author, "text": text, "to": targets})
         )
@@ -524,6 +540,7 @@ class MinecraftEngine:
             task.cancel()
         # wait until they are really stopped, so nothing starts the game again
         await asyncio.gather(*tasks, return_exceptions=True)
+        self.viewers.save()
         await asyncio.to_thread(stop_processes)
         self.view = {"active": False}
         await self._push({"kind": "stop"})
@@ -767,7 +784,7 @@ class MinecraftEngine:
             "one or two short, lively sentences with real personality and emotion, never lists, never robot talk, "
             "never call yourself a bot or an AI assistant. "
             "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
-            + EMOTIONS +
+            + EMOTIONS + PERSONALITY +
             f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by name, "
             "react to them, and do what they ask when it is fun and possible, but you decide. "
             f"You and {friend} are a team: stay near her, "
@@ -794,7 +811,7 @@ class MinecraftEngine:
                 "one or two short, lively sentences with real personality and emotion, never lists, never robot talk, "
                 "never call yourself a bot or an AI assistant. "
                 "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
-                + EMOTIONS +
+                + EMOTIONS + PERSONALITY +
                 f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by "
                 "name and react to them. " + SYSTEM_FACTS
             )
@@ -893,6 +910,7 @@ class MinecraftEngine:
             return
         self.recent.append(key)
         logger.info(f"Minecraft {self.names[cid]}: {text}")
+        self._remember(f"{self.names[cid]} said: {text[:110]}")
         if BIG_REACTION.search(text) and time.time() - self._reaction_marked > 30:
             self._reaction_marked = time.time()
             CLIPS.mark("reaction", f"{self.names[cid]}: {text[:80]}", 1.5)
@@ -1487,6 +1505,12 @@ class MinecraftEngine:
         verb, _, arg = text.partition(" ")
         arg = arg.strip().strip('"').strip("'").lower()
         logger.info(f"Minecraft: {name} chose {verb} {arg}".rstrip())
+        self._remember({
+            "buildNext": f"{name} started building the next piece",
+            "flyToPlace": f"{name} flew to the {arg}",
+            "changeMaterial": f"{name} asked for {arg} as the material",
+            "testNetwork": f"{name} asked the network to read a {arg}",
+        }.get(verb, f"{name} did {verb} {arg}"))
         if verb == "buildNext":
             self._build_now = cid
             self._build_event.set()
@@ -1721,8 +1745,18 @@ class MinecraftEngine:
             if self.viewer_lines:  # answers to chat always go first
                 line = self.viewer_lines.popleft()
                 if time.time() - line["at"] <= VIEWER_LINE_MAX_AGE:
-                    await self._say(line["who"], line["text"], pick_mood(line["text"]))
+                    # the rest of an answer: no second reaction, she just goes on
+                    await self._say(line["who"], line["text"], "" if line.get("cont") else pick_mood(line["text"]))
                 continue
+            # An answer is being written (or about to be): chatter waits, at most 5 s.
+            coming = self._streaming or (self.chat_queue and self._answer_task and not self._answer_task.done())
+            if coming:
+                self._held_since = self._held_since or time.time()
+                if time.time() - self._held_since < ANSWER_HOLD:
+                    await asyncio.sleep(0.05)
+                    continue
+            else:
+                self._held_since = 0.0
             if not self.lines:
                 self.line_ready.clear()
                 await self.line_ready.wait()
@@ -1732,15 +1766,93 @@ class MinecraftEngine:
                 continue
             await self._say(line["who"], line["text"], pick_mood(line["text"]), short=True)
 
-    async def _quick_reply(self, cid: str, author: str, text: str, more: Optional[list[tuple[str, str]]] = None) -> None:
+    async def _quick_reply(self, cid: str, author: str, text: str, more: Optional[list[tuple[str, str]]] = None) -> str:
         started = time.time()
-        line = await self.reply_text(cid, author, text, more)
+        parts: list[str] = []
+        first_at = 0.0
+        self._streaming += 1
+        try:
+            async for piece in self.reply_pieces(cid, author, text, more):
+                if not piece:
+                    continue
+                first_at = first_at or time.time()
+                self.viewer_lines.append({"who": cid, "text": piece, "at": time.time(), "cont": bool(parts)})
+                parts.append(piece)
+                self.line_ready.set()
+        finally:
+            self._streaming -= 1
+            self.line_ready.set()
+        line = " ".join(parts)
         if not line:
-            return
-        self.viewer_lines.append({"who": cid, "text": line, "at": time.time()})
-        self.line_ready.set()
+            return ""
         who = ", ".join([author] + [a for a, _t in more or []])
-        logger.info(f"Minecraft: {self.names[cid]} answers {who} ({time.time() - started:.1f}s): {line}")
+        self._remember(f'{self.names[cid]} told {who}: "{line[:110]}"')
+        logger.info(
+            f"Minecraft: {self.names[cid]} answers {who} (speaking after {first_at - started:.1f}s, "
+            f"all {time.time() - started:.1f}s): {line}"
+        )
+        return line
+
+    async def reply_pieces(self, cid: str, author: str, text: str, more: Optional[list[tuple[str, str]]] = None):
+        """Her answer as it is written: the first sentence as soon as it is
+        there (she starts speaking), then the rest in one piece (one more
+        short pause at most, like now: no choppy word by word speech)."""
+        more = more or []
+        key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+        if not key:
+            yield await self.reply_text(cid, author, text, more)
+            return
+        system, user = self._reply_prompt(cid, author, text, more)
+        buffer, sent_first, said_any = "", False, False
+        try:
+            if self._llm is None:
+                from openai import AsyncOpenAI
+
+                self._llm = AsyncOpenAI(api_key=key, timeout=8.0, max_retries=1)
+            stream = await self._llm.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                max_tokens=110 if more else 70,
+                temperature=0.9,
+                stream=True,
+            )
+            try:
+                from ..vr_agent.usage import usage
+
+                usage.record_llm("minecraft chat answer")
+            except Exception:
+                pass
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content if chunk.choices else None
+                if not delta:
+                    continue
+                buffer += delta
+                if not sent_first:
+                    match = FIRST_SENTENCE.search(buffer)
+                    if match:
+                        piece = clean_reply(buffer[: match.end()])
+                        buffer = buffer[match.end():]
+                        if re.search(r"[A-Za-z]", piece):
+                            sent_first = said_any = True
+                            yield piece
+        except Exception as exc:
+            logger.warning(f"Minecraft: quick answer failed ({exc}), short answer instead")
+        rest = clean_reply(buffer)
+        if re.search(r"[A-Za-z]", rest):
+            said_any = True
+            yield rest
+        if not said_any:
+            yield self._fallback_reply("", author, more)
+
+    def _remember(self, text: str) -> None:
+        """What just happened, shared by both girls (answers read it)."""
+        text = " ".join(str(text).split())[:160]
+        if text:
+            self.memory.append((time.time(), text))
+
+    def _memory_text(self) -> str:
+        now = time.time()
+        return " | ".join(t for at, t in list(self.memory)[-MEMORY_LINES:] if now - at < MEMORY_SECONDS)
 
     def _exclaim(self, cid: str, kind: str, info: Optional[dict[str, Any]] = None) -> None:
         """A loud, quick reaction at a big moment, said by the engine (no AI call)."""
@@ -1749,6 +1861,7 @@ class MinecraftEngine:
             what = {"done": "piece built", "wrong": "network guessed wrong"}[kind]
             if info:
                 what += f" ({info.get('guess')} for a {info.get('digit')})"
+            self._remember(f"{self.names.get(cid, cid)}: {what}")
             CLIPS.mark(kind, f"{self.names.get(cid, cid)}: {what}", CLIP_WEIGHT[kind])
         if now - self._exclaimed_at < EXCLAIM_GAP or cid not in self.names:
             return
@@ -1793,15 +1906,25 @@ class MinecraftEngine:
             for c in batch:
                 self._answered.add(c["author"])
             first, rest = batch[0], batch[1:]
+            line = ""
             try:
-                await self._quick_reply(first["who"], first["author"], first["text"],
-                                        [(c["author"], c["text"]) for c in rest])
+                line = await self._quick_reply(first["who"], first["author"], first["text"],
+                                               [(c["author"], c["text"]) for c in rest])
             except Exception as exc:  # pragma: no cover - network dependent
                 logger.warning(f"Minecraft: chat answer failed: {exc}")
+            # Her bot hears the comments AND what she said out loud, so what
+            # she does next matches her words (one memory, not two minds).
+            said = f' (You already answered out loud: "{line[:160]}".' if line else " (You already answered out loud."
+            for c in batch:
+                self.outbox.append({
+                    "to": c["who"], "from": c["author"], "at": time.time(),
+                    "text": (strip_emoji(c["text"]) or c["text"]) + said + (
+                        " Do not greet again: if this asks for something, do it now with a command, "
+                        "otherwise keep working on your goal.)"),
+                })
 
-    async def reply_text(self, cid: str, author: str, text: str, more: Optional[list[tuple[str, str]]] = None) -> str:
-        """One or two short spoken sentences from her to a viewer (or a few at once)."""
-        more = more or []
+    def _reply_prompt(self, cid: str, author: str, text: str, more: list[tuple[str, str]]) -> tuple[str, str]:
+        """The system prompt and the chat lines for her spoken answer."""
         if more:
             ask = (f"{len(more) + 1} viewers wrote in the live chat. Answer all of them together out loud in two or "
                    "three short sentences, under 40 words, saying each name once.")
@@ -1818,17 +1941,26 @@ class MinecraftEngine:
         prof = self.session.room.get(cid)
         if prof is not None:
             persona = re.sub(r"\s+", " ", getattr(prof, "persona", "") or "").strip()[:300]
-        recent = " | ".join(list(self.said)[-4:])
+        regulars = " ".join(self.viewers.describe(a) for a in dict.fromkeys([author, *(a for a, _t in more)]))
         system = (
             f"You are {name}. {persona} You are live on YouTube playing {'creative' if self.creative else 'survival'} Minecraft with {friend}. "
             f"Right now you are: {doing}. Team project: {strip_emoji(view.get('title', ''))}, working on {view.get('step', '')}. "
-            f"Just said on stream: {recent or 'nothing yet'}. {self.net_show.describe()} "
+            f"What just happened on stream (you and {friend} share this, never contradict it): "
+            f"{self._memory_text() or 'the stream just started'}. {self.net_show.describe()} "
+            f"{regulars} "
             f"{SYSTEM_FACTS if self.creative else ''} "
             f"{ask} "
-            "Be expressive: open with a real reaction when it fits (Argh!, Yesss!, Ooh!, Hmph!, Wait, what?!). "
-            "If they ask you to do something, say you will do it, or cheekily why not. "
+            + PERSONALITY +
+            "If they ask you to do something, say you will do it, or cheekily why not. Only say things that are true "
+            "about the game and the stream; when you do not know, joke about it instead of making something up. "
             "Plain spoken words only: no emojis, no emoticons, no symbols, no hashtags, no commands, no quotes."
         )
+        return system, user
+
+    async def reply_text(self, cid: str, author: str, text: str, more: Optional[list[tuple[str, str]]] = None) -> str:
+        """One or two short spoken sentences from her to a viewer (or a few at once)."""
+        more = more or []
+        system, user = self._reply_prompt(cid, author, text, more)
         reply = ""
         key = (os.environ.get("OPENAI_API_KEY") or "").strip()
         if key:
@@ -1855,7 +1987,9 @@ class MinecraftEngine:
                     pass
             except Exception as exc:
                 logger.warning(f"Minecraft: quick answer failed ({exc}), short answer instead")
-        reply = strip_emoji(COMMAND_RE.sub(" ", reply)).strip().strip('"').strip()
+        return self._fallback_reply(clean_reply(reply), author, more)
+
+    def _fallback_reply(self, reply: str, author: str, more: list[tuple[str, str]]) -> str:
         if not re.search(r"[A-Za-z]", reply) and more:
             names = [author] + [a for a, _t in more]
             reply = f"Hi {', '.join(names[:-1])} and {names[-1]}! I see you all, one second!"
@@ -1938,6 +2072,59 @@ class MinecraftEngine:
 # ---------------------------------------------------------------------------
 # setup checks and process files
 # ---------------------------------------------------------------------------
+def clean_reply(text: str) -> str:
+    return strip_emoji(COMMAND_RE.sub(" ", text or "")).strip().strip('"').strip()
+
+
+class ViewerMemory:
+    """The viewers they know, kept between streams: how many streams they
+    came to and the last things they said. One small JSON file."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.data: dict[str, dict[str, Any]] = {}
+        self.here: set[str] = set()
+        self._saved = time.time()  # written at most every 30 s, and when the mode stops
+        try:
+            self.data = json.loads(path.read_text())
+        except Exception:
+            self.data = {}
+
+    def saw(self, name: str, text: str) -> None:
+        now = time.time()
+        entry = self.data.setdefault(name, {"streams": 0, "messages": 0, "first": now, "said": []})
+        if name not in self.here:
+            self.here.add(name)
+            entry["streams"] = int(entry.get("streams", 0)) + 1
+        entry["messages"] = int(entry.get("messages", 0)) + 1
+        entry["last"] = now
+        entry["said"] = (list(entry.get("said") or []) + [text[:100]])[-3:]
+        if now - self._saved > 30:
+            self.save()
+
+    def describe(self, name: str) -> str:
+        entry = self.data.get(name) or {}
+        streams = int(entry.get("streams", 0))
+        older = [t for t in entry.get("said") or []][:-1]
+        if streams <= 1:
+            return f"{name} is new here: welcome them." if name in self.here and int(entry.get("messages", 0)) <= 1 else ""
+        text = f"{name} is a regular (their stream number {streams} with you)."
+        if older:
+            text += f' Earlier they said: "{older[-1][:80]}".'
+        return text
+
+    def save(self) -> None:
+        self._saved = time.time()
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            if len(self.data) > 5000:  # only the most recent viewers
+                keep = sorted(self.data.items(), key=lambda kv: -float(kv[1].get("last", 0)))[:5000]
+                self.data = dict(keep)
+            self.path.write_text(json.dumps(self.data, indent=1))
+        except Exception as exc:
+            logger.debug(f"Minecraft: viewers not saved: {exc}")
+
+
 def setup_problem() -> str:
     if not (SERVER_DIR / "server.jar").exists():
         return "Minecraft server missing: run ./minecraft/setup.sh once"

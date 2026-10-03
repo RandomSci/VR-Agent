@@ -1,6 +1,14 @@
 from types import SimpleNamespace as NS
 
+import pytest
+
 from src.open_llm_vtuber.room import minecraft_mode as mm
+
+
+@pytest.fixture(autouse=True)
+def _own_viewer_file(tmp_path, monkeypatch):
+    """The viewer memory of a test never touches the real one."""
+    monkeypatch.setattr(mm, "VIEWERS_FILE", tmp_path / "viewers.json")
 
 
 def test_clean_line_cuts_commands_and_notices():
@@ -730,3 +738,108 @@ def test_a_wrong_guess_gets_an_argh(monkeypatch):
     assert "9" in text and "{" not in text  # the wrong guess, filled in
     eng._exclaim("mika", "done")  # too soon after the last one: quiet
     assert len(eng.lines) == 1
+
+
+class _Chunk:
+    def __init__(self, text):
+        self.choices = [NS(delta=NS(content=text))]
+
+
+class _StreamingLLM:
+    """A fake OpenAI client that writes its answer a few words at a time."""
+
+    def __init__(self, pieces, gate):
+        self.pieces, self.gate = pieces, gate
+        self.chat = NS(completions=NS(create=self.create))
+        self.kwargs = None
+
+    async def create(self, **kwargs):
+        self.kwargs = kwargs
+
+        async def gen():
+            for i, piece in enumerate(self.pieces):
+                if i == 3:
+                    await self.gate.wait()  # the rest is still being written
+                yield _Chunk(piece)
+
+        return gen()
+
+
+def test_she_starts_speaking_before_the_answer_is_written(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+        gate = asyncio.Event()
+        eng._llm = _StreamingLLM(
+            ["Argh!!! MathUnlocked, you ", "want the castle? ", "Fine, ", "I'm flying ", "there right now. ", "Hold on!"], gate)
+        eng.lines.append({"who": "mika", "text": "bot chatter", "at": mm.time.time()})
+        spoken = []
+
+        async def say(cid, text, mood="", short=False):
+            spoken.append((cid, text, mood))
+
+        eng._say = say
+        eng.enqueue("MathUnlockedYT", "Luna fly to the castle")
+        speaker = asyncio.create_task(eng._speak_loop())  # chatter is waiting: the answer still goes first
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if spoken:
+                break
+        # the first sentence is out while the rest is not written yet
+        assert spoken == [("luna", "Argh!!! MathUnlocked, you want the castle?", "lose")]
+        await asyncio.sleep(0.1)
+        assert len(spoken) == 1  # the bot chatter never cuts into her answer
+        gate.set()
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if len(spoken) >= 3:
+                break
+        speaker.cancel()
+        assert spoken[1] == ("luna", "Fine, I'm flying there right now. Hold on!", "")  # one piece, no new reaction
+        assert spoken[2][1] == "bot chatter"
+        assert eng._llm.kwargs["stream"] is True
+        # her bot hears the comment AND her own words: what she does matches what she said
+        note = eng.outbox[-1]
+        assert note["to"] == "luna" and 'You already answered out loud: "Argh!!! MathUnlocked' in note["text"]
+        # and both girls' shared memory has it
+        assert "Luna told MathUnlockedYT" in eng._memory_text()
+
+    asyncio.run(run())
+
+
+def test_answers_know_what_just_happened(monkeypatch):
+    eng = _engine()
+    eng._remember("Mika said: I flew to the castle")
+    eng._remember("Luna: network guessed wrong (9 for a 4)")
+    system, user = eng._reply_prompt("luna", "Viewer", "what happened?", [])
+    assert "I flew to the castle" in system and "9 for a 4" in system and "never contradict" in system
+    assert user == "Viewer wrote: what happened?"
+    assert "not an assistant" in system  # her character, not a helper
+
+
+def test_regular_viewers_are_remembered_between_streams(tmp_path):
+    path = tmp_path / "viewers.json"
+    first = mm.ViewerMemory(path)
+    first.saw("MathUnlockedYT", "build more layers!")
+    assert "new here" in first.describe("MathUnlockedYT")
+    first.save()
+    second = mm.ViewerMemory(path)  # the next stream
+    second.saw("MathUnlockedYT", "hi again")
+    text = second.describe("MathUnlockedYT")
+    assert "regular" in text and "number 2" in text and "build more layers" in text
+
+
+def test_the_voice_follows_the_feeling(monkeypatch):
+    from src.open_llm_vtuber.room import speech
+
+    engine = NS(rate="+6%", pitch="+18Hz")
+    with speech.emotional_voice(engine, "Argh!!! It guessed a nine!"):
+        assert (engine.rate, engine.pitch) == ("+16%", "+12Hz")
+    assert (engine.rate, engine.pitch) == ("+6%", "+18Hz")  # back to her normal voice
+    with speech.emotional_voice(engine, "Nooo, so close."):
+        assert engine.rate == "-4%"
+    with speech.emotional_voice(engine, "We are building the wall."):
+        assert engine.rate == "+6%"  # calm: unchanged
+    monkeypatch.setenv("VR_EMOTIONAL_VOICE", "0")
+    with speech.emotional_voice(engine, "Yesss!!!"):
+        assert engine.rate == "+6%"
