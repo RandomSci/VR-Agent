@@ -44,7 +44,23 @@ def _python() -> tuple[Path, Path]:
     prefix = os.environ.get("VR_CODING_PYTHON_PREFIX", "").strip()
     if not configured or not prefix:
         configured, prefix = sys.executable, sys.prefix
-    return Path(configured).resolve(), Path(prefix).resolve()
+    # Not resolved: a venv's bin/python is a symlink, and only when started
+    # through it does Python find the venv (pyvenv.cfg) and its packages.
+    return Path(os.path.abspath(configured)), Path(prefix).resolve()
+
+
+def _symlink_installs(path: Path) -> list[Path]:
+    """Every Python install folder the interpreter's symlink chain passes
+    through (uv links python -> cpython-3.x -> cpython-3.x.y)."""
+    installs: list[Path] = []
+    for _ in range(12):
+        installs.append(path.parent.parent)
+        if not path.is_symlink():
+            break
+        path = Path(os.path.normpath(path.parent / os.readlink(path)))
+    real = path.resolve()
+    installs.append(real.parent.parent)
+    return list(dict.fromkeys(installs))
 
 
 class NotebookKernel:
@@ -54,6 +70,8 @@ class NotebookKernel:
         self._lock = asyncio.Lock()
         self._counter = 0
         self.restarts = 0
+        # Libraries the notebook can import (found when it starts).
+        self.available: list[str] = []
 
     # ------------------------------------------------------------- process
     def _argv(self) -> list[str]:
@@ -67,6 +85,13 @@ class NotebookKernel:
         for system_path in ("/bin", "/lib", "/lib64"):
             if Path(system_path).exists():
                 argv += ["--ro-bind", system_path, system_path]
+        # Under `uv run` the venv's python resolves into ~/.local/share/uv/python:
+        # mount that install too, or the sandbox cannot start the interpreter.
+        mounted = [Path("/usr"), prefix, Path("/bin"), Path("/lib"), Path("/lib64")]
+        for install in _symlink_installs(interpreter):
+            if not any(install.is_relative_to(root) for root in mounted):
+                mounted.append(install)
+                argv += ["--ro-bind", str(install), str(install)]
         argv += [
             "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
             "--dir", "/class", "--bind", str(self.workdir), "/class", "--chdir", "/class",
@@ -108,10 +133,17 @@ class NotebookKernel:
         # Warm the slow imports once (matplotlib builds its font cache on the
         # first import) so the first plotting cell on stream is not the slow one.
         await self._send_raw(
-            "try:\n import matplotlib, matplotlib.pyplot\nexcept Exception:\n pass\n"
-            "try:\n import numpy, sympy\nexcept Exception:\n pass"
+            "import importlib.util as _u\n"
+            "_found = [m for m in ('numpy', 'sympy', 'matplotlib', 'pandas') if _u.find_spec(m)]\n"
+            "for _m in _found:\n"
+            "    try:\n        __import__(_m if _m != 'matplotlib' else 'matplotlib.pyplot')\n"
+            "    except Exception:\n        _found.remove(_m)\n"
+            "del _u, _m\n"
+            "print(','.join(_found))\n"
+            "del _found"
         )
-        await self._read_reply(timeout=90)
+        reply = await self._read_reply(timeout=90) or {}
+        self.available = [m for m in str(reply.get("stdout") or "").strip().split(",") if m]
 
     async def _send_raw(self, code: str) -> None:
         assert self.proc and self.proc.stdin

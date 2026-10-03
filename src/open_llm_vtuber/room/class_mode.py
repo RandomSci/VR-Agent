@@ -219,7 +219,7 @@ Rules:
 - Exactly one intentional mistake (expect_error true) that the sidekick or teacher makes on purpose, with a funny "after" that explains the error message.
 - One or two quizzes. Chat answers them by typing A, B or C.
 - Change the slide whenever the idea changes (about every 3 steps). Slides are short; the talking explains.
-- Plain Python only (math, random, sympy, numpy, matplotlib are available). No input(), no files, no internet, no time.sleep.
+- Plain Python only. Available: math, random{libraries}. Nothing else can be imported. No input(), no files, no internet, no time.sleep.
 - Plots: use matplotlib, do not call plt.show(); the figure is shown automatically.
 - Playful and kind, never boring. Short sentences. Real examples (snacks, games, anime, pets).
 """
@@ -500,7 +500,21 @@ class ClassEngine:
             if names
             else ""
         )
+        if not self.scratch.available:
+            try:
+                await self.scratch.reset()
+            except Exception:
+                pass
+        libraries = "".join(f", {m}" for m in self.scratch.available)
+        missing = [m for m in ("sympy", "numpy", "matplotlib") if m not in self.scratch.available]
+        if missing and not getattr(self, "_warned_missing", False):
+            self._warned_missing = True
+            logger.warning(
+                f"Class notebook is missing {', '.join(missing)}: lessons avoid them. "
+                f"Install with: uv pip install {' '.join(missing)}"
+            )
         prompt = WRITER_PROMPT.format(
+            libraries=libraries,
             teacher=self._name(self.teacher),
             teacher_persona=self._persona(self.teacher)[:300],
             sidekick=self._name(self.sidekick),
