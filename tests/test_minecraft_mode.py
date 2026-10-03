@@ -503,11 +503,11 @@ def test_both_girls_never_get_the_same_spot(monkeypatch):
         view, focus = mm.PLACES["garden"]
         await eng._fly("mika", view, focus)
         await eng._fly("luna", view, focus)
-        (mx, my, mz), (lx, ly, lz) = eng._target["mika"], eng._target["luna"]
+        (mx, _my, mz), (lx, _ly, lz) = eng._target["mika"], eng._target["luna"]
         assert ((mx - lx) ** 2 + (mz - lz) ** 2) ** 0.5 >= 2 * mm.SIDE_GAP - 0.01
         # Luna already hovers where Mika's spot would be: Mika moves further aside
         eng._target.clear()
-        eng._pos["luna"] = (8 + view[0] + mm.SIDE_GAP * 0.0, 62 + view[1], -81 + view[2])
+        eng._pos["luna"] = (8 + view[0], 62 + view[1], -81 + view[2])
         await eng._fly("mika", view, focus)
         mx, _my, mz = eng._target["mika"]
         lx, _ly, lz = eng._pos["luna"]
