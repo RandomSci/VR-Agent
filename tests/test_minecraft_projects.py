@@ -19,3 +19,21 @@ def test_every_project_has_buildable_milestones():
             commands = build()
             assert name and gather and commands
             assert all("{" not in mp.place(c, (0, 64, 0), {"Mika": "[I;0,0,0,0]", "Luna": "[I;0,0,0,0]"}).split(" {")[0] for c in commands)
+
+
+def test_creative_pieces_build_the_same_thing_layer_by_layer():
+    from src.open_llm_vtuber.room import minecraft_projects as mp
+
+    steps = mp.split_steps(mp._castle_walls(), "castle")
+    commands = [c for s in steps for c in s["commands"]]
+    # the hollow wall box comes as 5 layers: full floor, rings, full top
+    layers = [c for c in commands if "stone_bricks" in c]
+    assert len(layers) == 5 and layers[0].endswith("stone_bricks") and layers[1].endswith("outline")
+    assert all("{" in c and "}" in c for c in commands)
+    for step in steps:
+        fx, _fy, fz = step["focus"]
+        vx, vy, vz = step["view"]
+        assert ((vx - fx) ** 2 + (vz - fz) ** 2) ** 0.5 >= 6  # she hovers back far enough to see it
+    net = mp.split_steps(mp._net_input(), "neural_net")
+    assert all(s["view"][0] < 40 for s in net)  # always in front of the network wall
+    assert getattr(mp._net_training, "timed", False)

@@ -172,6 +172,7 @@ def _state(x, z, kind="acting"):
 
 def test_a_bot_without_a_goal_gets_one(monkeypatch):
     async def run():
+        monkeypatch.setenv("VR_MINECRAFT_CREATIVE", "0")  # survival: the director walks them
         eng = _live_engine(monkeypatch)
         clock = [1000.0]
         monkeypatch.setattr(mm.time, "time", lambda: clock[0])
@@ -192,6 +193,7 @@ def test_a_bot_without_a_goal_gets_one(monkeypatch):
 
 def test_a_stuck_bot_is_moved_out_and_her_view_reloaded(monkeypatch):
     async def run():
+        monkeypatch.setenv("VR_MINECRAFT_CREATIVE", "0")  # survival: the director walks them
         eng = _live_engine(monkeypatch)
         clock = [1000.0]
         monkeypatch.setattr(mm.time, "time", lambda: clock[0])
@@ -296,3 +298,34 @@ def test_neural_network_is_the_project_after_the_castle():
         for command in build():
             placed = mp.place(command, (8, 62, -81), {})
             assert "{" not in placed
+
+
+def test_creative_is_the_default_and_the_ai_only_talks(monkeypatch):
+    monkeypatch.delenv("VR_MINECRAFT_CREATIVE", raising=False)
+    eng = _engine()
+    assert eng.creative and eng.projects.creative
+    settings = eng.mindcraft_settings()
+    assert settings["base_profile"] == "creative"
+    blocked = settings["blocked_actions"]
+    assert "!collectBlocks" in blocked and "!moveAway" in blocked
+    for needed in ("!flyTo", "!land", "!stop", "!goal"):  # the engine sends these itself
+        assert needed not in blocked
+    profile = eng.profile("mika")
+    assert profile["modes"]["unstuck"] is False and profile["modes"]["self_preservation"] is False
+    assert "CREATIVE" in profile["conversing"] and "NEVER use emojis" in profile["conversing"]
+    monkeypatch.setenv("VR_MINECRAFT_CREATIVE", "0")
+    survival = _engine()
+    assert not survival.creative and survival.mindcraft_settings()["base_profile"] == "survival"
+
+
+def test_the_flight_patch_replaces_an_older_version(tmp_path, monkeypatch):
+    actions = tmp_path / "src/agent/commands/actions.js"
+    actions.parent.mkdir(parents=True)
+    old = mm.FLY_MARK + " for building on stream (v1)\n        name: '!flyTo',\n    },\n"
+    actions.write_text("const actionsList = [\n" + old + mm.FLY_ANCHOR + "\n    }\n];\n")
+    monkeypatch.setattr(mm, "MINDCRAFT_DIR", tmp_path)
+    mm.patch_mindcraft()
+    text = actions.read_text()
+    assert text.count(mm.FLY_MARK) == 1 and mm.FLY_COMMANDS in text and "(v1)" not in text
+    mm.patch_mindcraft()
+    assert actions.read_text() == text

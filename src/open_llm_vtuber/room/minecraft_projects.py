@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import json
 import os
 import time
@@ -195,6 +196,9 @@ def _net_training() -> Build:
     return build_trained()
 
 
+_net_training.timed = True  # type: ignore[attr-defined]  # creative: no pieces, the network trains for the whole part
+
+
 def _pets() -> Build:
     # pets for both girls: tamed by their (offline) player id
     return [
@@ -284,6 +288,85 @@ def place(command: str, base: tuple[int, int, int], owners: dict[str, str]) -> s
     return out
 
 
+# ---------------------------------------------------------------- creative pieces
+_COORD = re.compile(r"\{([xyz])(-?\d*)\}")
+SMALL = 12  # commands touching at most this many blocks are grouped together
+GROUP = 8
+SLABS = 6  # a tall solid fill goes up in at most this many pieces
+MODES = ("hollow", "outline", "replace", "destroy", "keep")
+
+
+def _offsets(command: str) -> list[tuple[int, int, int]]:
+    values = [int(v) if v else 0 for _axis, v in _COORD.findall(command)]
+    return [tuple(values[i:i + 3]) for i in range(0, len(values) - 2, 3)]  # type: ignore[misc]
+
+
+def _ph(x: int, y: int, z: int) -> str:
+    return f"{{x{x}}} {{y{y}}} {{z{z}}}"
+
+
+def split_steps(commands: list[str], project_id: str = "") -> list[dict[str, Any]]:
+    """A part's commands as pieces a girl builds one at a time: a wall goes
+    up layer by layer, small blocks come a few at a time. Each piece has a
+    focus (what she looks at) and a view (where she hovers), base relative."""
+    pieces: list[list[str]] = []
+    group: list[str] = []
+
+    def flush() -> None:
+        if group:
+            pieces.append(list(group))
+            group.clear()
+
+    for command in dict.fromkeys(commands):
+        words = command.split()
+        coords = _offsets(command)
+        if words[0] == "fill" and len(coords) >= 2:
+            (x1, y1, z1), (x2, y2, z2) = coords[0], coords[1]
+            block = words[7] if len(words) > 7 else ""
+            mode = words[-1] if words[-1] in MODES else ""
+            volume = (abs(x2 - x1) + 1) * (abs(y2 - y1) + 1) * (abs(z2 - z1) + 1)
+            if volume <= SMALL:
+                group.append(command)
+                if len(group) >= GROUP:
+                    flush()
+                continue
+            flush()
+            if block.endswith(":air") or y1 == y2 or mode in ("replace", "keep", "destroy"):
+                pieces.append([command])
+                continue
+            low, high = min(y1, y2), max(y1, y2)
+            if mode == "hollow":  # a ring per layer (a thicker outline would also fill floors)
+                for y in range(low, high + 1):
+                    tail = "" if y in (low, high) else " outline"
+                    pieces.append([f"fill {_ph(x1, y, z1)} {_ph(x2, y, z2)} {block}{tail}"])
+                continue
+            tail = f" {mode}" if mode else ""
+            slab = -(-(high - low + 1) // SLABS)  # at most SLABS pieces per solid fill
+            for y in range(low, high + 1, slab):
+                top = min(high, y + slab - 1)
+                pieces.append([f"fill {_ph(x1, y, z1)} {_ph(x2, top, z2)} {block}{tail}"])
+            continue
+        group.append(command)
+        if len(group) >= GROUP:
+            flush()
+    flush()
+    steps = []
+    for piece in pieces:
+        points = [c for cmd in piece for c in _offsets(cmd)] or [(0, 0, 0)]
+        fx = sum(p[0] for p in points) / len(points)
+        fy = sum(p[1] for p in points) / len(points)
+        fz = sum(p[2] for p in points) / len(points)
+        if project_id == "neural_net":
+            view = (fx - 8, fy + 2, fz)  # in front of the wall, never behind it
+        elif (fx * fx + fz * fz) ** 0.5 < 4:
+            view = (fx, fy + 7, fz - 18)  # a ring around the base: from outside the gate side
+        else:
+            length = (fx * fx + fz * fz) ** 0.5
+            view = (fx + fx / length * 7, fy + 4, fz + fz / length * 7)
+        steps.append({"commands": piece, "focus": (fx, fy, fz), "view": view})
+    return steps
+
+
 class ProjectTracker:
     """Progress toward the next milestone, the build when it is reached."""
 
@@ -303,6 +386,10 @@ class ProjectTracker:
         self._items: dict[str, int] = {}
         self._last = time.time()
         self._announced = False
+        self.creative = False  # set by the engine: the girls build piece by piece
+        self._steps_key: Optional[tuple[int, int]] = None
+        self._steps: list[dict[str, Any]] = []
+        self._loaded = False
 
     # ------------------------------------------------------------ state
     def _load(self) -> dict[str, Any]:
@@ -366,6 +453,9 @@ class ProjectTracker:
                 if before is not None and count > before:
                     gained += count - before
                 self._items[key] = count
+        if self.creative:  # the builder loop moves the progress
+            await self.push({"kind": "project", **self.view()})
+            return
         # Time alone finishes a milestone in `minutes`; gathering makes it faster.
         step = dt / (self.minutes * 60) + min(gained, 20) * 0.004
         self.state["progress"] = float(self.state.get("progress", 0.0)) + step
@@ -379,15 +469,66 @@ class ProjectTracker:
         if current is None:
             return
         project, (name, gather, _build) = current
+        if self.creative:
+            await self.tell(
+                f"Your big team project right now is {project['title']}. You are building {name} piece by piece, "
+                "flying around in creative. Talk about what you are building and how it should look."
+            )
+            return
         await self.tell(
             f"Your big team project right now is {project['title']}. Next part: {name}. "
             f"To make it happen, {gather}. Talk about it with each other and get to work."
         )
 
-    async def _complete(self) -> None:
+    # ------------------------------------------------------------ creative building
+    def timed(self) -> bool:
+        current = self.current()
+        return bool(current and getattr(current[1][2], "timed", False))
+
+    def steps(self) -> list[dict[str, Any]]:
         current = self.current()
         if current is None:
-            return
+            return []
+        key = (int(self.state.get("project", 0)), int(self.state.get("milestone", 0)))
+        if key != self._steps_key:
+            project, (_name, _gather, build) = current
+            self._steps = [] if getattr(build, "timed", False) else split_steps(build(), project["id"])
+            self._steps_key = key
+        return self._steps
+
+    async def run_step(self, step: dict[str, Any]) -> bool:
+        """One piece into the world. False without a server console."""
+        base = tuple(self.state["base"])
+        owners = {n: offline_uuid_ints(n) for n in self.names}
+        if not self._loaded:
+            x0, _y0, z0 = base
+            area = f"{x0 + LOADED[0]} {z0 + LOADED[1]} {x0 + LOADED[2]} {z0 + LOADED[3]}"
+            if await self.rcon(f"forceload add {area}", reply=True) is False:
+                return False
+            self._loaded = True
+            await asyncio.sleep(2.0)
+        for command in step["commands"]:
+            reply = await self.rcon(place(command, base, owners), reply=True)
+            if reply is False:
+                return False
+            if isinstance(reply, str) and any(w in reply for w in REFUSED) and "Could not set the block" not in reply:
+                logger.warning(f"Minecraft build piece refused: {reply[:160]} ({command[:80]})")
+        return True
+
+    async def finish_timed(self) -> None:
+        """The end of a timed part: its final drawing, then the next part."""
+        await self._build_all()
+        await self.advance()
+
+    # ------------------------------------------------------------ survival building
+    async def _complete(self) -> None:
+        if await self._build_all():
+            await self.advance()
+
+    async def _build_all(self) -> bool:
+        current = self.current()
+        if current is None:
+            return False
         project, (name, _gather, build) = current
         base = tuple(self.state["base"])
         owners = {n: offline_uuid_ints(n) for n in self.names}
@@ -395,8 +536,9 @@ class ProjectTracker:
         # Nobody may stand where blocks appear (a bot inside a block gets
         # kicked): each girl goes to a spot outside everything first.
         # (spreadplayers takes one target: two names in one command failed.)
-        for girl in self.names:
-            await self.rcon(f"spreadplayers {x0 + VIEW_SPOT[0]} {z0 + VIEW_SPOT[1]} 0 3 false {girl}", reply=True)
+        if not self.creative:
+            for girl in self.names:
+                await self.rcon(f"spreadplayers {x0 + VIEW_SPOT[0]} {z0 + VIEW_SPOT[1]} 0 3 false {girl}", reply=True)
         # Every build stays inside this box; keep its chunks loaded while
         # building (parts far from the girls were "not loaded" and skipped).
         area = f"{x0 + LOADED[0]} {z0 + LOADED[1]} {x0 + LOADED[2]} {z0 + LOADED[3]}"
@@ -409,21 +551,29 @@ class ProjectTracker:
                 if reply is False:
                     logger.warning("Minecraft: no server console, the project part was not built (restart the stream)")
                     self.state["progress"] = 0.95
-                    return
+                    return False
                 # "Could not set the block" only means it is already that block.
                 if isinstance(reply, str) and any(w in reply for w in REFUSED) and "Could not set the block" not in reply:
                     logger.warning(f"Minecraft build step refused: {reply[:160]} ({command[:80]})")
                 built += 1
         finally:
-            await self.rcon(f"forceload remove {area}", reply=True)
+            if not (self.creative and self._loaded):
+                await self.rcon(f"forceload remove {area}", reply=True)
         logger.info(f"Minecraft: {project['title']}: {name} built ({built} commands)")
+        return True
 
+    async def advance(self) -> None:
+        """This part is done: celebrate, and the next part starts."""
+        current = self.current()
+        if current is None:
+            return
+        project, (name, _gather, _build) = current
         await self.push({"kind": "project_done", "title": project["title"], "step": name})
         p, m = int(self.state["project"]), int(self.state["milestone"]) + 1
         finished_project = m >= len(project["milestones"])
         if finished_project:
             p, m = p + 1, 0
-        self.state.update({"project": p, "milestone": m, "progress": 0.0})
+        self.state.update({"project": p, "milestone": m, "progress": 0.0, "built": 0})
         self._save()
         nxt = self.current()
         if finished_project:
@@ -431,5 +581,8 @@ class ProjectTracker:
         else:
             text = f"{name} for {project['title']} is finished! Go look at it and celebrate!"
         if nxt is not None:
-            text += f" Next up: {nxt[1][0]} for {nxt[0]['title']}. To make it happen, {nxt[1][1]}. Get to work on it."
+            if self.creative:
+                text += f" Next you build: {nxt[1][0]} for {nxt[0]['title']}. Talk about how it should look."
+            else:
+                text += f" Next up: {nxt[1][0]} for {nxt[0]['title']}. To make it happen, {nxt[1][1]}. Get to work on it."
         await self.tell(text)

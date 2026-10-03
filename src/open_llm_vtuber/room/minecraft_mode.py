@@ -27,6 +27,10 @@ characters, captions, the chat that reached them and a small HUD
     VR_MINECRAFT_GOAL=...            replaces the default long term goal
     VR_MINECRAFT_THINK_SECONDS=10    at most one AI call per bot this often:
                                      lower is livelier but costs more
+    VR_MINECRAFT_CREATIVE=1          creative mode (default): every block, they fly,
+                                     and they build each project piece by piece
+                                     in front of the camera (0 = survival, the
+                                     old gather and the build appears)
     VR_MINECRAFT_PLAYER=YourName     your Minecraft name: when you join the
                                      world with the real game, you become an
                                      invisible spectator that looks through
@@ -77,6 +81,15 @@ KIT = (
     ("stone", 64), ("oak_planks", 64), ("sand", 32), ("glass", 32), ("torch", 16),
     ("bread", 16), ("stone_pickaxe", 1), ("stone_axe", 1), ("stone_shovel", 1),
 )
+# Creative: the engine moves them, the AI only talks (and may hand items over).
+CREATIVE_BLOCKED = [
+    "!collectBlocks", "!searchForBlock", "!searchForEntity", "!moveAway", "!goToCoordinates",
+    "!goToPlayer", "!followPlayer", "!goToRememberedPlace", "!rememberHere", "!craftRecipe",
+    "!smeltItem", "!clearFurnace", "!placeHere", "!attack", "!goToBed", "!stay", "!goToSurface",
+    "!putInChest", "!takeFromChest", "!viewChest", "!discard", "!consume", "!equip", "!useOn",
+    "!startConversation", "!endConversation",
+]
+PIECE_SECONDS = (4.0, 20.0)  # creative: at least / at most this long per piece
 CAMERA_HOLD = 15.0  # the camera stays on one girl at least this long
 CAMERA_REFRESH = 20.0  # spectate again this often (a respawn ends it)
 DIRECTOR = "Director"  # a plain command from this name runs right away in Mindcraft (no AI call)
@@ -95,6 +108,9 @@ MODES = {
     "idle_staring": False,
     "cheat": False,
 }
+# Creative: Mindcraft's own behaviours that fight hovering and building.
+CREATIVE_MODES = {**MODES, "self_preservation": False, "unstuck": False, "item_collecting": False,
+                  "torch_placing": False, "self_defense": False}
 TOGETHER_BLOCKS = 10
 VIEWER_PORT_BASE = 3790  # the bots' first person views (Mindcraft's default 3000 often clashes)  # farther apart than this for a minute: one walks back
 
@@ -106,6 +122,13 @@ DEFAULT_GOAL = (
 )
 
 STREAM_TITLE = "Mika & Luna play Minecraft LIVE 🔴 AI girls survive while chat bosses them around"
+CREATIVE_TITLE = "Mika & Luna build a castle and a REAL neural network in Minecraft LIVE 🔴 chat joins in"
+CREATIVE_HEAD = (
+    "🧠 Mika and Luna are two AI characters building in creative Minecraft by themselves, live: a castle, "
+    "then a real neural network (written from scratch, trained live with backpropagation) that reads "
+    "handwritten digits on a giant wall.\n"
+    "Talk to them in chat! Say Mika or Luna to pick one, or type \"draw 7\" and watch the network guess it.\n\n"
+)
 STREAM_HEAD = (
     "⛏️ Mika and Luna are two AI characters playing survival Minecraft by themselves, live.\n"
     "Talk to them in chat! Say Mika or Luna to pick one, tell them what to build, where to go, "
@@ -297,6 +320,7 @@ class MinecraftEngine:
         # fight code sends moves the server rejects, so it kicks them out.
         self.difficulty = os.environ.get("VR_MINECRAFT_DIFFICULTY", "").strip().lower() or "peaceful"
         self.goal = os.environ.get("VR_MINECRAFT_GOAL", "").strip() or DEFAULT_GOAL
+        self.creative = os.environ.get("VR_MINECRAFT_CREATIVE", "1").strip().lower() not in ("0", "false", "no", "off")
         # Seconds between AI calls per bot: the main cost knob (see the module doc).
         self.cooldown = max(2.0, float(os.environ.get("VR_MINECRAFT_THINK_SECONDS", "10") or 10))
         self.link = MindLink(self.mind_port, self._event)
@@ -340,6 +364,8 @@ class MinecraftEngine:
         from .minecraft_projects import ProjectTracker
 
         self.projects = ProjectTracker(list(self.names.values()), rcon_command, self._push, self._tell_both)
+        self.projects.creative = self.creative
+        self._builder_turn = 0
         from .minecraft_net_show import NetShow
 
         self.net_show = NetShow(self.projects, lambda *a, **k: rcon_command(*a, **k), self._tell_one, self._push)
@@ -481,6 +507,7 @@ class MinecraftEngine:
                 asyncio.create_task(self._watchdog(), name="mc-watchdog"),
                 asyncio.create_task(self._camera_loop(), name="mc-camera"),
                 asyncio.create_task(self._net_loop(), name="mc-net"),
+                asyncio.create_task(self._build_loop(), name="mc-build"),
             ]
             self._tasks.append(asyncio.create_task(self._title_loop(), name="mc-title"))
             await self._wait_live()
@@ -497,7 +524,8 @@ class MinecraftEngine:
             await asyncio.sleep(delay)
             if self.on_start:
                 try:
-                    await self.on_start(STREAM_TITLE, STREAM_HEAD, str(THUMBNAIL) if THUMBNAIL.exists() else "")
+                    title, head = (CREATIVE_TITLE, CREATIVE_HEAD) if self.creative else (STREAM_TITLE, STREAM_HEAD)
+                    await self.on_start(title, head, str(THUMBNAIL) if THUMBNAIL.exists() else "")
                 except Exception as exc:
                     logger.warning(f"Minecraft: title not set: {exc}")
 
@@ -555,6 +583,11 @@ class MinecraftEngine:
         LOG_DIR.mkdir(exist_ok=True)
         set_difficulty(self.difficulty)
         enable_rcon()
+        _set_properties({
+            "gamemode": "creative" if self.creative else "survival",
+            "force-gamemode": "true",  # everyone who joins gets it (the camera becomes a spectator after)
+            "allow-flight": "true",
+        })
         log = open(LOG_DIR / "minecraft-server.log", "ab")
         proc = await asyncio.create_subprocess_exec(
             "java", f"-Xms{self.ram}", f"-Xmx{self.ram}", "-jar", "server.jar", "nogui",
@@ -581,10 +614,13 @@ class MinecraftEngine:
             "auth": "offline",
             "mindserver_port": self.mind_port,
             "auto_open_ui": False,
-            "base_profile": "survival",
+            "base_profile": "creative" if self.creative else "survival",
             "profiles": profiles,
             "load_memory": True,
             "init_message": (
+                f"You just logged in. You ({other}) are live on YouTube in creative Minecraft, building big projects "
+                "from scratch together. Say hi to your friend and to chat in one short line."
+            ) if self.creative else (
                 f"You just logged in. You ({other}) are live on YouTube playing survival Minecraft as a team. "
                 f"You are standing next to each other. Say hi to your friend in one short line, then get to work. "
                 f"Stay close to each other the whole time, split the work (one gathers wood, the other stone and food), "
@@ -599,7 +635,7 @@ class MinecraftEngine:
             "narrate_behavior": False,
             "chat_bot_messages": True,
             "max_messages": 12,
-            "blocked_actions": BLOCKED_ACTIONS,
+            "blocked_actions": BLOCKED_ACTIONS + (CREATIVE_BLOCKED if self.creative else []),
             "spawn_timeout": 90,
         }
 
@@ -640,10 +676,27 @@ class MinecraftEngine:
             "Never dig straight down. If an action fails twice, change the plan instead of retrying it. "
             "Every reply that is not pure chat must contain a command, so you keep doing something."
         )
+        if self.creative:
+            style = (
+                f"{persona} Right now you are LIVE on YouTube in CREATIVE Minecraft with {friend}: you can fly and have "
+                f"every block. Together you build big projects from scratch, piece by piece: a castle, then a REAL neural "
+                f"network that learns to read handwritten digits, a farm, a garden. {role}"
+                "You fly to each spot and place the blocks yourselves (that happens automatically, you never need "
+                "movement or gathering commands). Your job is the talking: say what you are building right now, argue "
+                f"with {friend} about how it should look, complain when it is tedious, be proud when a part is done. "
+                "About the neural network you really know your stuff: inputs, hidden layers, weights, backpropagation, "
+                "loss, accuracy, and you get nervous when it guesses wrong. "
+                "Everything you write in chat is spoken out loud by your voice on stream, so write like you talk: "
+                "one or two short, lively sentences with real personality and emotion, never lists, never robot talk, "
+                "never call yourself a bot or an AI assistant. "
+                "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
+                f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by "
+                "name and react to them. Do not use commands, just talk."
+            )
         profile: dict[str, Any] = {
             "name": name,
             "model": self.model,
-            "modes": dict(MODES),
+            "modes": dict(CREATIVE_MODES if self.creative else MODES),
             "cooldown": int(self.cooldown * 1000),  # at most one AI call per bot this often
         }
         conversing = cache_friendly(_default_conversing(), style)
@@ -775,7 +828,8 @@ class MinecraftEngine:
                 await self._react(cid, "surprised")
         if not hud:
             return
-        await self._keep_together()
+        if not self.creative:
+            await self._keep_together()
         try:
             await self.projects.update(
                 {self.names[c]: self._pos[c] for c in hud if c in self._pos},
@@ -833,7 +887,10 @@ class MinecraftEngine:
         if step != self._goal_step:  # a new project part: both get the new goal and a kit
             self._goal_step = step
             self._goal_at = {}
-            asyncio.create_task(self._give_kits())
+            if not self.creative:
+                asyncio.create_task(self._give_kits())
+        if self.creative:
+            return  # the builder loop flies them; nobody walks or gathers
         # Mindcraft stops a bot's goal for good after three replies without a
         # command; she then stands there until someone talks to her.
         if (kind in ("stopped", "idle") or cid not in self._goal_at) and now - self._goal_at.get(cid, 0) > GOAL_RETRY:
@@ -949,6 +1006,88 @@ class MinecraftEngine:
         self.cam_focus = cid
         self._cam_focus_at = time.time()
         await self._spectate()
+
+    # ------------------------------------------------------------ creative builders
+    async def _build_loop(self) -> None:
+        """Creative: the girls take turns flying to the next piece and building it."""
+        if not self.creative:
+            return
+        watched_at = 0.0
+        while True:
+            await asyncio.sleep(1.0)
+            try:
+                here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 10]
+                base = self.projects.state.get("base")
+                if not here or not base or not self.link.connected.is_set() or self.projects.current() is None:
+                    continue
+                total = max(60.0, self.projects.minutes * 60)
+                if self.projects.timed():  # the network trains: they hover in front of it and watch
+                    if time.time() - watched_at > 60:
+                        watched_at = time.time()
+                        for i, cid in enumerate(here):
+                            view, focus = (35, 15, -12 + 12 * i), (40, 16, -6 + 4 * i)  # inside the cleared lab
+                            asyncio.create_task(self._arrive(cid, view, focus, await self._fly(cid, view, focus)))
+                    progress = float(self.projects.state.get("progress", 0.0)) + 1.0 / total
+                    self.projects.state["progress"] = progress
+                    if progress >= 1.0:
+                        await self.projects.finish_timed()
+                    continue
+                steps = self.projects.steps()
+                done = int(self.projects.state.get("built", 0))
+                if done >= len(steps):
+                    await self.projects.advance()
+                    continue
+                step = steps[done]
+                self._builder_turn += 1
+                cid = here[self._builder_turn % len(here)]
+                started = time.time()
+                flight = await self._fly(cid, step["view"], step["focus"])
+                await self._arrive(cid, step["view"], step["focus"], flight)
+                if not await self.projects.run_step(step):
+                    await asyncio.sleep(10)  # no server console yet
+                    continue
+                self.projects.state["built"] = done + 1
+                self.projects.state["progress"] = (done + 1) / len(steps)
+                self.projects._save()
+                self.view["project"] = self.projects.view()
+                await self._push({"kind": "project", **self.view["project"]})
+                await self._camera_to(cid)
+                pace = min(PIECE_SECONDS[1], max(PIECE_SECONDS[0], total / len(steps)))
+                await asyncio.sleep(max(0.0, pace - (time.time() - started)))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"Minecraft: building failed: {exc}")
+                await asyncio.sleep(5)
+
+    async def _fly(self, cid: str, view: tuple, focus: tuple) -> float:
+        """Send her flying to `view` (base relative), looking at `focus`. Returns about how long it takes."""
+        bx, by, bz = self.projects.state["base"]
+        x, y, z = bx + view[0], by + view[1], bz + view[2]
+        lx, ly, lz = bx + focus[0], by + focus[1], bz + focus[2]
+        here = self._pos.get(cid, (x, y, z))
+        across = ((here[0] - x) ** 2 + (here[2] - z) ** 2) ** 0.5
+        cruise = by + 22 if across > 12 else 0  # long trips go over the castle
+        await self._command(cid, f"!flyTo({x:.1f}, {y:.1f}, {z:.1f}, {lx:.1f}, {ly:.1f}, {lz:.1f}, {cruise:.0f})")
+        up = max(0.0, max(here[1] + 1, y + 3, cruise) - here[1])
+        down = max(0.0, max(here[1] + 1, y + 3, cruise) - y)
+        return min(10.0, (up + across + down) / 9.0 + 0.8)
+
+    async def _arrive(self, cid: str, view: tuple, focus: tuple, flight: float) -> None:
+        """Wait for the flight; if a hill or a tree stopped her (players cannot
+        fly through blocks), put her there with a plain teleport."""
+        await asyncio.sleep(flight)
+        bx, by, bz = self.projects.state["base"]
+        x, y, z = bx + view[0], by + view[1], bz + view[2]
+        here = self._pos.get(cid)
+        if here and ((here[0] - x) ** 2 + (here[1] - y) ** 2 + (here[2] - z) ** 2) ** 0.5 <= 3:
+            return
+        await rcon_command(f"tp {self.names[cid]} {x:.1f} {y:.1f} {z:.1f}")
+        await asyncio.sleep(1.0)
+        lx, ly, lz = bx + focus[0], by + focus[1], bz + focus[2]
+        await self._command(cid, f"!flyTo({x:.1f}, {y:.1f}, {z:.1f}, {lx:.1f}, {ly:.1f}, {lz:.1f}, 0)")  # just to look
+        await self._reload_view(cid)
+        logger.info(f"Minecraft: {self.names[cid]} was blocked on the way, teleported to her spot")
 
     async def _tell_one(self, text: str) -> None:
         """A note for one girl (whoever spoke least), so only one AI call answers it."""
@@ -1085,7 +1224,7 @@ class MinecraftEngine:
             persona = re.sub(r"\s+", " ", getattr(prof, "persona", "") or "").strip()[:300]
         recent = " | ".join(list(self.said)[-4:])
         system = (
-            f"You are {name}. {persona} You are live on YouTube playing survival Minecraft with {friend}. "
+            f"You are {name}. {persona} You are live on YouTube playing {'creative' if self.creative else 'survival'} Minecraft with {friend}. "
             f"Right now you are: {doing}. Team project: {strip_emoji(view.get('title', ''))}, working on {view.get('step', '')}. "
             f"Just said on stream: {recent or 'nothing yet'}. {self.net_show.describe()} "
             "A viewer wrote in the live chat. Answer them out loud in one or two short sentences, under 25 words. "
@@ -1263,6 +1402,66 @@ CAMERA_GLIDE = (
 )
 
 
+# Creative builders: the engine flies a girl to each spot she builds at (sent
+# from DIRECTOR, so it runs without an AI call). Up first, across, then down,
+# so the straight flight never cuts through the castle.
+FLY_ANCHOR = """    {
+        name: '!searchForBlock',"""
+FLY_MARK = "    { // VR Agent: creative flight"
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v4)
+        name: '!flyTo',
+        description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
+        params: {
+            'x': {type: 'float', description: 'x', domain: [-Infinity, Infinity]},
+            'y': {type: 'float', description: 'y', domain: [-64, 320]},
+            'z': {type: 'float', description: 'z', domain: [-Infinity, Infinity]},
+            'lx': {type: 'float', description: 'look x', domain: [-Infinity, Infinity]},
+            'ly': {type: 'float', description: 'look y', domain: [-64, 320]},
+            'lz': {type: 'float', description: 'look z', domain: [-Infinity, Infinity]},
+            'cruise': {type: 'float', description: 'fly over this height', domain: [-64, 320]}
+        },
+        perform: runAsAction(async (agent, x, y, z, lx, ly, lz, cruise) => {
+            // Our own flight: mineflayer's flyTo waits for a move event that
+            // never comes while hovering, and cannot be interrupted.
+            const bot = agent.bot;
+            const Vec3 = bot.entity.position.constructor;
+            if (bot.pathfinder) bot.pathfinder.stop();
+            bot.clearControlStates();
+            bot.creative.startFlying();
+            const p = bot.entity.position;
+            const top = Math.max(p.y + 1, y + 3, cruise);
+            const legs = [new Vec3(p.x, top, p.z), new Vec3(x, top, z), new Vec3(x, y, z)];
+            for (const target of legs) {
+                let best = Infinity;
+                let since = 0;
+                for (let i = 0; i < 600; i++) {
+                    if (bot.interrupt_code) return;
+                    const delta = target.minus(bot.entity.position);
+                    const dist = Math.sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+                    if (dist < 0.35) break;
+                    // a block in the way (a tree, a hill): the server keeps her
+                    // where she is, so stop trying this leg after a second
+                    if (dist < best - 0.05) { best = dist; since = 0; } else if (++since > 20) break;
+                    bot.entity.velocity = new Vec3(0, 0, 0);
+                    bot.entity.position = bot.entity.position.plus(delta.scaled(Math.min(0.45, dist) / dist));
+                    await new Promise((r) => setTimeout(r, 50));
+                }
+            }
+            bot.entity.velocity = new Vec3(0, 0, 0);
+            await bot.lookAt(new Vec3(lx, ly, lz), true);
+            bot.swingArm('right');
+        })
+    },
+    { // VR Agent: back on the ground
+        name: '!land',
+        description: 'Creative mode only: stop flying.',
+        perform: async function (agent) {
+            agent.bot.creative.stopFlying();
+        }
+    },
+"""
+
+
 def patch_mindcraft() -> list[str]:
     """Small, repeatable edits to Mindcraft's packages (safe to run every start).
 
@@ -1292,16 +1491,22 @@ def patch_mindcraft() -> list[str]:
             "    this.allowSprinting = true\n",
             "    this.allowSprinting = false // VR Agent: walk, easier to watch\n",
         ),
+        (MINDCRAFT_DIR / "src/agent/commands/actions.js", FLY_ANCHOR, FLY_COMMANDS + FLY_ANCHOR),
     ]
     for path, old, new in edits:
         try:
             text = path.read_text()
         except Exception:
             continue
+        if new.startswith(FLY_MARK) and FLY_MARK in text and new not in text:
+            # an older version of our flight commands: take it out first
+            start = text.index(FLY_MARK)
+            text = text[:start] + text[text.index(FLY_ANCHOR, start):]
         if new in text:
             continue
         if old in text:
-            path.write_text(text.replace(old, new, 1))
+            text = text.replace(old, new, 1)
+            path.write_text(text)
             done.append(path.name)
         else:
             logger.warning(f"Minecraft: {path.name} changed upstream, its stream patch was skipped")
