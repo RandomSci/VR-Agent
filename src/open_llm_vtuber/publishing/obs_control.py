@@ -130,6 +130,59 @@ def prepare_obs_config(stream_key: str = "") -> None:
         _prepare_websocket(base, password)
     if stream_key:
         _write_stream_key(stream_key)
+    _write_stream_quality()
+
+
+def _stream_quality() -> tuple[int, int]:
+    """(frames per second, video kbps). 30 fps and 6000 kbps: smooth 1080p on
+    YouTube, half the work of 60 fps for an integrated graphics chip."""
+    def number(name: str, default: int, low: int, high: int) -> int:
+        try:
+            return max(low, min(high, int(os.environ.get(name, "") or default)))
+        except ValueError:
+            return default
+
+    return number("VR_OBS_FPS", 30, 10, 60), number("VR_OBS_BITRATE", 6000, 1500, 20000)
+
+
+def _write_stream_quality() -> None:
+    """The same settings in the profile file, for an OBS opened from the terminal."""
+    folder = _profile_dir()
+    path = folder / "basic.ini" if folder else None
+    if not (path and path.is_file()):
+        return
+    fps, kbps = _stream_quality()
+    try:
+        ini = _ini(path)
+        for section in ("Video", "SimpleOutput"):
+            if not ini.has_section(section):
+                ini.add_section(section)
+        ini["Video"]["FPSType"] = "0"
+        ini["Video"]["FPSCommon"] = str(fps)
+        ini["SimpleOutput"]["VBitrate"] = str(kbps)
+        _write_ini(path, ini)
+    except Exception as exc:
+        logger.debug(f"OBS: stream quality not written: {exc}")
+
+
+async def _tune_obs(obs: "OBS") -> None:
+    """Before streaming starts: frame rate and bitrate (settings OBS keeps)."""
+    fps, kbps = _stream_quality()
+    try:
+        video = await obs.call("GetVideoSettings")
+        current = round(video.get("fpsNumerator", 0) / max(1, video.get("fpsDenominator", 1)))
+        if current != fps:
+            await obs.call("SetVideoSettings", {"fpsNumerator": fps, "fpsDenominator": 1})
+            logger.info(f"OBS: frame rate set to {fps} fps")
+    except Exception as exc:
+        logger.debug(f"OBS: frame rate not changed: {exc}")
+    try:
+        await obs.call(
+            "SetProfileParameter",
+            {"parameterCategory": "SimpleOutput", "parameterName": "VBitrate", "parameterValue": str(kbps)},
+        )
+    except Exception as exc:
+        logger.debug(f"OBS: bitrate not changed: {exc}")
 
 
 def _prepare_websocket(base: Path, password: str) -> None:
@@ -486,6 +539,8 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
             except Exception as exc:
                 logger.debug(f"OBS: stream key not applied now: {exc}")
         streaming = (await obs.call("GetStreamStatus")).get("outputActive")
+        if not streaming:
+            await _tune_obs(obs)
         ready = await _ready_stage(obs, stage_loaded_since)
         if streaming:
             logger.info("OBS: already streaming (the Stage was reloaded)")

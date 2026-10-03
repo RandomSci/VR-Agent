@@ -17,6 +17,7 @@ it would do. Nothing here ever raises into the stream.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from datetime import datetime
@@ -81,6 +82,26 @@ selwyn@selwynbuilds.com
 If you're interested in AI agents, coding, automation, and watching autonomous systems learn to build and teach in real time, subscribe and follow the project."""
 
 
+# One playlist per show; every live of that show is added to it by itself.
+PLAYLISTS = {
+    "minecraft": (
+        "Mika & Luna play Minecraft 🔴 LIVE",
+        "Every livestream where Mika and Luna, two AI characters, play survival Minecraft by themselves "
+        "while chat tells them what to do.",
+    ),
+    "class": (
+        "Learn to Code LIVE with AI Teachers",
+        "Every live class where Natori and Hibiki, two AI teachers, teach Python step by step with a live "
+        "notebook. Each stream continues where the last one stopped.",
+    ),
+}
+PLAYLIST_FILE = Path("data/youtube_playlists.json")
+THUMBNAILS = {
+    "minecraft": Path("assets/thumbnails/minecraft.jpg"),
+    "class": Path("assets/thumbnails/class.jpg"),
+}
+
+
 def _flag(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
 
@@ -117,6 +138,8 @@ class StreamAutopilot:
         self.task: Optional[asyncio.Task] = None
         self._last_title = ""
         self._thumb_video = ""
+        self._playlisted: dict[str, str] = {}
+        self._class_extras: Optional[asyncio.Task] = None
         self._ended = False
         self.farewell = "That's the end of today's stream! Thanks for learning with us, see you next session 👋"
         self.goodbye_timeout = 15.0
@@ -193,14 +216,73 @@ class StreamAutopilot:
     async def lesson_started(self, course: str, number: int, total: int, lesson: str, goals: str = "") -> None:
         title = stream_title(course, number, total, lesson)
         await self._rename(title, stream_description(course, number, total, lesson, goals))
+        if self._class_extras is None or self._class_extras.done():
+            self._class_extras = asyncio.create_task(self._class_extras_soon())
 
-    async def mode_started(self, title: str, head: str, thumbnail: str = "") -> None:
+    async def _class_extras_soon(self) -> None:
+        """Thumbnail and playlist, again a bit later if YouTube had no live video yet."""
+        for delay in (0, 60, 180):
+            await asyncio.sleep(delay)
+            await self._show_extras("class")
+
+    async def mode_started(self, title: str, head: str, thumbnail: str = "", show: str = "minecraft") -> None:
         """Minecraft and other modes: their own title, their text above the
-        channel text, and their thumbnail."""
+        channel text, their thumbnail and their playlist."""
         self.goodbye_timeout = 35.0  # the goodbye also stops the game processes
         await self._rename(title[:100], head + STREAM_BODY)
         if thumbnail:
             await self.set_thumbnail(thumbnail)
+        await self._show_extras(show, thumbnail=bool(thumbnail))
+
+    async def _show_extras(self, show: str, thumbnail: bool = False) -> None:
+        if not thumbnail and THUMBNAILS.get(show, Path("")).is_file():
+            await self.set_thumbnail(str(THUMBNAILS[show]))
+        await self.add_to_playlist(show)
+
+    async def add_to_playlist(self, show: str) -> None:
+        """Once per live video: into the show's playlist (made the first time).
+        YOUTUBE_AUTO_PLAYLIST=0 turns it off."""
+        if show not in PLAYLISTS or not (self.ready and _flag("YOUTUBE_AUTO_PLAYLIST", "1")):
+            return
+        if self.settings.dry_run:
+            logger.info(f"Dry run: would add the stream to the playlist '{PLAYLISTS[show][0]}'")
+            return
+        try:
+            client = self.publisher._youtube_factory()
+            video_id = await self._client_call(self._video_id, client)
+            if not video_id or self._playlisted.get(show) == video_id:
+                return
+            playlist_id = await self._playlist_id(client, show)
+            if not playlist_id:
+                return
+            if not await self._client_call(client.playlist_has, playlist_id, video_id):
+                await self._client_call(client.add_to_playlist, playlist_id, video_id)
+                logger.info(f"Stream autopilot: added to the playlist '{PLAYLISTS[show][0]}'")
+            self._playlisted[show] = video_id
+        except Exception as exc:
+            logger.warning(f"Playlist not updated: {exc}")
+
+    async def _playlist_id(self, client: Any, show: str) -> str:
+        saved: dict[str, str] = {}
+        try:
+            saved = json.loads(PLAYLIST_FILE.read_text())
+        except Exception:
+            pass
+        if saved.get(show):
+            return saved[show]
+        title, description = PLAYLISTS[show]
+        playlist_id = await self._client_call(client.find_playlist, title)
+        if not playlist_id:
+            playlist_id = await self._client_call(client.create_playlist, title, description)
+            logger.info(f"Stream autopilot: playlist created: {title}")
+        if playlist_id:
+            saved[show] = playlist_id
+            try:
+                PLAYLIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+                PLAYLIST_FILE.write_text(json.dumps(saved, indent=2))
+            except Exception:
+                pass
+        return playlist_id
 
     async def set_thumbnail(self, path: str) -> None:
         """Once per live video: upload the mode's thumbnail (YOUTUBE_AUTO_THUMBNAIL=0 turns it off)."""

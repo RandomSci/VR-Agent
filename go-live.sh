@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 # Go live from a plain terminal (no VS Code needed):
-#   ./go-live.sh            (add --fresh to start the course from lesson 1)
+#   ./go-live.sh --class   or   ./go-live.sh --minecraft
 # Starts the server, and if it ever crashes it starts again by itself.
 # Press Ctrl+C to stop for real.
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
-# ./go-live.sh --fresh       starts the course again from lesson 1
+# ./go-live.sh --class       Natori and Hibiki teach; continues where the last class stopped
 # ./go-live.sh --minecraft   Mika and Luna play Minecraft (run ./minecraft/setup.sh once first)
+# ./go-live.sh --fresh       (with --class) starts the courses again from lesson 1
+# Nothing to change in .env to switch between them.
 for arg in "$@"; do
     case "$arg" in
+        --class|class)
+            export VR_MODE=class VR_CLASS_MODE=1 VR_ROOM_CAST="${VR_ROOM_CAST:-natori,hibiki}"
+            echo "Class mode: Natori and Hibiki teach, continuing where the last class stopped"
+            ;;
         --fresh)
-            rm -f data/class/progress.json
+            rm -f data/class/progress.json data/class/current_lesson.json
             echo "Class progress cleared: starting from lesson 1"
             ;;
-        --minecraft)
+        --minecraft|minecraft)
             export VR_MODE=minecraft VR_CLASS_MODE=0 VR_ROOM_CAST="${VR_ROOM_CAST:-mika,luna}"
             if [ ! -f minecraft/server/server.jar ] || [ ! -d minecraft/mindcraft/node_modules ]; then
                 echo "Minecraft is not set up yet. Run this once first:  ./minecraft/setup.sh"

@@ -43,3 +43,22 @@ def test_lesson_is_cleaned_up():
 def test_course_rolls_into_the_next():
     course_id, index, title, _ = lesson_at("python-basics", 999)
     assert course_id == "math-with-python" and index == 0 and title
+
+
+def test_progress_and_current_lesson_survive_a_restart(tmp_path):
+    from types import SimpleNamespace
+
+    from open_llm_vtuber.room.class_mode import ClassEngine
+
+    session = SimpleNamespace(room=SimpleNamespace(characters=[SimpleNamespace(id="natori")], get=lambda c: None))
+    engine = ClassEngine(None, session, course_id="python-basics")
+    engine.data_dir = tmp_path
+    lesson = {"title": "Lists", "steps": [{"who": "teacher", "say": "Hi"}]}
+    engine._save_current("data-basics", 4, lesson)
+    engine._save_progress("data-basics", 4, 7)
+    again = ClassEngine(None, session, course_id="python-basics")
+    again.data_dir = tmp_path
+    progress = again._load_progress()
+    assert (progress["course"], progress["lesson"], progress["step"]) == ("data-basics", 4, 7)
+    assert again._load_current("data-basics", 4) == lesson
+    assert again._load_current("data-basics", 5) is None

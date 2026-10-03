@@ -49,3 +49,33 @@ def test_thumbnail_uploaded_once_per_video(tmp_path):
     asyncio.run(pilot.set_thumbnail(str(image)))
     asyncio.run(pilot.set_thumbnail(str(image)))
     assert uploads == [("vid1", b"jpg", "image/jpeg")]
+
+
+def test_playlist_made_once_and_video_added_once(tmp_path, monkeypatch):
+    from open_llm_vtuber.publishing import stream_autopilot as sa
+
+    monkeypatch.setattr(sa, "PLAYLIST_FILE", tmp_path / "playlists.json")
+    calls = []
+
+    class Client:
+        def find_playlist(self, title):
+            calls.append("find")
+            return ""
+
+        def create_playlist(self, title, description=""):
+            calls.append("create")
+            return "PL1"
+
+        def playlist_has(self, playlist_id, video_id):
+            return False
+
+        def add_to_playlist(self, playlist_id, video_id):
+            calls.append(("add", playlist_id, video_id))
+
+    settings = SimpleNamespace(youtube_enabled=True, dry_run=False, youtube_ready=True)
+    publisher = SimpleNamespace(settings=settings, _youtube_factory=Client, _video_id=lambda c: "vid9")
+    pilot = StreamAutopilot(publisher)
+    asyncio.run(pilot.add_to_playlist("minecraft"))
+    asyncio.run(pilot.add_to_playlist("minecraft"))
+    assert calls == ["find", "create", ("add", "PL1", "vid9")]
+    assert "PL1" in (tmp_path / "playlists.json").read_text()

@@ -403,39 +403,70 @@ class ClassEngine:
             pass
         return {"course": self.course_id, "lesson": 0}
 
-    def _save_progress(self, course_id: str, index: int) -> None:
+    def _save_progress(self, course_id: str, index: int, step: int = 0) -> None:
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
             (self.data_dir / "progress.json").write_text(
-                json.dumps({"course": course_id, "lesson": index, "saved_at": time.time()})
+                json.dumps({"course": course_id, "lesson": index, "step": step, "saved_at": time.time()})
             )
         except Exception as exc:
             logger.warning(f"Class: progress not saved: {exc}")
+
+    def _save_current(self, course_id: str, index: int, lesson: dict[str, Any]) -> None:
+        """The lesson being taught, so a restart continues the same lesson
+        (same words, same cells) instead of writing a new one."""
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            (self.data_dir / "current_lesson.json").write_text(
+                json.dumps({"course": course_id, "lesson": index, "content": lesson})
+            )
+        except Exception as exc:
+            logger.debug(f"Class: current lesson not saved: {exc}")
+
+    def _load_current(self, course_id: str, index: int) -> Optional[dict[str, Any]]:
+        try:
+            data = json.loads((self.data_dir / "current_lesson.json").read_text())
+            if data.get("course") == course_id and int(data.get("lesson", -1)) == index:
+                content = data.get("content")
+                if isinstance(content, dict) and content.get("steps"):
+                    return content
+        except Exception:
+            pass
+        return None
 
     # ------------------------------------------------------------ the class
     async def _run(self) -> None:
         try:
             await self._wait_ready()
+            # Where the last class stopped always wins; VR_CLASS_COURSE only
+            # picks the very first course (or after ./go-live.sh --fresh).
             progress = self._load_progress()
             course_id = str(progress.get("course") or self.course_id)
-            if os.environ.get("VR_CLASS_COURSE") and course_id != self.course_id:
-                course_id, progress["lesson"] = self.course_id, 0  # the setting wins
             index = int(progress.get("lesson") or 0)
+            resume_step = int(progress.get("step") or 0)
             course_id, index, title, _goals = lesson_at(course_id, index)
-            self._lesson_task(course_id, index)  # written while OBS goes live
+            resumed = self._load_current(course_id, index) if resume_step else None
+            if resumed is None:
+                resume_step = 0
+                self._lesson_task(course_id, index)  # written while OBS goes live
             await self._wait_live()
             await self._open(course_id, title)
             while True:
                 course_id, index, title, _goals = lesson_at(course_id, index)
-                task = self._lesson_task(course_id, index)
-                lesson = await self._await_lesson(task, title)
-                self._prefetch.pop((course_id, index), None)
+                if resumed is not None:
+                    lesson, resumed = resumed, None
+                    logger.info(f"Class: continuing '{lesson['title']}' from step {resume_step + 1}")
+                else:
+                    task = self._lesson_task(course_id, index)
+                    lesson = await self._await_lesson(task, title)
+                    self._prefetch.pop((course_id, index), None)
                 if lesson is None:
                     await asyncio.sleep(20)
                     continue
                 next_course, next_index, _t, _g = lesson_at(course_id, index + 1)
                 self._lesson_task(next_course, next_index)  # write the next one meanwhile
-                await self._teach(course_id, index, lesson)
+                await self._teach(course_id, index, lesson, start=resume_step)
+                resume_step = 0
                 self.lessons_taught += 1
                 self._save_progress(next_course, next_index)
                 course_id, index = next_course, next_index
@@ -633,7 +664,7 @@ class ClassEngine:
         return problems
 
     # ------------------------------------------------------------ teaching
-    async def _teach(self, course_id: str, index: int, lesson: dict[str, Any]) -> None:
+    async def _teach(self, course_id: str, index: int, lesson: dict[str, Any], start: int = 0) -> None:
         await self._push_start(course_id, index, lesson["title"])
         if self.on_lesson is not None:
             info = course(course_id)
@@ -648,7 +679,15 @@ class ClassEngine:
         self._cell_number = 0
         self._lesson_cells = []
         record: list[dict[str, Any]] = []
-        for step in lesson["steps"]:
+        self._save_current(course_id, index, lesson)
+        steps = lesson["steps"]
+        start = max(0, min(start, len(steps) - 1))
+        if start:
+            await self._catch_up(steps[:start])
+        for number, step in enumerate(steps):
+            if number < start:
+                continue
+            self._save_progress(course_id, index, number)
             if step.get("slide"):
                 await self._slide(step["slide"])
                 record.append({"slide": step["slide"]})
@@ -662,6 +701,24 @@ class ClassEngine:
         await self._push({"kind": "end", "title": lesson["title"], "summary": lesson.get("summary", "")})
         self._save_notebook(course_id, index, lesson, record)
         await asyncio.sleep(2.0)
+
+    async def _catch_up(self, done: list[dict[str, Any]]) -> None:
+        """Continuing mid lesson: the last slide is shown again and the earlier
+        cells run quietly, so the notebook has every variable it had before."""
+        slide = next((s.get("slide") for s in reversed(done) if s.get("slide")), None)
+        if slide:
+            await self._slide(slide)
+        for step in done:
+            code = step.get("cell")
+            if not code or step.get("expect_error"):
+                continue
+            try:
+                output = await self.kernel.execute(code, timeout=20)
+                if not output.get("error"):
+                    self._lesson_cells.append(code)
+            except Exception:
+                break
+        await self._say("teacher", "Last time we stopped right here, so let's keep going!", "joy")
 
     async def _step(self, step: dict[str, Any], record: list) -> None:
         code = step.get("cell")

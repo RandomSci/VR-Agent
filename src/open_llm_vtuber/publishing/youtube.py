@@ -266,6 +266,53 @@ class YouTubeClient:
             params={"broadcastStatus": "complete", "id": broadcast_id, "part": "status"},
         )
 
+    # -- playlists ---------------------------------------------------------------
+    def find_playlist(self, title: str) -> str:
+        """The id of my playlist with exactly this title, or "" (1 unit per page)."""
+        token = ""
+        for _ in range(5):
+            params = {"part": "snippet", "mine": "true", "maxResults": 50}
+            if token:
+                params["pageToken"] = token
+            data = self._call("GET", "/playlists", params=params)
+            for item in data.get("items") or []:
+                if ((item.get("snippet") or {}).get("title") or "").strip() == title.strip():
+                    return str(item.get("id") or "")
+            token = data.get("nextPageToken") or ""
+            if not token:
+                break
+        return ""
+
+    def create_playlist(self, title: str, description: str = "") -> str:
+        """A new public playlist (50 units)."""
+        data = self._call(
+            "POST",
+            "/playlists",
+            params={"part": "snippet,status"},
+            json={
+                "snippet": {"title": title[:150], "description": description[:4900]},
+                "status": {"privacyStatus": "public"},
+            },
+        )
+        return str(data.get("id") or "")
+
+    def playlist_has(self, playlist_id: str, video_id: str) -> bool:
+        data = self._call(
+            "GET",
+            "/playlistItems",
+            params={"part": "id", "playlistId": playlist_id, "videoId": video_id, "maxResults": 1},
+        )
+        return bool(data.get("items"))
+
+    def add_to_playlist(self, playlist_id: str, video_id: str) -> dict[str, Any]:
+        """Put a video in a playlist (50 units)."""
+        return self._call(
+            "POST",
+            "/playlistItems",
+            params={"part": "snippet"},
+            json={"snippet": {"playlistId": playlist_id, "resourceId": {"kind": "youtube#video", "videoId": video_id}}},
+        )
+
     def set_thumbnail(self, video_id: str, image: bytes, mime: str = "image/jpeg") -> dict[str, Any]:
         """Upload a custom thumbnail (50 units). The channel must be allowed
         custom thumbnails (phone verified); max 2 MB."""
