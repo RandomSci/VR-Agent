@@ -30,3 +30,22 @@ def test_end_stream_says_goodbye_then_stops(monkeypatch):
     asyncio.run(pilot.end_stream("limit"))
     asyncio.run(pilot.end_stream("limit"))  # only once
     assert calls == ["limit", "shutdown"]
+
+
+def test_thumbnail_uploaded_once_per_video(tmp_path):
+    image = tmp_path / "t.jpg"
+    image.write_bytes(b"jpg")
+    uploads = []
+
+    class Client:
+        def set_thumbnail(self, video_id, data, mime):
+            uploads.append((video_id, data, mime))
+
+    settings = SimpleNamespace(youtube_enabled=True, dry_run=False, youtube_ready=True)
+    publisher = SimpleNamespace(
+        settings=settings, _youtube_factory=Client, _video_id=lambda client: "vid1"
+    )
+    pilot = StreamAutopilot(publisher)
+    asyncio.run(pilot.set_thumbnail(str(image)))
+    asyncio.run(pilot.set_thumbnail(str(image)))
+    assert uploads == [("vid1", b"jpg", "image/jpeg")]

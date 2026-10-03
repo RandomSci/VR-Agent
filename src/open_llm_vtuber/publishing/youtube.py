@@ -29,6 +29,7 @@ import httpx
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API = "https://www.googleapis.com/youtube/v3"
+UPLOAD_API = "https://www.googleapis.com/upload/youtube/v3"
 SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
 # Class mode also uses the same Google account for lesson material:
 # Slides (the lesson deck), Docs (notes), Sheets (leaderboard), Calendar
@@ -264,6 +265,24 @@ class YouTubeClient:
             "/liveBroadcasts/transition",
             params={"broadcastStatus": "complete", "id": broadcast_id, "part": "status"},
         )
+
+    def set_thumbnail(self, video_id: str, image: bytes, mime: str = "image/jpeg") -> dict[str, Any]:
+        """Upload a custom thumbnail (50 units). The channel must be allowed
+        custom thumbnails (phone verified); max 2 MB."""
+        headers = {"Authorization": f"Bearer {self._token()}", "Content-Type": mime}
+        try:
+            response = self._http.post(
+                UPLOAD_API + "/thumbnails/set",
+                params={"videoId": video_id, "uploadType": "media"},
+                headers=headers,
+                content=image,
+                timeout=60,
+            )
+        except httpx.HTTPError as exc:
+            raise YouTubeError(self._scrub(f"YouTube unreachable: {exc}")) from None
+        if response.status_code >= 400:
+            raise YouTubeError(self._scrub(f"Thumbnail upload failed: {response.status_code} {response.text[:300]}"))
+        return response.json() if response.content else {}
 
     # -- going live without a click in YouTube Studio ----------------------------
     def stream_for_key(self, key: str) -> dict[str, str]:

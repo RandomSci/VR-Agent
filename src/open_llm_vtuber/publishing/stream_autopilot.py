@@ -20,6 +20,7 @@ import asyncio
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from loguru import logger
@@ -115,6 +116,7 @@ class StreamAutopilot:
         self.shutdown: Optional[Callable[[], None]] = None
         self.task: Optional[asyncio.Task] = None
         self._last_title = ""
+        self._thumb_video = ""
         self._ended = False
         self.farewell = "That's the end of today's stream! Thanks for learning with us, see you next session 👋"
         self.goodbye_timeout = 15.0
@@ -192,10 +194,33 @@ class StreamAutopilot:
         title = stream_title(course, number, total, lesson)
         await self._rename(title, stream_description(course, number, total, lesson, goals))
 
-    async def mode_started(self, title: str, head: str) -> None:
-        """Minecraft and other modes: their own title, their text above the channel text."""
+    async def mode_started(self, title: str, head: str, thumbnail: str = "") -> None:
+        """Minecraft and other modes: their own title, their text above the
+        channel text, and their thumbnail."""
         self.goodbye_timeout = 35.0  # the goodbye also stops the game processes
         await self._rename(title[:100], head + STREAM_BODY)
+        if thumbnail:
+            await self.set_thumbnail(thumbnail)
+
+    async def set_thumbnail(self, path: str) -> None:
+        """Once per live video: upload the mode's thumbnail (YOUTUBE_AUTO_THUMBNAIL=0 turns it off)."""
+        if not (self.ready and _flag("YOUTUBE_AUTO_THUMBNAIL", "1")):
+            return
+        if self.settings.dry_run:
+            logger.info(f"Dry run: would set the thumbnail {path}")
+            return
+        try:
+            client = self.publisher._youtube_factory()
+            video_id = await self._client_call(self._video_id, client)
+            if not video_id or video_id == self._thumb_video:
+                return
+            image = Path(path).read_bytes()
+            mime = "image/png" if path.lower().endswith(".png") else "image/jpeg"
+            await self._client_call(client.set_thumbnail, video_id, image, mime)
+            self._thumb_video = video_id
+            logger.info(f"Stream autopilot: thumbnail set ({Path(path).name})")
+        except Exception as exc:
+            logger.warning(f"Thumbnail not set: {exc}")
 
     async def _rename(self, title: str, body: str) -> None:
         if not (self.ready and self.auto_title):

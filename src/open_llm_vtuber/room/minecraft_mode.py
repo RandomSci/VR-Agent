@@ -49,6 +49,7 @@ SERVER_DIR = MC_DIR / "server"
 MINDCRAFT_DIR = MC_DIR / "mindcraft"
 RUNTIME_DIR = MC_DIR / "runtime"
 LOG_DIR = Path("logs")
+THUMBNAIL = Path("assets/thumbnails/minecraft.jpg")  # uploaded to each Minecraft stream
 MAX_SAY = 240
 LINE_MAX_AGE = 25.0  # a bot line older than this is shown, not spoken
 VIEWER_GAP = 8.0  # one message per viewer per this many seconds
@@ -273,7 +274,7 @@ class MinecraftEngine:
         self.procs: dict[str, Any] = {}
         self.problem = ""
         self.view: dict[str, Any] = {"active": False}
-        self.on_start: Optional[Callable[[str, str], Awaitable[None]]] = None
+        self.on_start: Optional[Callable[..., Awaitable[None]]] = None
 
     # ------------------------------------------------------------ public
     @property
@@ -403,7 +404,7 @@ class MinecraftEngine:
             await asyncio.sleep(delay)
             if self.on_start:
                 try:
-                    await self.on_start(STREAM_TITLE, STREAM_HEAD)
+                    await self.on_start(STREAM_TITLE, STREAM_HEAD, str(THUMBNAIL) if THUMBNAIL.exists() else "")
                 except Exception as exc:
                     logger.warning(f"Minecraft: title not set: {exc}")
 
