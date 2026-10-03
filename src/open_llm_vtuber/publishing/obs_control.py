@@ -465,7 +465,90 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
         await obs.__aexit__()
     await asyncio.sleep(8)  # YouTube needs a few seconds to show the stream
     STREAM_LIVE.set()
+    _keep_task(asyncio.create_task(ensure_youtube_live(stream_key), name="youtube-go-live"))
     return True
+
+
+_TASKS: set = set()
+
+
+def _keep_task(task: asyncio.Task) -> None:
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+
+
+async def ensure_youtube_live(stream_key: str, timeout: float = 300.0) -> bool:
+    """OBS is sending, but YouTube can hold the stream in "Preparing" until
+    someone clicks Go live (often after a few quick restarts). This does the
+    click: the waiting broadcast on our stream key is moved to live, and if
+    there is none, a new one is made, bound to the key and started.
+
+    YOUTUBE_AUTO_GO_LIVE=0 turns it off. Never raises.
+    """
+    if os.environ.get("YOUTUBE_AUTO_GO_LIVE", "1").strip().lower() in ("0", "false", "no", "off"):
+        return False
+    if not stream_key:
+        return False
+    try:
+        from .settings import PublishSettings
+        from .youtube import YouTubeClient
+
+        s = PublishSettings.from_env(read_dotenv=False)
+        if not s.youtube_ready:
+            return False
+        client = YouTubeClient(s.youtube_client_id, s.youtube_client_secret, s.youtube_refresh_token)
+    except Exception as exc:
+        logger.debug(f"YouTube go live check unavailable: {exc}")
+        return False
+
+    async def call(fn, *args):
+        return await asyncio.to_thread(fn, *args)
+
+    end = time.time() + timeout
+    tried: set[str] = set()
+    created = False
+    await asyncio.sleep(25)  # the normal auto start usually happens by now
+    while time.time() < end:
+        try:
+            if await call(client.find_active_broadcast_video_id):
+                logger.info("YouTube: the stream is live")
+                return True
+            stream = await call(client.stream_for_key, stream_key)
+            if not stream.get("id"):
+                logger.warning("YouTube: no stream found for the stream key, cannot press Go live")
+                return False
+            if stream.get("status") != "active":
+                logger.info(f"YouTube: waiting for video to arrive (stream {stream.get('status') or 'unknown'})")
+            else:
+                waiting = [b for b in await call(client.upcoming_broadcasts) if b["stream"] == stream["id"]]
+                fresh = [b for b in waiting if b["id"] not in tried]
+                if fresh:
+                    broadcast = fresh[0]
+                    tried.add(broadcast["id"])
+                    logger.warning("YouTube: the stream is waiting for Go live, starting it")
+                    if broadcast["monitor"] and broadcast["life"] in ("ready", "created"):
+                        try:
+                            await call(client.transition, broadcast["id"], "testing")
+                            await asyncio.sleep(12)
+                        except Exception as exc:
+                            logger.debug(f"YouTube: testing step skipped: {str(exc)[:160]}")
+                    try:
+                        await call(client.transition, broadcast["id"], "live")
+                        logger.info("YouTube: Go live sent")
+                    except Exception as exc:
+                        logger.warning(f"YouTube: Go live refused: {str(exc)[:200]}")
+                elif not waiting and not created:
+                    created = True
+                    logger.warning("YouTube: no broadcast is waiting on the stream key, making a new one")
+                    broadcast_id = await call(client.create_broadcast, "VR Agent LIVE 🔴")
+                    if broadcast_id:
+                        await call(client.bind, broadcast_id, stream["id"])
+                        logger.info("YouTube: new broadcast bound to the stream key, it starts by itself")
+        except Exception as exc:
+            logger.warning(f"YouTube go live check failed: {str(exc)[:200]}")
+        await asyncio.sleep(20)
+    logger.error("YouTube: still not live after 5 minutes. Open YouTube Studio and press Go live.")
+    return False
 
 
 async def stop_and_close() -> None:

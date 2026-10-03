@@ -265,6 +265,84 @@ class YouTubeClient:
             params={"broadcastStatus": "complete", "id": broadcast_id, "part": "status"},
         )
 
+    # -- going live without a click in YouTube Studio ----------------------------
+    def stream_for_key(self, key: str) -> dict[str, str]:
+        """The liveStream that uses this key: {id, status} or {} (1 unit)."""
+        data = self._call(
+            "GET", "/liveStreams", params={"part": "id,cdn,status", "mine": "true", "maxResults": 50}
+        )
+        for item in data.get("items") or []:
+            name = ((item.get("cdn") or {}).get("ingestionInfo") or {}).get("streamName") or ""
+            if name and name == key:
+                status = (item.get("status") or {}).get("streamStatus") or ""
+                return {"id": str(item.get("id") or ""), "status": str(status)}
+        return {}
+
+    def upcoming_broadcasts(self) -> list[dict[str, Any]]:
+        """Broadcasts waiting to start: id, life cycle, bound stream, monitor (1 unit)."""
+        data = self._call(
+            "GET",
+            "/liveBroadcasts",
+            params={
+                "part": "id,status,contentDetails",
+                "broadcastStatus": "upcoming",
+                "broadcastType": "all",
+                "maxResults": 20,
+            },
+        )
+        out = []
+        for item in data.get("items") or []:
+            details = item.get("contentDetails") or {}
+            out.append(
+                {
+                    "id": str(item.get("id") or ""),
+                    "life": str((item.get("status") or {}).get("lifeCycleStatus") or ""),
+                    "stream": str(details.get("boundStreamId") or ""),
+                    "monitor": bool((details.get("monitorStream") or {}).get("enableMonitorStream")),
+                }
+            )
+        return out
+
+    def transition(self, broadcast_id: str, status: str) -> dict[str, Any]:
+        """testing, live or complete (50 units)."""
+        return self._call(
+            "POST",
+            "/liveBroadcasts/transition",
+            params={"broadcastStatus": status, "id": broadcast_id, "part": "status"},
+        )
+
+    def create_broadcast(self, title: str, description: str = "") -> str:
+        """A new public broadcast that starts by itself when video arrives (50 units)."""
+        from datetime import datetime, timezone
+
+        data = self._call(
+            "POST",
+            "/liveBroadcasts",
+            params={"part": "snippet,status,contentDetails"},
+            json={
+                "snippet": {
+                    "title": " ".join(str(title).split())[:100],
+                    "description": str(description)[:4900],
+                    "scheduledStartTime": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                },
+                "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
+                "contentDetails": {
+                    "enableAutoStart": True,
+                    "enableAutoStop": True,
+                    "monitorStream": {"enableMonitorStream": False},
+                },
+            },
+        )
+        return str(data.get("id") or "")
+
+    def bind(self, broadcast_id: str, stream_id: str) -> dict[str, Any]:
+        """Connect a broadcast to the stream key's stream (50 units)."""
+        return self._call(
+            "POST",
+            "/liveBroadcasts/bind",
+            params={"id": broadcast_id, "streamId": stream_id, "part": "id,contentDetails"},
+        )
+
     # -- the channel page -------------------------------------------------------
     def channel_branding(self) -> dict[str, Any]:
         data = self._call("GET", "/channels", params={"part": "brandingSettings", "mine": "true"})
