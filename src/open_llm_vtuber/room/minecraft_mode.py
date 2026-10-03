@@ -263,6 +263,7 @@ class MinecraftEngine:
         self._hud_sent = 0.0
         self._health: dict[str, int] = {}
         self._state_at = 0.0
+        self._seen_at: dict[str, float] = {}
         self._pos: dict[str, tuple[float, float, float]] = {}
         self._apart_since = 0.0
         self._anchor: dict[str, tuple[float, float, float, float]] = {}  # x, y, z, since
@@ -340,7 +341,19 @@ class MinecraftEngine:
         while not self.session.speech_target() or runtime.paused:
             await asyncio.sleep(1.0)
 
+    def _present(self) -> list[str]:
+        """Bots seen in the world in the last 30 s (all of them before any state)."""
+        now = time.time()
+        here = [c for c in self.cast if now - self._seen_at.get(c, 0) < 30]
+        return here or list(self.cast)
+
     def _targets(self, text: str) -> list[str]:
+        targets = self._pick_targets(text)
+        here = self._present()
+        # A message for someone who is not in the world goes to whoever is.
+        return [c for c in targets if c in here] or here[:1]
+
+    def _pick_targets(self, text: str) -> list[str]:
         low = text.lower()
         named = [cid for cid, name in self.names.items() if re.search(rf"\b{re.escape(name.lower())}\b", low)]
         if re.search(r"\b(both|you two|everyone|girls|guys)\b", low) or len(named) > 1:
@@ -622,6 +635,7 @@ class MinecraftEngine:
             cid = self.ids.get(str(agent).lower())
             if not cid or not isinstance(state, dict) or "gameplay" not in state:
                 continue
+            self._seen_at[cid] = time.time()
             game = state.get("gameplay") or {}
             action = state.get("action") or {}
             counts = ((state.get("inventory") or {}).get("counts") or {})

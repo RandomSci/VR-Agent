@@ -11,13 +11,11 @@ persona: |
   often with a small understated joke.
 
 voice:
-  # Free Microsoft Edge TTS, the same engine Mika uses (conf.yaml), with its own
-  # voice. Nothing to set in conf.yaml and no credits used.
+  # Free Microsoft Edge TTS: Luna's own voice, British "Maisie" (the class
+  # student Hibiki keeps Aria with the higher pitch).
   tts_model: edge_tts
   settings:
-    voice: en-US-AriaNeural
-    pitch: "+18Hz"   # higher and a little faster: a young, playful student
-    rate: "+6%"
+    voice: en-GB-MaisieNeural
 
 layout: {x: 0.81, bottom: 1.01, height: 0.95, face_x: 0.5, face_y: 0.16}
 

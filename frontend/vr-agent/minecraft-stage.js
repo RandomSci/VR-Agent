@@ -52,9 +52,8 @@
       const view = el("div", `mc-view mc-${side(i)}`);
       view.dataset.who = id;
       view.innerHTML = `
-        <div class="mc-wait"><b></b><span>is joining the world…</span></div>
+        <div class="mc-wait"><span>Loading the world…</span></div>
         <iframe title="view" scrolling="no" tabindex="-1"></iframe>`;
-      view.querySelector(".mc-wait b").textContent = names[id] || id;
       const hudPane = el("div", `mc-pane mc-${side(i)}`);
       hudPane.dataset.who = id;
       hudPane.innerHTML = `
