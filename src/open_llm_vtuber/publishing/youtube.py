@@ -32,13 +32,14 @@ API = "https://www.googleapis.com/youtube/v3"
 SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
 # Class mode also uses the same Google account for lesson material:
 # Slides (the lesson deck), Docs (notes), Sheets (leaderboard), Calendar
-# (the schedule) and files it creates in Drive. One sign-in covers all.
+# (the schedule). One sign-in covers all. Google refuses drive.file in the
+# same request as YouTube ("scopes that cannot be requested together"), and
+# the Slides, Docs and Sheets APIs can create their own files without it.
 CLASS_SCOPES = (
     "https://www.googleapis.com/auth/presentations",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/calendar.events",
-    "https://www.googleapis.com/auth/drive.file",
 )
 ALL_SCOPES = " ".join((SCOPE, *CLASS_SCOPES))
 CHAT_LIMIT = 200  # YouTube live chat messages are short; keep well within it

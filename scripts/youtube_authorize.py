@@ -6,7 +6,7 @@ Needs YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env (an OAuth client of
 type "Desktop app" from Google Cloud, with the YouTube Data API v3 enabled).
 It opens Google's consent page in your browser, asks only for the
 youtube.force-ssl scope (post to live chat, reply to comments, edit video
-descriptions) plus Slides, Docs, Sheets, Calendar and its own Drive files for
+descriptions) plus Slides, Docs, Sheets and Calendar for
 class mode, and saves the refresh token to data/secrets/youtube_token.json
 (gitignored, readable only by you). Leave YOUTUBE_REFRESH_TOKEN empty in .env:
 the server reads the saved token and keeps it up to date. Sign in with the
