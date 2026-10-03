@@ -574,7 +574,7 @@ def test_hand_blocks_and_sounds():
 
 def test_lay_blocks_command_is_patched_in():
     assert "name: '!layBlocks'" in mm.FLY_COMMANDS and "[VR] put " in mm.FLY_COMMANDS
-    assert "(v9)" in mm.FLY_COMMANDS
+    assert "(v10)" in mm.FLY_COMMANDS
 
 
 def test_both_girls_never_get_the_same_spot(monkeypatch):

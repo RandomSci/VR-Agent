@@ -1,5 +1,5 @@
 // Minecraft mode on the Stage: both bots' first person views side by side,
-// Mika and Luna in the bottom corners, speech bubbles, the chat that reached
+// Mika and Luna in the bottom corners, who is talking, the chat that reached
 // them and a small HUD. Driven by "minecraft" ops (room/minecraft_mode.py).
 (() => {
   "use strict";
@@ -19,6 +19,10 @@
   const loaded = {}; // character id -> the view iframe was pointed at the bot
   let layoutTimer = 0;
   const bubbleTimers = {};
+  // Who is talking: a small name pill with moving sound bars next to her, not
+  // the full sentence (scrolling text on screen was too distracting).
+  // ?captions=1 on the Stage URL shows the words again.
+  const CAPTIONS = new URLSearchParams(location.search).get("captions") === "1";
   // One camera at a time (one 3D scene to draw): whoever talks gets it,
   // held at least FOCUS_HOLD ms so it does not flicker between them.
   let focus = "";
@@ -203,10 +207,20 @@
     if (!p) return;
     if (camera !== "client" && seen[op.who] && Date.now() - seen[op.who] < 15000) setFocus(op.who);
     const bubble = p.querySelector(".mc-bubble");
-    bubble.textContent = op.text || "";
-    bubble.classList.remove("show");
-    void bubble.offsetWidth;
-    bubble.classList.add("show");
+    const wasShown = bubble.classList.contains("show");
+    if (CAPTIONS) {
+      bubble.classList.remove("wave");
+      bubble.textContent = op.text || "";
+    } else if (!bubble.classList.contains("wave") || !bubble.firstChild) {
+      bubble.classList.add("wave");
+      bubble.replaceChildren(el("b", "", names[op.who] || op.who), el("span", "mc-bars"));
+      bubble.lastChild.append(el("i"), el("i"), el("i"), el("i"));
+    }
+    if (!wasShown || CAPTIONS) {
+      bubble.classList.remove("show");
+      void bubble.offsetWidth;
+      bubble.classList.add("show");
+    }
     clearTimeout(bubbleTimers[op.who]);
     bubbleTimers[op.who] = setTimeout(() => bubble.classList.remove("show"), 12000);
   }
@@ -215,7 +229,8 @@
     const p = pane(op.who);
     if (!p) return;
     clearTimeout(bubbleTimers[op.who]);
-    bubbleTimers[op.who] = setTimeout(() => p.querySelector(".mc-bubble").classList.remove("show"), 2500);
+    // the pill goes as soon as she stops (a caption stays a moment to be read)
+    bubbleTimers[op.who] = setTimeout(() => p.querySelector(".mc-bubble").classList.remove("show"), CAPTIONS ? 2500 : 400);
   }
 
   function chat(op) {

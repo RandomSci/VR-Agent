@@ -55,6 +55,18 @@ html.minecraft-mode #mc-over { display: block; position: fixed; inset: 0; z-inde
 .mc-bubble.show { opacity: 1; transform: none; }
 .mc-left .mc-bubble { left: 3vw; border-bottom-left-radius: 4px; }
 .mc-right .mc-bubble { right: 3vw; border-bottom-right-radius: 4px; }
+/* who is talking: a small pill with moving bars instead of the sentence */
+.mc-bubble.wave { display: flex; align-items: center; gap: .6vw; max-width: none; padding: .8vh 1vw; border-radius: 99px;
+  background: #0b0f17c4; color: #eaf1ff; font-size: clamp(12px, 1vw, 20px); box-shadow: 0 6px 18px #0007; }
+.mc-left .mc-bubble.wave { border-bottom-left-radius: 99px; color: #ffb347; }
+.mc-right .mc-bubble.wave { border-bottom-right-radius: 99px; color: #9ecbff; }
+.mc-bars { display: inline-flex; align-items: center; gap: max(3px, .22vw); height: 2.2vh; }
+.mc-bars i { display: block; width: max(4px, .3vw); height: 100%; border-radius: 99px; background: currentColor;
+  transform-origin: center; animation: mc-bar .9s ease-in-out infinite; }
+.mc-bars i:nth-child(2) { animation-delay: -.65s; } .mc-bars i:nth-child(3) { animation-delay: -.3s; }
+.mc-bars i:nth-child(4) { animation-delay: -.8s; }
+@keyframes mc-bar { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .mc-bars i { animation: none; transform: scaleY(.6); } }
 
 /* viewer chat that reached the bots, top centre over the split */
 #mc-chat { position: absolute; top: 18vh; left: 50%; transform: translateX(-50%); width: 30vw; display: flex; flex-direction: column; gap: .6vh; }

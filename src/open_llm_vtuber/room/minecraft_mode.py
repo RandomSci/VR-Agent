@@ -64,6 +64,7 @@ from loguru import logger
 
 from ..vr_agent.text_safety import strip_emoji
 from ..live.clip_marks import CLIPS
+from .minecraft_fun import potion_ask, wants_race
 from .minecraft_projects import MATERIALS, center, hand_blocks, hand_item, lay, place_sound
 
 MC_DIR = Path("minecraft")
@@ -137,6 +138,8 @@ EXCLAIM = {
              "Done! Oh, that looks so good!", "Wheee! Another piece up!", "Yes yes yes! Next one!"),
     "wrong": ("Argh!!! It guessed {guess}? That was a {digit}!", "Nooo! A {guess}?! Come on, it is a {digit}!",
               "Ugh, so close! It said {guess}, it was a {digit}.", "Wait, what?! {guess}? Little network, focus!"),
+    "won": ("Yesss! I WON! Did you see that?!", "Woohoo! Eat my dust!", "Ha! Fastest girl in the sky!",
+            "Wheee! First place, baby!"),
     "back": ("Okay okay, back to building!", "Right, where was I? Back to work!", "Hmph, fine, back to the build!"),
 }
 # Who they are when they talk to chat: characters, not assistants.
@@ -157,7 +160,12 @@ SYSTEM_FACTS = (
     "10 outputs) and it learns live, and viewers can type draw 7 to make it read a digit. "
     "You are in charge of what happens: !buildNext builds the next piece now, !flyToPlace(place) flies you to "
     "castle, network, farm, garden, base, sky or friend, !changeMaterial(block) changes what the rest of this part "
-    "is made of, !testNetwork(digit) tests your network. Use them whenever you want, decide together."
+    "is made of, !testNetwork(digit) tests your network. It is creative mode, so you have EVERY block and item: "
+    "!getItem(item, count) gives you anything, !drinkPotion(effect) and !splashPotion(effect) (on your friend) for "
+    "speed, levitation, glowing, invisibility, jump_boost and more, !brewPotion for a mystery experiment, !race for "
+    "a flying race through the sky hoops (a speed potion really makes you faster), !standInFront to fly in front "
+    "of your friend's eyes so the stream sees you. Use them whenever you want, decide together, say yes to fun "
+    "viewer ideas."
 )
 CAMERA_HOLD = 15.0  # "eyes": the camera stays on one girl at least this long
 # "director": your camera floats behind both girls, aimed at them and what they
@@ -472,6 +480,9 @@ class MinecraftEngine:
         from .minecraft_net_show import NetShow
 
         self.net_show = NetShow(self.projects, lambda *a, **k: rcon_command(*a, **k), self._tell_one, self._push)
+        from .minecraft_fun import FunShow
+
+        self.fun = FunShow(self)  # items, potions, the sky race, stand in front
 
     # ------------------------------------------------------------ public
     @property
@@ -516,6 +527,13 @@ class MinecraftEngine:
         heard = text  # what the girls get; the screen shows the comment as typed
         if ask and self.net_show.request(int(ask.group(1)), author):
             heard += f" (The neural network will read a {ask.group(1)} on the board in a moment.)"
+        if self.creative and wants_race(text) and not self.fun.racing:
+            asyncio.create_task(self.fun.race(targets[0]))
+            heard += " (The sky race starts right now: no command needed.)"
+        potion = potion_ask(text) if self.creative else None
+        if potion:
+            asyncio.create_task(self.fun.drink(targets[0], potion))
+            heard += f" (You are drinking a potion of {potion.replace('_', ' ')} right now: no command needed.)"
         # The asked girl answers out loud right away (one short AI call here).
         # Mindcraft alone took minutes: a bot drops its reply whenever another
         # message reaches it while it is still thinking.
@@ -769,7 +787,8 @@ class MinecraftEngine:
         if cid == self.cast[0]:
             role = (
                 f"In the team you are the one with bold, chaotic ideas (a castle in the sky! fight that zombie!) "
-                f"and you hate being told no by {friend}. "
+                f"and you hate being told no by {friend}. You LOVE potion experiments (!brewPotion, splashing "
+                f"{friend}) and you always want a rematch. "
             )
         else:
             role = (
@@ -1510,6 +1529,12 @@ class MinecraftEngine:
             "flyToPlace": f"{name} flew to the {arg}",
             "changeMaterial": f"{name} asked for {arg} as the material",
             "testNetwork": f"{name} asked the network to read a {arg}",
+            "getItem": f"{name} took {arg} from the inventory",
+            "drinkPotion": f"{name} drank a potion of {arg}",
+            "splashPotion": f"{name} threw a splash potion of {arg}",
+            "brewPotion": f"{name} started a mystery brew",
+            "race": f"{name} called a sky race",
+            "standInFront": f"{name} asked to stand in front of the camera",
         }.get(verb, f"{name} did {verb} {arg}"))
         if verb == "buildNext":
             self._build_now = cid
@@ -1555,6 +1580,19 @@ class MinecraftEngine:
             else:
                 note = f"This part is already built from {block}. Keep going!"
             await self.link.emit("send-message", name, {"from": "system", "message": note})
+        elif verb == "getItem":
+            item, _, count = arg.partition(" ")
+            await self.fun.get_item(cid, item, count or "1")
+        elif verb == "drinkPotion":
+            await self.fun.drink(cid, arg)
+        elif verb == "splashPotion":
+            await self.fun.splash(cid, arg)
+        elif verb == "brewPotion":
+            asyncio.create_task(self.fun.brew(cid))
+        elif verb == "race":
+            asyncio.create_task(self.fun.race(cid))
+        elif verb == "standInFront":
+            await self.fun.stand_in_front(cid)
         elif verb == "testNetwork" and arg.isdigit():
             if not self.net_show.request(int(arg), name):
                 await self.link.emit("send-message", name, {"from": "system", "message": "The network is not built far enough yet: it needs its weights first."})
@@ -2197,7 +2235,7 @@ CAMERA_GLIDE = (
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v9)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v10)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -2222,7 +2260,18 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v9)
             bot.clearControlStates();
             bot.creative.startFlying();
             const look = new Vec3(lx, ly, lz);
-            const FLY_STEP = 0.9; // blocks per tick, 18 a second
+            // Speed and Slowness change how fast she flies (potions, the race)
+            let pace = 1;
+            try {
+                const fx = bot.entity.effects || {};
+                const reg = bot.registry.effectsByName || {};
+                const level = (name) => {
+                    const e = reg[name] || reg[name.toLowerCase()];
+                    return e && fx[e.id] ? fx[e.id].amplifier + 1 : 0;
+                };
+                pace += 0.35 * level('Speed') - 0.25 * level('Slowness');
+            } catch (e) { /* no effects known: normal speed */ }
+            const FLY_STEP = 0.9 * Math.max(0.4, pace); // blocks per tick, 18 a second
             const MAX_TURN = 0.22; // radians per tick
             const HALF = 0.3; // half her width
             const TALL = 1.8;
@@ -2499,6 +2548,60 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v9)
         perform: async function (agent, digit) {
             (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] testNetwork ' + digit);
             return 'The network reads a ' + digit + ' now.';
+        }
+    },
+    { // VR Agent: anything from the creative inventory
+        name: '!getItem',
+        description: 'Creative: get any block or item into your inventory, like cake, diamond_sword, flower_pot, oak_sapling.',
+        params: {
+            'item': {type: 'string', description: 'item name, like cake or blue_orchid'},
+            'count': {type: 'int', description: 'how many, 1 to 64', domain: [1, 65]}
+        },
+        perform: async function (agent, item, count) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] getItem ' + item + ' ' + count);
+            return 'You reach for ' + count + ' ' + item + '. Wait to see if it worked.';
+        }
+    },
+    {
+        name: '!drinkPotion',
+        description: 'Drink a potion yourself: speed, slowness, jump_boost, levitation, slow_falling, glowing, invisibility, night_vision, regeneration, strength, nausea.',
+        params: {'effect': {type: 'string', description: 'the potion effect'}},
+        perform: async function (agent, effect) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] drinkPotion ' + effect);
+            return 'You drink a potion of ' + effect + '.';
+        }
+    },
+    {
+        name: '!splashPotion',
+        description: 'Throw a splash potion at your friend (same effects as drinkPotion). Pranks welcome.',
+        params: {'effect': {type: 'string', description: 'the potion effect'}},
+        perform: async function (agent, effect) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] splashPotion ' + effect);
+            return 'You throw a splash potion of ' + effect + ' at your friend.';
+        }
+    },
+    {
+        name: '!brewPotion',
+        description: 'A potion experiment: brew something unknown and drink it. Nobody knows what it does until you try.',
+        perform: async function (agent) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] brewPotion');
+            return 'You start brewing a mystery potion. Wait for what it does.';
+        }
+    },
+    {
+        name: '!race',
+        description: 'Challenge your friend to a flying race through the sky hoops. Who is faster?',
+        perform: async function (agent) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] race');
+            return 'Race on! Wait for the countdown.';
+        }
+    },
+    {
+        name: '!standInFront',
+        description: 'Fly in front of your friend, facing her, so the stream camera sees you (or call her in front of you).',
+        perform: async function (agent) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] standInFront');
+            return 'Flying in front for the camera.';
         }
     },
     { // VR Agent: back on the ground
