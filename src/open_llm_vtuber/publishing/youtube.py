@@ -426,6 +426,8 @@ class YouTubeClient:
                 "contentDetails": {
                     "enableAutoStart": False,
                     "enableAutoStop": True,
+                    # viewers see it within seconds: chat answers feel instant
+                    "latencyPreference": "ultraLow",
                     "monitorStream": {"enableMonitorStream": True, "broadcastStreamDelayMs": 0},
                 },
             },

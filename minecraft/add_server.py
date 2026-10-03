@@ -95,18 +95,24 @@ def _write(out: io.BytesIO, tag: int, value) -> None:
         out.write(struct.pack(">i", len(value)) + struct.pack(f">{len(value)}q", *value))
 
 
+# Stream camera settings in the game's options.txt: never pause when OBS has
+# the focus, and never drop to 10 frames a second just because nobody touches
+# the keyboard (the camera is never touched; "afk" made the stream choppy).
+STREAM_OPTIONS = {"pauseOnLostFocus": "false", "inactivityFpsLimit": '"minimized"'}
+
+
 def keep_running_unfocused(game_dir: Path) -> None:
     path = game_dir / "options.txt"
     if not path.exists():
         return
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    if "pauseOnLostFocus:false" in lines:
+    wanted = [f"{k}:{v}" for k, v in STREAM_OPTIONS.items()]
+    if all(w in lines for w in wanted):
         return
-    out = [line for line in lines if not line.startswith("pauseOnLostFocus:")]
-    out.append("pauseOnLostFocus:false")
+    out = [line for line in lines if line.split(":", 1)[0] not in STREAM_OPTIONS] + wanted
     shutil.copy2(path, path.with_suffix(".txt.bak"))
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
-    print("Minecraft keeps running when OBS is the focused window (pauseOnLostFocus:false).")
+    print("Minecraft: keeps running and full speed when OBS has the focus (restart the game to apply).")
 
 
 def main() -> int:

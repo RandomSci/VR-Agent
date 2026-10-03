@@ -258,7 +258,8 @@ class NetShow:
                     f"accuracy {stats['accuracy'] * 100:.0f} percent on digits it never saw. React in one short line."
                 )
         now = time.time()
-        if self.requests or (now - self._demo_at >= DEMO_EVERY and (not self.training or self._ticks % 4 == 0)):
+        # during Training the girls draw digits themselves (minecraft_mode._teach_round)
+        if self.requests or (now - self._demo_at >= DEMO_EVERY and not self.training):
             await self.demo()
         await self.push(self.stats())
 
@@ -267,8 +268,12 @@ class NetShow:
         author = ""
         if self.requests:
             digit, author = self.requests.pop(0)
-        net = get_net()
         d, image = sample(digit)
+        await self.read(d, image, author)
+
+    async def read(self, d: int, image: np.ndarray, author: str = "", drawn_by: str = "") -> None:
+        """The network reads this digit image (drawn by a girl, or asked for by chat)."""
+        net = get_net()
         commands, result = demo_commands(net, d, image)
         await self._run(commands)
         self._demo_at = time.time()
@@ -277,16 +282,17 @@ class NetShow:
             "guess": result["guess"],
             "confidence": round(result["confidence"], 3),
             "right": result["right"],
-            "author": author,
+            "author": author or drawn_by,
         }
         logger.info(f"Minecraft: the neural network read a {d} and guessed {result['guess']} ({result['confidence']:.0%})")
-        who = f" {author} asked for a {d}." if author else ""
+        who = f" {author} asked for a {d}." if author else (f" {drawn_by} drew it." if drawn_by else "")
         verdict = "It got it RIGHT" if result["right"] else "It got it WRONG"
         await self.tell(
             f"Your neural network just read a messy digit on the input board.{who} The real digit is {d}, the network "
             f"guessed {result['guess']}, {result['confidence'] * 100:.0f} percent sure. {verdict}. "
             "React to it out loud in one short line, like proud or embarrassed parents."
         )
+        await self.push(self.stats())
 
     async def _command(self, command: str) -> Any:
         from .minecraft_projects import place

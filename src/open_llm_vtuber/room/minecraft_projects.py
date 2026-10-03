@@ -392,6 +392,68 @@ def main_block(steps: list[dict[str, Any]]) -> str:
     return max(counts, key=counts.get) if counts else ""
 
 
+# ---------------------------------------------------------------- block by block
+RUN = 5  # blocks a girl lays in one go before she moves on
+INSTANT = 400  # bigger fills (clearing the site, a lawn) happen in one go
+
+
+def _fill(x1: int, y1: int, z1: int, x2: int, y2: int, z2: int, block: str) -> str:
+    return f"fill {_ph(x1, y1, z1)} {_ph(x2, y2, z2)} {block}"
+
+
+def _runs_x(x1: int, x2: int, y: int, z: int, block: str) -> list[str]:
+    lo, hi = min(x1, x2), max(x1, x2)
+    return [_fill(a, y, z, min(hi, a + RUN - 1), y, z, block) for a in range(lo, hi + 1, RUN)]
+
+
+def _runs_z(z1: int, z2: int, y: int, x: int, block: str) -> list[str]:
+    lo, hi = min(z1, z2), max(z1, z2)
+    return [_fill(x, y, a, x, y, min(hi, a + RUN - 1), block) for a in range(lo, hi + 1, RUN)]
+
+
+def lay(command: str) -> list[str]:
+    """One build command as the short runs a girl lays one after another.
+    Clearing air, lawns and other huge fills, summons and features stay whole."""
+    words = command.split()
+    coords = _offsets(command)
+    if words[0] != "fill" or len(coords) < 2:
+        return [command]
+    (x1, y1, z1), (x2, y2, z2) = coords[0], coords[1]
+    block = words[7] if len(words) > 7 else ""
+    mode = words[-1] if words[-1] in MODES else ""
+    volume = (abs(x2 - x1) + 1) * (abs(y2 - y1) + 1) * (abs(z2 - z1) + 1)
+    if block.endswith(":air") or volume > INSTANT or mode in ("replace", "keep", "destroy", "hollow") or volume <= RUN:
+        return [command]
+    out: list[str] = []
+    for y in range(min(y1, y2), max(y1, y2) + 1):
+        if mode == "outline":  # a ring: its four sides
+            out += _runs_x(x1, x2, y, z1, block)
+            if z2 != z1:
+                out += _runs_x(x1, x2, y, z2, block)
+            if abs(z2 - z1) > 1:
+                inner = (min(z1, z2) + 1, max(z1, z2) - 1)
+                out += _runs_z(*inner, y, x1, block)
+                if x2 != x1:
+                    out += _runs_z(*inner, y, x2, block)
+            continue
+        if abs(x2 - x1) >= abs(z2 - z1):
+            for z in range(min(z1, z2), max(z1, z2) + 1):
+                out += _runs_x(x1, x2, y, z, block)
+        else:
+            for x in range(min(x1, x2), max(x1, x2) + 1):
+                out += _runs_z(z1, z2, y, x, block)
+    return out
+
+
+def center(command: str) -> tuple[float, float, float]:
+    points = _offsets(command) or [(0, 0, 0)]
+    return (
+        sum(p[0] for p in points) / len(points),
+        sum(p[1] for p in points) / len(points),
+        sum(p[2] for p in points) / len(points),
+    )
+
+
 class ProjectTracker:
     """Progress toward the next milestone, the build when it is reached."""
 
@@ -539,6 +601,27 @@ class ProjectTracker:
         if swap.get("part") != part:
             return command
         return re.sub(rf"minecraft:{re.escape(swap['from'])}(?![a-z_])", f"minecraft:{swap['to']}", command)
+
+    async def ensure_loaded(self) -> bool:
+        if self._loaded:
+            return True
+        x0, _y0, z0 = tuple(self.state["base"])
+        area = f"{x0 + LOADED[0]} {z0 + LOADED[1]} {x0 + LOADED[2]} {z0 + LOADED[3]}"
+        if await self.rcon(f"forceload add {area}", reply=True) is False:
+            return False
+        self._loaded = True
+        await asyncio.sleep(2.0)
+        return True
+
+    async def place_one(self, command: str) -> bool:
+        """One command (a run of blocks) into the world, with the girls' material choice."""
+        owners = {n: offline_uuid_ints(n) for n in self.names}
+        reply = await self.rcon(place(self._swap(command), tuple(self.state["base"]), owners), reply=True)
+        if reply is False:
+            return False
+        if isinstance(reply, str) and any(w in reply for w in REFUSED) and "Could not set the block" not in reply:
+            logger.warning(f"Minecraft build run refused: {reply[:160]} ({command[:80]})")
+        return True
 
     async def run_step(self, step: dict[str, Any]) -> bool:
         """One piece into the world. False without a server console."""

@@ -274,7 +274,7 @@ def test_real_game_camera_follows_the_speaker(monkeypatch):
         assert not eng.camera_on and not commands  # not in the world yet: web views
         online.add("selwyn")
         await eng._camera_tick()
-        assert eng.camera_on and commands[:3] == [
+        assert eng.camera_on and [c for c in commands if not c.startswith("kill")][:3] == [
             "gamemode creative Selwyn", "gamemode spectator Selwyn", "spectate Mika Selwyn"
         ]
         assert {"kind": "camera", "mode": "client"} in eng.pushed
@@ -337,7 +337,7 @@ def test_the_flight_patch_replaces_an_older_version(tmp_path, monkeypatch):
 def test_director_camera_frames_both_girls_and_the_build(monkeypatch):
     async def run():
         monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
-        monkeypatch.delenv("VR_MINECRAFT_CAMERA", raising=False)
+        monkeypatch.setenv("VR_MINECRAFT_CAMERA", "director")
         eng = _live_engine(monkeypatch)
         clock = [1000.0]
         monkeypatch.setattr(mm.time, "time", lambda: clock[0])
@@ -421,5 +421,67 @@ def test_the_girls_choose_what_happens(monkeypatch):
         assert eng.link.sent[-1][1]["message"].startswith("tnt cannot be used")
         profile = eng.profile("luna")["conversing"]
         assert "Selwyn Builds" in profile and "!flyToPlace" in profile
+
+    asyncio.run(run())
+
+
+def test_the_camera_is_mikas_eyes_by_default(monkeypatch):
+    async def run():
+        monkeypatch.setenv("VR_MINECRAFT_PLAYER", "Selwyn")
+        monkeypatch.delenv("VR_MINECRAFT_CAMERA", raising=False)
+        eng = _live_engine(monkeypatch)
+        commands = []
+
+        async def rcon(cmd, reply=False):
+            commands.append(cmd)
+            return "ok"
+
+        async def who():
+            return {"mika", "luna", "selwyn"}
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        monkeypatch.setattr(mm, "rcon_online", who)
+        await eng._camera_tick()
+        assert "spectate Mika Selwyn" in commands and not any("armor_stand" in c for c in commands)
+        eng._seen_at["luna"] = mm.time.time()
+        eng._cam_focus_at = 0
+        await eng._camera_to("luna")  # Luna talks: the camera stays with Mika
+        assert not any(c == "spectate Luna Selwyn" for c in commands)
+
+    asyncio.run(run())
+
+
+def test_both_girls_lay_a_piece_block_by_block(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng.projects.state.update({"project": 0, "milestone": 0, "built": 0, "base": [8, 62, -81]})
+        hops, placed = [], []
+
+        async def command(cid, text):
+            hops.append((cid, text))
+            return True
+
+        async def place_one(cmd):
+            placed.append(cmd)
+            return True
+
+        async def arrive(*a):
+            return None
+
+        async def no_wait(_s):
+            return None
+
+        eng._command = command
+        eng._arrive = arrive
+        eng.projects.place_one = place_one
+        monkeypatch.setattr(mm.asyncio, "sleep", no_wait)
+        step = {"commands": ["fill {x-9} {y1} {z-9} {x9} {y1} {z9} minecraft:stone_bricks outline"],
+                "focus": (0, 1, 0), "view": (0, 8, -18)}
+        runs = mm.lay(step["commands"][0])
+        half = (len(runs) + 1) // 2
+        await asyncio.gather(eng._lay_runs("mika", runs[:half], step), eng._lay_runs("luna", runs[half:], step))
+        assert sorted(placed) == sorted(runs) and len(runs) > 10  # every run laid, none twice
+        short = [t for _c, t in hops if t.endswith(", -60)")]
+        assert {c for c, t in hops if t.endswith(", -60)")} == {"mika", "luna"} and len(short) == len(runs)
 
     asyncio.run(run())

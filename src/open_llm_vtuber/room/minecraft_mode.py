@@ -63,7 +63,7 @@ from typing import Any, Awaitable, Callable, Optional
 from loguru import logger
 
 from ..vr_agent.text_safety import strip_emoji
-from .minecraft_projects import MATERIALS
+from .minecraft_projects import MATERIALS, center, lay
 
 MC_DIR = Path("minecraft")
 SERVER_DIR = MC_DIR / "server"
@@ -371,7 +371,9 @@ class MinecraftEngine:
         self.cam_focus = ""
         self._cam_focus_at = 0.0
         self._cam_sent_at = 0.0
-        self.camera_style = (os.environ.get("VR_MINECRAFT_CAMERA", "") or "director").strip().lower()
+        # The camera: through one girl's eyes (her id, default the first: Mika),
+        # "eyes" = whoever talks, "director" = floating behind both.
+        self.camera_style = (os.environ.get("VR_MINECRAFT_CAMERA", "") or self.cast[0]).strip().lower()
         self._shot: Optional[tuple[tuple[float, float, float], tuple[float, float, float]]] = None  # target
         self._pose: Optional[list[float]] = None  # where the camera stand is now: x, y, z, lx, ly, lz
         self._cam_ready = False
@@ -1027,6 +1029,8 @@ class MinecraftEngine:
             # creative first: switching modes also ends any old "spectate" (through her eyes)
             await rcon_command(f"gamemode creative {self.camera_player}")
             await rcon_command(f"gamemode spectator {self.camera_player}")
+            if self.camera_style != "director":
+                await rcon_command(f"kill @e[tag={CAM_TAG}]")  # an old camera stand from the director camera
             self._shot = None
             self._cam_ready = False
             self.camera_on = True
@@ -1041,12 +1045,16 @@ class MinecraftEngine:
             logger.info(f"Minecraft: {self.camera_player} left, back to the web views")
         if not self.camera_on:
             return
-        bots = [c for c in self.cast if self.names[c].lower() in online]
+        # in the server list, or seen in the last 30 s (a list reply can miss a name)
+        bots = [c for c in self.cast if self.names[c].lower() in online or time.time() - self._seen_at.get(c, 0) < 30]
         if not bots:
             return
-        if self.camera_style != "eyes":
+        if self.camera_style == "director":
             await self._director_shot([c for c in self.cast if c in bots])
             return
+        if self.camera_style in bots and self.cam_focus != self.camera_style:
+            self.cam_focus = self.camera_style  # always through her eyes (Mika by default)
+            self._cam_sent_at = 0.0
         if self.cam_focus not in bots:
             self.cam_focus = bots[0]
             self._cam_focus_at = time.time()
@@ -1131,7 +1139,7 @@ class MinecraftEngine:
     async def _camera_to(self, cid: str) -> None:
         """The one who talks gets the camera (held CAMERA_HOLD so it does not flicker)."""
         if self.camera_style != "eyes":
-            return  # the director camera already shows both
+            return  # a fixed camera (Mika's eyes, or the director) does not follow the speaker
         if not self.camera_on or cid == self.cam_focus or time.time() - self._cam_focus_at < CAMERA_HOLD:
             return
         if time.time() - self._seen_at.get(cid, 0) > 15:
@@ -1142,30 +1150,24 @@ class MinecraftEngine:
 
     # ------------------------------------------------------------ creative builders
     async def _build_loop(self) -> None:
-        """Creative: the girls take turns flying to the next piece and building it."""
+        """Creative: both girls build every piece themselves, a short run of
+        blocks at a time, flying along as they go. During the network's
+        Training they draw digits on its input board and watch it guess."""
         if not self.creative:
             return
-        watched_at = 0.0
         while True:
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.5)
             try:
                 here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 10]
                 base = self.projects.state.get("base")
                 if not here or not base or not self.link.connected.is_set() or self.projects.current() is None:
+                    await asyncio.sleep(1.0)
                     continue
-                total = max(60.0, self.projects.minutes * 60)
-                if self.projects.timed():  # the network trains: they hover in front of it and watch
-                    bx, by, bz = base
-                    self.build_focus = (bx + 40, by + 16, bz - 6)
-                    if time.time() - watched_at > 60:
-                        watched_at = time.time()
-                        for i, cid in enumerate(here):
-                            view, focus = (25, 16, -8 + 10 * i), (40, 16, -6 + 4 * i)  # back from the wall: the whole network in view
-                            asyncio.create_task(self._arrive(cid, view, focus, await self._fly(cid, view, focus)))
-                    progress = float(self.projects.state.get("progress", 0.0)) + 1.0 / total
-                    self.projects.state["progress"] = progress
-                    if progress >= 1.0:
-                        await self.projects.finish_timed()
+                if not await self.projects.ensure_loaded():
+                    await asyncio.sleep(10)  # no server console yet
+                    continue
+                if self.projects.timed():
+                    await self._teach_round(here)
                     continue
                 steps = self.projects.steps()
                 done = int(self.projects.state.get("built", 0))
@@ -1175,37 +1177,110 @@ class MinecraftEngine:
                 step = steps[done]
                 bx, by, bz = base
                 self.build_focus = (bx + step["focus"][0], by + step["focus"][1], bz + step["focus"][2])
-                if self._build_now in here:
-                    cid = self._build_now  # she asked to build it herself
-                else:
-                    # whoever did not just fly somewhere of her own choosing
-                    free = [c for c in here if time.time() - self._chose_at.get(c, 0) > CHOICE_HOLD] or here
-                    self._builder_turn += 1
-                    cid = free[self._builder_turn % len(free)]
+                runs = [r for c in step["commands"] for r in lay(c)]
+                # whoever did not just fly somewhere of her own choosing builds
+                free = [c for c in here if time.time() - self._chose_at.get(c, 0) > CHOICE_HOLD] or here
+                if self._build_now in here and self._build_now not in free:
+                    free.append(self._build_now)
                 self._build_now = None
                 self._build_event.clear()
-                started = time.time()
-                flight = await self._fly(cid, step["view"], step["focus"])
-                await self._arrive(cid, step["view"], step["focus"], flight)
-                if not await self.projects.run_step(step):
-                    await asyncio.sleep(10)  # no server console yet
+                half = (len(runs) + 1) // 2
+                shares = [runs[:half], runs[half:]] if len(free) > 1 and len(runs) > 1 else [runs]
+                ok = await asyncio.gather(*(self._lay_runs(cid, share, step) for cid, share in zip(free, shares)))
+                if not all(ok):
+                    await asyncio.sleep(10)
                     continue
                 self.projects.state["built"] = done + 1
                 self.projects.state["progress"] = (done + 1) / len(steps)
                 self.projects._save()
                 self.view["project"] = self.projects.view()
                 await self._push({"kind": "project", **self.view["project"]})
-                await self._camera_to(cid)
-                pace = min(PIECE_SECONDS[1], max(PIECE_SECONDS[0], total / len(steps)))
-                try:  # the next piece comes after the pace, or right away when a girl says !buildNext
-                    await asyncio.wait_for(self._build_event.wait(), timeout=max(0.0, pace - (time.time() - started)))
-                except asyncio.TimeoutError:
-                    pass
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.warning(f"Minecraft: building failed: {exc}")
                 await asyncio.sleep(5)
+
+    async def _hop(self, cid: str, hover: tuple, look: tuple, last: Optional[tuple]) -> float:
+        """A short straight hop (base relative), looking at what she lays next."""
+        bx, by, bz = self.projects.state["base"]
+        x, y, z = bx + hover[0], by + hover[1], bz + hover[2]
+        lx, ly, lz = bx + look[0], by + look[1], bz + look[2]
+        # cruise -60 (the lowest the command takes) means: straight there, a short hop
+        await self._command(cid, f"!flyTo({x:.1f}, {y:.1f}, {z:.1f}, {lx:.1f}, {ly:.1f}, {lz:.1f}, -60)")
+        if last is None:
+            return 2.5
+        dist = sum((a - b) ** 2 for a, b in zip(hover, last)) ** 0.5
+        return min(3.0, dist / 9.0 + 0.35)
+
+    async def _lay_runs(self, cid: str, runs: list[str], step: dict[str, Any]) -> bool:
+        """She flies along and lays her runs one by one, facing them from the open side."""
+        if not runs:
+            return True
+        fx, fy, fz = step["focus"]
+        vx, vy, vz = step["view"]
+        dx, dz = vx - fx, vz - fz
+        length = (dx * dx + dz * dz) ** 0.5 or 1.0
+        dx, dz = dx / length, dz / length
+        if len(runs) == 1 and lay(runs[0]) == runs and step["commands"] == runs:
+            # one big move (clearing the site, a lawn): she watches it from the piece's spot
+            await self._arrive(cid, step["view"], step["focus"], await self._fly(cid, step["view"], step["focus"]))
+            return await self.projects.place_one(runs[0])
+        # first a proper flight to the piece, then short hops along it
+        first = center(runs[0])
+        start = (first[0] + dx * 3, first[1] + 1.5, first[2] + dz * 3)
+        await self._arrive(cid, start, first, await self._fly(cid, start, first))
+        last: Optional[tuple] = start
+        for run in runs:
+            cx, cy, cz = center(run)
+            hover = (cx + dx * 3, cy + 1.5, cz + dz * 3)
+            await asyncio.sleep(await self._hop(cid, hover, (cx, cy, cz), last))
+            last = hover
+            if not await self.projects.place_one(run):
+                return False
+        return True
+
+    async def _teach_round(self, here: list[str]) -> None:
+        """Training: one girl draws a messy digit on the input board, pixel by
+        pixel; then both look at what the network guesses. The network trains
+        on its own data meanwhile (backpropagation in net_show.tick)."""
+        from .digit_net import sample
+        from .minecraft_net_show import INPUT_Z, LAYER_Z, NET_X, TOP, board
+
+        base = self.projects.state["base"]
+        total = max(60.0, self.projects.minutes * 60)
+        started = time.time()
+        self._builder_turn += 1
+        drawer = here[self._builder_turn % len(here)]
+        watcher = next((c for c in here if c != drawer), None)
+        board_mid = (NET_X, TOP - 6, INPUT_Z + 5)
+        if watcher:
+            spot = (NET_X - 12, TOP - 6, INPUT_Z + 14)
+            asyncio.create_task(self._arrive(watcher, spot, board_mid, await self._fly(watcher, spot, board_mid)))
+        digit, image = sample()
+        pixels = board(INPUT_Z, image, "white_concrete")  # 35 pixels, row by row
+        first = (NET_X - 4, TOP - 1, INPUT_Z + 5)
+        await self._arrive(drawer, first, board_mid, await self._fly(drawer, first, board_mid))
+        last: Optional[tuple] = first
+        for row in range(7):
+            y = TOP - 2 * row
+            hover = (NET_X - 4, y, INPUT_Z + 5)
+            await asyncio.sleep(await self._hop(drawer, hover, (NET_X, y, INPUT_Z + 5), last))
+            last = hover
+            for command in pixels[row * 5:(row + 1) * 5]:
+                await self.projects.place_one(command)
+                await asyncio.sleep(0.15)
+        out = (NET_X - 6, 16, LAYER_Z[2])
+        await asyncio.sleep(await self._hop(drawer, out, (NET_X, 16, LAYER_Z[2]), last))
+        await self.net_show.read(digit, image, drawn_by=self.names[drawer])
+        bx, by, bz = base
+        self.build_focus = (bx + NET_X, by + 16, bz + LAYER_Z[2])
+        await asyncio.sleep(6)  # let the guess sink in
+        progress = float(self.projects.state.get("progress", 0.0)) + (time.time() - started) / total
+        self.projects.state["progress"] = progress
+        self.projects._save()
+        if progress >= 1.0:
+            await self.projects.finish_timed()
 
     async def _fly(self, cid: str, view: tuple, focus: tuple) -> float:
         """Send her flying to `view` (base relative), looking at `focus`. Returns about how long it takes."""
@@ -1617,7 +1692,7 @@ CAMERA_GLIDE = (
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v5)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v6)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -1630,16 +1705,33 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v5)
             'cruise': {type: 'float', description: 'fly over this height', domain: [-64, 320]}
         },
         perform: runAsAction(async (agent, x, y, z, lx, ly, lz, cruise) => {
-            // Our own flight: mineflayer's flyTo waits for a move event that
-            // never comes while hovering, and cannot be interrupted.
+            // Our own flight (mineflayer's flyTo hangs and cannot be stopped).
+            // The head turns smoothly, a few degrees per tick: the stream
+            // camera looks through these eyes and a snap looks like lag.
             const bot = agent.bot;
             const Vec3 = bot.entity.position.constructor;
             if (bot.pathfinder) bot.pathfinder.stop();
             bot.clearControlStates();
             bot.creative.startFlying();
+            const look = new Vec3(lx, ly, lz);
+            const MAX_TURN = 0.11; // radians per tick, about 125 degrees a second
+            const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+            const turn = async () => {
+                const eye = bot.entity.position.offset(0, bot.entity.height || 1.62, 0);
+                const d = look.minus(eye);
+                const yaw = Math.atan2(-d.x, -d.z);
+                const pitch = Math.atan2(d.y, Math.sqrt(d.x * d.x + d.z * d.z));
+                const dy = wrap(yaw - bot.entity.yaw);
+                const dp = pitch - bot.entity.pitch;
+                const ny = bot.entity.yaw + Math.max(-MAX_TURN, Math.min(MAX_TURN, dy));
+                const np = bot.entity.pitch + Math.max(-MAX_TURN, Math.min(MAX_TURN, dp));
+                await bot.look(ny, np, true);
+                return Math.abs(dy) < 0.02 && Math.abs(dp) < 0.02;
+            };
             const p = bot.entity.position;
-            const top = Math.max(p.y + 1, y + 3, cruise);
-            const legs = [new Vec3(p.x, top, p.z), new Vec3(x, top, z), new Vec3(x, y, z)];
+            // cruise below -50: a short hop, straight there (laying blocks)
+            const legs = cruise <= -50 ? [new Vec3(x, y, z)]
+                : [new Vec3(p.x, Math.max(p.y + 1, y + 3, cruise), p.z), new Vec3(x, Math.max(p.y + 1, y + 3, cruise), z), new Vec3(x, y, z)];
             for (const target of legs) {
                 let best = Infinity;
                 let since = 0;
@@ -1653,11 +1745,16 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v5)
                     if (dist < best - 0.05) { best = dist; since = 0; } else if (++since > 20) break;
                     bot.entity.velocity = new Vec3(0, 0, 0);
                     bot.entity.position = bot.entity.position.plus(delta.scaled(Math.min(0.45, dist) / dist));
+                    await turn();
                     await new Promise((r) => setTimeout(r, 50));
                 }
             }
             bot.entity.velocity = new Vec3(0, 0, 0);
-            await bot.lookAt(new Vec3(lx, ly, lz), true);
+            for (let i = 0; i < 40; i++) {
+                if (bot.interrupt_code) return;
+                if (await turn()) break;
+                await new Promise((r) => setTimeout(r, 50));
+            }
             bot.swingArm('right');
         })
     },
