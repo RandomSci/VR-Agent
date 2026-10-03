@@ -503,8 +503,20 @@ class MinecraftEngine:
         prof = self.session.room.get(cid)
         if prof is not None:
             persona = re.sub(r"\s+", " ", getattr(prof, "persona", "") or "").strip()[:420]
+        if cid == self.cast[0]:
+            role = (
+                f"In the team you are the one with bold, chaotic ideas (a castle in the sky! fight that zombie!) "
+                f"and you hate being told no by {friend}. "
+            )
+        else:
+            role = (
+                f"In the team you are the practical one: question {friend}'s wild ideas, argue for the smarter plan, "
+                "and point out what you still need first (tools, food, shelter). "
+            )
         style = (
-            f"{persona} Right now you are LIVE on YouTube playing survival Minecraft with {friend}. "
+            f"{persona} Right now you are LIVE on YouTube playing survival Minecraft with {friend} in the same world. "
+            f"{role}Before starting anything new, argue it out with {friend} in a line or two each, settle it "
+            "(or let chat decide), then split the work and do it. "
             "Everything you write in chat is spoken out loud by your voice on stream, so write like you talk: "
             "one or two short, lively sentences with real personality and emotion, never lists, never robot talk, "
             "never call yourself a bot or an AI assistant. "

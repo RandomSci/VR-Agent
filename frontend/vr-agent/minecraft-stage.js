@@ -19,6 +19,11 @@
   const loaded = {}; // character id -> the view iframe was pointed at the bot
   let layoutTimer = 0;
   const bubbleTimers = {};
+  // One camera at a time (one 3D scene to draw): whoever talks gets it,
+  // held at least FOCUS_HOLD ms so it does not flicker between them.
+  let focus = "";
+  let focusAt = 0;
+  const FOCUS_HOLD = 15000;
 
   function build() {
     if (root) return;
@@ -30,6 +35,7 @@
     over.id = "mc-over";
     over.innerHTML = `
       <div id="mc-panes"></div>
+      <div id="mc-watch"></div>
       <div id="mc-chat"></div>
       <div id="mc-problem"></div>
       <div id="mc-status"></div>`;
@@ -62,6 +68,19 @@
     });
   }
 
+  function setFocus(id, force) {
+    if (!id || id === focus) return;
+    if (!force && Date.now() - focusAt < FOCUS_HOLD) return;
+    focus = id;
+    focusAt = Date.now();
+    document.querySelectorAll("#mc-views .mc-view").forEach((v) => v.classList.toggle("focus", v.dataset.who === id));
+    const watch = $("mc-watch");
+    if (watch) {
+      watch.textContent = `👀 ${names[id] || id}'s eyes`;
+      watch.className = `mc-${side(cast.indexOf(id))}`;
+    }
+  }
+
   function pane(id) { return document.querySelector(`#mc-panes .mc-pane[data-who="${id}"]`); }
   function viewPane(id) { return document.querySelector(`#mc-views .mc-view[data-who="${id}"]`); }
 
@@ -72,6 +91,9 @@
     ports = op.viewers || ports;
     document.documentElement.classList.add("minecraft-mode");
     views();
+    focus = "";
+    setFocus(cast[0], true);
+    focusAt = 0; // the first speaker may take the camera right away
     problem(op.problem);
     if (op.hud) hud(op.hud);
     clearInterval(layoutTimer);
@@ -119,6 +141,8 @@
       const p = pane(id);
       if (!p) continue;
       view(id);
+      // The watched one is not in the world (dead, restarting): show the other.
+      if (!seen[focus] || Date.now() - seen[focus] > 15000) setFocus(id, true);
       const hearts = Math.max(0, Math.min(10, Math.ceil((h.health || 0) / 2)));
       const food = Math.max(0, Math.min(10, Math.ceil((h.hunger || 0) / 2)));
       p.querySelector(".mc-hearts").textContent = "♥".repeat(hearts) + "♡".repeat(10 - hearts);
@@ -135,6 +159,7 @@
   function say(op) {
     const p = pane(op.who);
     if (!p) return;
+    if (seen[op.who] && Date.now() - seen[op.who] < 15000) setFocus(op.who);
     const bubble = p.querySelector(".mc-bubble");
     bubble.textContent = op.text || "";
     bubble.classList.remove("show");

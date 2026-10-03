@@ -63,7 +63,14 @@ def _ini(path: Path):
 
 
 def _obs_dir() -> Optional[Path]:
-    return next((d for d in OBS_DIRS if d.is_dir()), None)
+    """The settings folder of the OBS actually in use: with both the normal and
+    the Flatpak OBS installed, the one OBS saved to most recently."""
+    def last_used(d: Path) -> float:
+        times = [p.stat().st_mtime for p in (d / "user.ini", d / "global.ini") if p.is_file()]
+        return max(times or [0.0])
+
+    found = [d for d in OBS_DIRS if d.is_dir()]
+    return max(found, key=last_used) if found else None
 
 
 def _settings_ini() -> Optional[Path]:
@@ -119,9 +126,15 @@ def prepare_obs_config(stream_key: str = "") -> None:
     # global.ini on new versions, config.json on old ones): server on, and the
     # password from .env when there is one, so both sides always agree.
     password = os.environ.get("OBS_WEBSOCKET_PASSWORD", "").strip()
-    base = _obs_dir()
+    for base in (d for d in OBS_DIRS if d.is_dir()):
+        _prepare_websocket(base, password)
+    if stream_key:
+        _write_stream_key(stream_key)
+
+
+def _prepare_websocket(base: Path, password: str) -> None:
     for name in ("user.ini", "global.ini"):
-        path = base / name if base else None
+        path = base / name
         if not (path and path.is_file()):
             continue
         ini = _ini(path)
@@ -139,8 +152,8 @@ def prepare_obs_config(stream_key: str = "") -> None:
                 logger.info(f"OBS: WebSocket settings checked ({name})")
             except Exception as exc:
                 logger.warning(f"OBS: could not update {name}: {exc}")
-    legacy = base / "plugin_config/obs-websocket/config.json" if base else None
-    if legacy and legacy.is_file():
+    legacy = base / "plugin_config/obs-websocket/config.json"
+    if legacy.is_file():
         try:
             config = json.loads(legacy.read_text())
             if not config.get("server_enabled") or (password and config.get("server_password") != password):
@@ -149,11 +162,9 @@ def prepare_obs_config(stream_key: str = "") -> None:
                     config["server_password"] = password
                     config["auth_required"] = True
                 legacy.write_text(json.dumps(config, indent=4))
-                logger.info("OBS: WebSocket settings checked (config.json)")
+                logger.info(f"OBS: WebSocket settings checked ({legacy})")
         except Exception as exc:
             logger.warning(f"OBS: could not update config.json: {exc}")
-    if stream_key:
-        _write_stream_key(stream_key)
 
 
 def _profile_dir() -> Optional[Path]:
@@ -273,8 +284,9 @@ class OBS:
 def _passwords() -> list[str]:
     """Every password worth trying: .env first, then OBS's own settings files."""
     found = [os.environ.get("OBS_WEBSOCKET_PASSWORD", "").strip()]
-    base = _obs_dir()
-    if base:
+    # Every OBS install: the normal one and the Flatpak one can both exist,
+    # and the running OBS may be either.
+    for base in (d for d in OBS_DIRS if d.is_dir()):
         for name in ("user.ini", "global.ini"):
             path = base / name
             if path.is_file():

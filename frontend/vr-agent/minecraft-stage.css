@@ -8,12 +8,15 @@ html.minecraft-mode #mc-stage { display: block; position: fixed; inset: 0; z-ind
 html.minecraft-mode #mc-over { display: block; position: fixed; inset: 0; z-index: 6; pointer-events: none;
   font-family: Nunito, Quicksand, "DejaVu Sans", "Liberation Sans", sans-serif; color: #fff; }
 
-#mc-views { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: #0b0f17; }
-.mc-view { position: relative; overflow: hidden; background: radial-gradient(900px 600px at 50% 30%, #253a5e, #0b0f17); }
-/* The 3D views draw at 60% size and are scaled up: about a third of the pixels,
-   so the integrated GPU keeps up (Minecraft's blocky look hides the scaling). */
-.mc-view iframe { position: absolute; left: 0; top: 0; width: 60%; height: 60%; border: 0; opacity: 0;
-  transform: scale(1.6667); transform-origin: 0 0; transition: opacity 1.2s; }
+/* One full screen camera: the bot who talks is shown, the other view is
+   hidden (a hidden frame is not drawn, so only one 3D scene costs GPU). */
+#mc-views { position: absolute; inset: 0; background: #0b0f17; }
+.mc-view { position: absolute; inset: 0; overflow: hidden; display: none;
+  background: radial-gradient(900px 600px at 50% 30%, #253a5e, #0b0f17); }
+.mc-view.focus { display: block; }
+/* drawn at half size and scaled up: a quarter of the pixels, the blocky look hides it */
+.mc-view iframe { position: absolute; left: 0; top: 0; width: 50%; height: 50%; border: 0; opacity: 0;
+  transform: scale(2); transform-origin: 0 0; transition: opacity 1.2s; }
 .mc-view.live iframe { opacity: 1; }
 .mc-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1vh;
   font-weight: 800; font-size: clamp(16px, 1.6vw, 32px); color: #cfe0ff; }
@@ -21,6 +24,10 @@ html.minecraft-mode #mc-over { display: block; position: fixed; inset: 0; z-inde
 .mc-view.live .mc-wait { display: none; }
 
 #mc-panes { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+#mc-watch { position: absolute; bottom: 3vh; padding: .6vh 1vw; border-radius: 12px; background: #0b0f17c8;
+  font-weight: 900; font-size: clamp(12px, 1.05vw, 22px); color: #fff; }
+#mc-watch:empty { display: none; }
+#mc-watch.mc-left { left: 22vw; } #mc-watch.mc-right { right: 22vw; }
 .mc-pane { position: relative; }
 .mc-tag { position: absolute; top: 1.6vh; display: flex; align-items: center; gap: .8vw; padding: .7vh 1vw; border-radius: 14px;
   background: #0b0f17c8; box-shadow: 0 6px 20px #0006; font-weight: 900; font-size: clamp(14px, 1.3vw, 26px); white-space: nowrap; }
