@@ -85,6 +85,8 @@ def test_a_viewer_build_is_laid_by_hand_in_front_of_the_camera(monkeypatch):
 
         async def fake_rcon(cmd, reply=False):
             rcon.append(cmd)
+            if cmd.startswith("execute unless block"):  # the ground is at y 63
+                return "Test passed" if int(cmd.split()[4]) <= 63 else "Test failed"
             return "ok"
 
         async def command(cid, text):
@@ -125,9 +127,12 @@ def test_a_viewer_build_is_laid_by_hand_in_front_of_the_camera(monkeypatch):
         assert not placed  # nothing just appeared
         assert len(sets) == len(set(sets)) == expected  # every block once, each on a swing
         assert {c for c, _t in lays} == {"mika", "luna"}  # both build
-        # in front of her (south, +z), not behind
+        # on its own plot, south of the big projects, on the ground (y 64 up)
         zs = [int(c.split()[3]) for c in sets]
-        assert min(zs) >= 6
+        ys = [int(c.split()[2]) for c in sets]
+        assert min(zs) >= mm.PLOTS_Z - 1 and min(ys) >= 64
+        assert any(c.startswith("fill ") and c.endswith("minecraft:air") for c in rcon)  # the plot was cleared first
+        assert eng.projects.state["plots"] == 1
         assert "MathUnlockedYT" in eng._memory_text() and "finished" in eng._memory_text()
         assert any(op.get("kind") == "project_done" for op in eng.pushed)
 
@@ -223,3 +228,34 @@ def test_answers_know_what_they_can_really_do(monkeypatch):
     system, _user = eng._reply_prompt("mika", "Viewer", "can you dig?", [])
     assert "dig holes" in system and "TNT" in system and "cannot fight" in system
     assert "Never pretend" in system
+
+
+
+def test_a_flower_garden_is_a_real_garden(monkeypatch):
+    design = fb.parse_design(json.dumps({"title": "Flower Garden", "template": "garden", "size": "medium",
+                                         "main": "stone_bricks", "accent": "gravel", "sky": False, "text": None}))
+    blocks = fb.blocks_of(design)
+    kinds = {b for _p, b in blocks}
+    assert len(blocks) > 300  # not three blocks
+    assert {"grass_block", "water", "lantern", "oak_fence"} <= kinds
+    assert len(kinds & {f for fl in fb_templates().FLOWERS.values() for f in fl}) >= 5  # many kinds of flowers
+    # bottom up: the lawn goes in before the flowers that stand on it
+    order = [p for p, b in blocks]
+    assert order.index((0, 0, 0)) < min(i for i, (p, b) in enumerate(blocks) if b in ("poppy", "cornflower", "pink_tulip",
+                                                                                         "dandelion", "allium"))
+
+
+def fb_templates():
+    from src.open_llm_vtuber.room import minecraft_templates
+
+    return minecraft_templates
+
+
+def test_a_sky_castle_floats_with_the_name_on_it():
+    design = fb.parse_design(json.dumps({"title": "Sky castle", "template": "castle", "size": "medium",
+                                         "main": "quartz_block", "accent": "stone_bricks", "sky": True,
+                                         "text": {"words": "Selwyn", "block": "gold_block"}}))
+    blocks = fb.blocks_of(design)
+    assert min(p[1] for p, _b in blocks) >= 8  # floating
+    assert sum(1 for _p, b in blocks if b == "gold_block") > 30  # SELWYN in gold
+    assert len(blocks) <= fb.MAX_TEMPLATE_BLOCKS

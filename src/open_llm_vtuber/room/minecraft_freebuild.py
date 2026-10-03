@@ -19,25 +19,36 @@ from typing import Any, Optional
 from loguru import logger
 
 from .minecraft_fun import NO_ITEMS
+from .minecraft_templates import DEFAULT_COLOURS, SIZES, TEMPLATES, footprint
+from .minecraft_templates import build as make_template
 
 SIZE_X = 10  # x from -10 to 10
 SIZE_Y = 24
 DIG_Y = -10  # holes go this deep at most
 SIZE_Z = 20
 MAX_PARTS = 30
-MAX_BLOCKS = 700  # about a minute and a half for both girls by hand
+MAX_BLOCKS = 700  # a free design: about two minutes for both girls by hand
+MAX_TEMPLATE_BLOCKS = 1400  # a castle: about four minutes, every block by hand
 LAYER_RUNS = 40  # blocks per piece (one piece = one hop to a new spot)
 BLOCK_ID = re.compile(r"^[a-z0-9_]{2,40}$")
 FALLBACK_BLOCK = "stone_bricks"
 
 DESIGN_SYSTEM = (
-    "You design ONE small Minecraft build that two players lay block by block, live on stream. "
+    "You plan ONE Minecraft build that two players lay block by block, live on stream. "
+    "FIRST choose a template when it fits: garden (any garden, park, flower field), house (house, cottage, hut, "
+    "home, shop), tower (tower, lighthouse, watchtower), castle (castle, fort, palace). Then answer ONLY JSON: "
+    '{"title": "short name", "template": "garden", "size": "small" or "medium" or "large", "main": "block id for '
+    'walls", "accent": "block id for floors, roofs, details", "sky": true when it should float (sky, flying, '
+    'cloud), "text": {"words": "SELWYN", "block": "gold_block"} or null}. '
+    "The template adds all the details (paths, flowers, windows, roofs, battlements, lanterns): just pick nice, "
+    "matching blocks. Use template \"custom\" only when nothing fits, and then also give parts as below, with real "
+    "detail (a statue has a head, arms and colours; a bridge has railings and lanterns), at least 80 blocks unless "
+    "they asked for one or two blocks. "
+    "Custom parts: "
     f"Coordinates are relative: x is left (-) / right (+) from -{SIZE_X} to {SIZE_X}, y is up from the ground "
     f"(0 = the first layer of air above the ground, -1 = the ground itself) from {DIG_Y} up to {SIZE_Y}, z is "
     f"forward, away from the builders, from 0 to {SIZE_Z}. "
-    'Answer ONLY with JSON: {"title": "short name", "parts": [{"from": [x, y, z], "to": [x, y, z], '
-    '"block": "stone_bricks", "shape": "solid" or "walls"}], "text": {"words": "SELWYN", "block": "gold_block", '
-    '"y": 6, "z": 0} or null}. '
+    '"parts": [{"from": [x, y, z], "to": [x, y, z], "block": "stone_bricks", "shape": "solid" or "walls"}]. '
     f"Rules: at most {MAX_PARTS} parts, ordered bottom to top; real Minecraft block ids only (no tnt, lava, fire, "
     'command blocks); "walls" is a hollow box with four sides (rooms, towers, keeps), "solid" is filled (floors, '
     f"platforms, roofs, pillars); fewer than {MAX_BLOCKS} blocks in all. A small request stays small: one block is "
@@ -113,11 +124,20 @@ def parse_design(raw: str) -> Optional[dict[str, Any]]:
         parts.append({"from": lo, "to": hi, "block": block_id(part.get("block")), "shape": shape})
     text = data.get("text") if isinstance(data.get("text"), dict) else None
     words = re.sub(r"[^A-Z0-9 ]", "", str((text or {}).get("words", "")).upper())[:10].strip()
-    if not parts and not words:
+    template = str(data.get("template") or "").lower().strip()
+    if template not in TEMPLATES:
+        template = ""
+    if not parts and not words and not template:
         return None
+    main, accent = DEFAULT_COLOURS.get(template, ("stone_bricks", "polished_andesite"))
     return {
         "title": str(data.get("title") or "A build for chat")[:40],
-        "parts": parts,
+        "template": template,
+        "size": str(data.get("size") or "medium").lower() if str(data.get("size") or "").lower() in SIZES else "medium",
+        "main": block_id(data.get("main")) if data.get("main") and block_id(data.get("main")) != "air" else main,
+        "accent": block_id(data.get("accent")) if data.get("accent") and block_id(data.get("accent")) != "air" else accent,
+        "sky": bool(data.get("sky")),
+        "parts": parts if not template else [],
         "text": {
             "words": words,
             "block": block_id((text or {}).get("block") or "gold_block"),
@@ -128,10 +148,14 @@ def parse_design(raw: str) -> Optional[dict[str, Any]]:
 
 
 def blocks_of(design: dict[str, Any]) -> list[tuple[tuple[int, int, int], str]]:
-    """Every block of the design, relative, in laying order (bottom up, then
-    the letters), each spot once."""
+    """Every block of the design, relative, in laying order (digging top
+    down first, then building bottom up), each spot once."""
     out: dict[tuple[int, int, int], str] = {}
-    for part in design["parts"]:
+    if design.get("template"):
+        out.update(make_template(design["template"], design.get("size", "medium"), design.get("main", "stone_bricks"),
+                                 design.get("accent", "polished_andesite"), sky=design.get("sky", False),
+                                 seed=sum(map(ord, design.get("title", "")))))
+    for part in design.get("parts") or []:
         (x1, y1, z1), (x2, y2, z2) = part["from"], part["to"]
         for y in range(y1, y2 + 1):
             for z in range(z1, z2 + 1):
@@ -140,6 +164,11 @@ def blocks_of(design: dict[str, Any]) -> list[tuple[tuple[int, int, int], str]]:
                         continue  # a hollow room: only its four sides
                     out[(x, y, z)] = part["block"]
     text = design.get("text")
+    if text and design.get("template") and out:
+        # the name where everyone sees it: above the front of a tall build,
+        # standing behind a low one
+        x1, x2, z1, z2, top = footprint(out)
+        text = dict(text, y=top + 2, z=z1) if top > 8 else dict(text, y=1, z=z2 + 3)
     if text:
         words = text["words"]
         width = len(words) * 4 - 1
@@ -153,7 +182,11 @@ def blocks_of(design: dict[str, Any]) -> list[tuple[tuple[int, int, int], str]]:
                         out[(left + i * 4 + c, text["y"] + 4 - r, text["z"] - 1)] = text["block"]
     digs = sorted(((p, b) for p, b in out.items() if b == "air"), key=lambda kv: (-kv[0][1], kv[0][2], kv[0][0]))
     builds = sorted(((p, b) for p, b in out.items() if b != "air"), key=lambda kv: (kv[0][1], kv[0][2], kv[0][0]))
-    return (digs + builds)[:MAX_BLOCKS]
+    return (digs + builds)[:MAX_TEMPLATE_BLOCKS if design.get("template") else MAX_BLOCKS]
+
+
+def footprint_of(spots: dict[tuple[int, int, int], str]) -> tuple[int, int, int, int, int]:
+    return footprint(spots)
 
 
 def to_world(rel: tuple[int, int, int], forward: tuple[int, int]) -> tuple[int, int, int]:
@@ -234,7 +267,7 @@ async def design(llm: Any, model: str, request: str, who: str) -> Optional[dict[
         return None
     try:
         response = await llm.chat.completions.create(
-            model=model,
+            model=os.environ.get("VR_MINECRAFT_DESIGN_MODEL", "").strip() or DESIGN_MODEL,
             messages=[
                 {"role": "system", "content": DESIGN_SYSTEM},
                 {"role": "user", "content": f"{who} asked: {request}"},
@@ -249,6 +282,7 @@ async def design(llm: Any, model: str, request: str, who: str) -> Optional[dict[
         return None
 
 
+DESIGN_MODEL = "gpt-4o"  # one call per build (about 1 cent): much better designs than the mini model
 BUILD_ASK = re.compile(r"\b(build|place|put|construct|dig|make (?:me |us )?an?)\b", re.I)
 
 

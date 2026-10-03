@@ -588,7 +588,7 @@ class ProjectTracker:
     def view(self) -> dict[str, Any]:
         now = self.current()
         if now is None:
-            return {"title": "🌟 Everything is built!", "step": "Free play", "progress": 1.0, "steps": []}
+            return {"title": "🛠️ Free building", "step": 'chat decides: type "build ..."', "progress": 1.0, "steps": []}
         project, milestone = now
         m = int(self.state.get("milestone", 0))
         return {

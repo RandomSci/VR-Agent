@@ -528,6 +528,7 @@ class MinecraftEngine:
         self._looking: dict[str, tuple[float, float, float]] = {}  # x, z she was told to look at, when
         self._trail: dict[str, tuple[float, float, float]] = {}  # an earlier position (movement direction)
         self._free_lock = asyncio.Lock()
+        self._daylight_set = False
         self._free_busy = False
         self._free_waiting = 0
         self._jobs: dict[int, dict[str, Any]] = {}  # runs being laid by hand
@@ -1424,6 +1425,11 @@ class MinecraftEngine:
                 if not await self.projects.ensure_loaded():
                     await asyncio.sleep(10)  # no server console yet
                     continue
+                if not self._daylight_set and os.environ.get("VR_MINECRAFT_DAYLIGHT", "1").strip() not in ("0", "false", "off", "no"):
+                    self._daylight_set = True  # a dark night stream is hard to watch
+                    for command in ("time set day", "gamerule doDaylightCycle false", "weather clear",
+                                    "gamerule doWeatherCycle false"):
+                        await rcon_command(command)
                 if self.projects.timed():
                     await self._teach_round(here)
                     continue
@@ -2092,11 +2098,9 @@ class MinecraftEngine:
 
     async def _free_build_now(self, fb: Any, request: str, who: str) -> None:
         base = self.projects.state.get("base")
-        eyes = self.cam_focus if self.cam_focus in self.cast else self.cast[0]
         here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 15 and c in self._pos]
         if not base or not here or not await self.projects.ensure_loaded():
             return
-        anchor = eyes if eyes in here else here[0]
         key = (os.environ.get("OPENAI_API_KEY") or "").strip()
         if key and self._llm is None:
             from openai import AsyncOpenAI
@@ -2108,12 +2112,26 @@ class MinecraftEngine:
                 await self.link.emit("send-message", self.names[c], {"from": "system", "message": (
                     f"The build {who} asked for could not be planned right now. Say so honestly and ask for something simpler.")})
             return
-        ax, ay, az = self._pos[anchor]
-        forward = fb.cardinal(*self._facing(anchor))
-        ground = int(base[1]) if abs(ay - base[1]) < 12 else int(math.floor(ay))
-        origin = (int(math.floor(ax)) + forward[0] * 6, ground, int(math.floor(az)) + forward[1] * 6)
+        # Its own plot, outside the area of the big projects (the last one was
+        # built inside the network wall, where nobody could see it).
+        forward = (0, 1)
+        spots = dict(fb.blocks_of(plan))
+        x1, x2, z1, z2, top = fb.footprint_of(spots)
+        index = int(self.projects.state.get("plots", 0))
+        px, pz = PLOTS_X[index % len(PLOTS_X)], PLOTS_Z + (index // len(PLOTS_X)) * PLOT_STEP
+        self.projects.state["plots"] = index + 1
+        self.projects._save()
+        gx, gz = int(base[0]) + px, int(base[2]) + pz
+        ground = await ground_height(gx, gz + (z2 - z1) // 2, int(base[1]))
+        origin = (gx, ground, gz)
+        await self._level_plot(origin, (x1, x2, z1, z2, top), digs=any(b == "air" for b in spots.values()))
         steps = fb.pieces(plan, origin, tuple(base), forward)
         title = plan["title"]
+        # both fly to the plot first, a little in front of it and above
+        front = (px, ground - base[1] + 6, pz - 8)
+        middle = (px, ground - base[1] + 2, pz + (z2 - z1) // 2)
+        flights = await asyncio.gather(*(self._fly(c, front, middle) for c in here))
+        await asyncio.gather(*(self._arrive(c, front, middle, t) for c, t in zip(here, flights)))
         total = sum(len(lay(c)) for st in steps for c in st["commands"]) or 1
         logger.info(f"Minecraft: building '{title}' for {who} by hand ({len(steps)} pieces)")
         self._remember(f"{' and '.join(self.names[c] for c in here)} started building {title} for {who}")
@@ -2141,6 +2159,19 @@ class MinecraftEngine:
             await self.link.emit("send-message", self.names[c], {"from": "system", "message": (
                 f"{title} for {who} is finished! Show it off in one line.")})
         await self._push({"kind": "project", **self.projects.view()})
+
+    async def _level_plot(self, origin: tuple[int, int, int], box: tuple[int, int, int, int, int], digs: bool) -> None:
+        """Get the plot ready (this part is instant, like clearing a site): the
+        space above the ground is emptied (sand hills, trees) and the ground
+        under the build is made flat grass. The building itself is by hand."""
+        ox, oy, oz = origin
+        x1, x2, z1, z2, top = box
+        a, b = ox + x1 - 1, ox + x2 + 1
+        c, d = oz + z1 - 1, oz + z2 + 1
+        await rcon_command(f"fill {a} {oy} {c} {b} {oy + max(top, 4) + 3} {d} minecraft:air", reply=True)
+        if not digs:
+            await rcon_command(f"fill {a} {oy - 1} {c} {b} {oy - 1} {d} minecraft:grass_block", reply=True)
+            await rcon_command(f"fill {a} {oy - 3} {c} {b} {oy - 2} {d} minecraft:dirt", reply=True)
 
     def _exclaim(self, cid: str, kind: str, info: Optional[dict[str, Any]] = None) -> None:
         """A loud, quick reaction at a big moment, said by the engine (no AI call)."""
@@ -2383,6 +2414,27 @@ class MinecraftEngine:
 # ---------------------------------------------------------------------------
 # setup checks and process files
 # ---------------------------------------------------------------------------
+# Plots for builds chat asks for: south of the big projects (which end 32
+# blocks south of the base), three in a row, then the next row.
+PLOTS_X = (-20, 10, 40)
+PLOTS_Z = 44
+PLOT_STEP = 36
+
+
+async def ground_height(x: int, z: int, near: int) -> int:
+    """The first free height above the ground at x, z, searched from near+30
+    down (trees do not count as ground). Silent: a test, nothing in chat."""
+    for y in range(near + 30, near - 30, -1):
+        reply = await rcon_command(
+            f"execute unless block {x} {y} {z} minecraft:air unless block {x} {y} {z} #minecraft:leaves "
+            f"unless block {x} {y} {z} #minecraft:logs", reply=True)
+        if not isinstance(reply, str):
+            return near
+        if "passed" in reply.lower():
+            return y + 1
+    return near
+
+
 def _soon(coro: Any) -> None:
     """Send this to the Stage when there is a running loop (tests: dropped)."""
     try:
