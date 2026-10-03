@@ -272,6 +272,7 @@ class MinecraftEngine:
         self._health: dict[str, int] = {}
         self._state_at = 0.0
         self._seen_at: dict[str, float] = {}
+        self._spoke_at: dict[str, float] = {}
         self._pos: dict[str, tuple[float, float, float]] = {}
         self._apart_since = 0.0
         self._anchor: dict[str, tuple[float, float, float, float]] = {}  # x, y, z, since
@@ -457,7 +458,6 @@ class MinecraftEngine:
                 await asyncio.to_thread(stop_one, "mindcraft", 10.0)
             backoff = 5.0 if time.time() - started > 120 else min(backoff * 2, 120.0)
             logger.warning(f"Minecraft: {name} stopped (exit {code}), starting again in {backoff:.0f}s")
-            await self._push({"kind": "status", "text": f"{name} restarting"})
             await asyncio.sleep(backoff)
 
     async def _keep_server(self) -> None:
@@ -469,6 +469,7 @@ class MinecraftEngine:
     async def _launch_server(self) -> Any:
         LOG_DIR.mkdir(exist_ok=True)
         set_difficulty(self.difficulty)
+        enable_rcon()
         log = open(LOG_DIR / "minecraft-server.log", "ab")
         proc = await asyncio.create_subprocess_exec(
             "java", f"-Xms{self.ram}", f"-Xmx{self.ram}", "-jar", "server.jar", "nogui",
@@ -500,7 +501,7 @@ class MinecraftEngine:
             "load_memory": True,
             "init_message": (
                 f"You just logged in. You ({other}) are live on YouTube playing survival Minecraft as a team. "
-                f"Say hi to your friend in one short line, then walk to her with !goToPlayer and set your goal with !goal. "
+                f"You are standing next to each other. Say hi to your friend in one short line, then set your goal with !goal. "
                 f"Stay close to each other the whole time, split the work (one gathers wood, the other stone and food), "
                 f"share items with !givePlayer and build ONE shared base together. Your long term goal: {self.goal}"
             ),
@@ -544,7 +545,7 @@ class MinecraftEngine:
             "never call yourself a bot or an AI assistant. "
             f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by name, "
             "react to them, and do what they ask when it is fun and possible, but you decide. "
-            f"You and {friend} are a team: stay within about 15 blocks of her (use !goToPlayer when you drift apart), "
+            f"You and {friend} are a team: stay near her, "
             "split the work, give her items she needs, and build one shared base. "
             f"Banter with {friend} often, tease and help each other, celebrate finds and complain when things go wrong. "
             "Use commands right away when you act. "
@@ -606,6 +607,14 @@ class MinecraftEngine:
                 continue
             now = time.time()
             missing = [c for c in self.cast if now - max(self._seen_at.get(c, 0), since) > 120]
+            if missing:
+                # Ask the server who is really online before restarting both.
+                online = await rcon_online()
+                if online is not None:
+                    missing = [c for c in missing if self.names[c].lower() not in online]
+                    if not missing:
+                        since = time.time()
+                        continue
             if missing:
                 names = " and ".join(self.names[c] for c in missing)
                 logger.warning(f"Minecraft: {names} left the world, restarting Mindcraft")
@@ -717,11 +726,21 @@ class MinecraftEngine:
             self._apart_since = 0.0
             return
         self._apart_since = self._apart_since or now
-        if now - self._apart_since < 30 or now - self._nudged_at < 60:
+        if now - self._apart_since < 20 or now - self._nudged_at < 45:
             return
         self._nudged_at = now
-        self.turn += 1
-        mover, friend = (a, b) if self.turn % 2 else (b, a)
+        # The one who spoke least recently moves (most likely not on camera).
+        mover, friend = (a, b) if self._spoke_at.get(a, 0) <= self._spoke_at.get(b, 0) else (b, a)
+        # Walking back across a desert took Luna the whole stream; a teleport
+        # takes one second and keeps the show on the two of them together.
+        if await rcon_command(f"tp {self.names[mover]} {self.names[friend]}"):
+            logger.info(f"Minecraft: {self.names[mover]} teleported to {self.names[friend]}")
+            await self.link.emit(
+                "send-message",
+                self.names[mover],
+                {"from": "system", "message": f"You were just teleported next to {self.names[friend]}. Say something to her and keep working together."},
+            )
+            return
         await self.link.emit(
             "send-message",
             self.names[mover],
@@ -777,6 +796,7 @@ class MinecraftEngine:
         if mood:
             await self._react(cid, mood)
         self.speaking = cid
+        self._spoke_at[cid] = time.time()
         try:
             for chunk in chunks(text):
                 await self._push({"kind": "say", "who": cid, "text": chunk})
@@ -878,6 +898,28 @@ VIEWER_SMOOTH = """    // VR Agent: the camera turns smoothly instead of snappin
 """
 
 
+# The viewer page itself: the camera used to jump to every position update
+# (they come in bursts while the bot thinks), which looks like stop and go.
+# Now it glides toward the latest position and turn on every drawn frame.
+CAMERA_ORIGINAL = (
+    'setFirstPersonCamera(t,e,i){if(t){let e=t.y+this.playerHeight;this.isSneaking&&(e-=.3),'
+    'new r.Tween(this.camera.position).to({x:t.x,y:e,z:t.z},50).start()}this.camera.rotation.set(i,e,0,"ZYX")}'
+)
+CAMERA_GLIDE = (
+    "setFirstPersonCamera(t,e,i){/*VR Agent glide*/const c=this.camera;"
+    "if(t){let y=t.y+this.playerHeight;this.isSneaking&&(y-=.3);"
+    "if(!this._ct)c.position.set(t.x,y,t.z);this._ct={x:t.x,y:y,z:t.z}}"
+    'if(!this._cr)c.rotation.set(i,e,0,"ZYX");this._cr={p:i,y:e};'
+    "if(!this._cl){this._cl=1;let last=performance.now();const step=(now)=>{"
+    "const dt=Math.min(.1,(now-last)/1e3);last=now;const k=1-Math.exp(-dt*5);"
+    "if(this._ct){c.position.x+=(this._ct.x-c.position.x)*k;c.position.y+=(this._ct.y-c.position.y)*k;"
+    "c.position.z+=(this._ct.z-c.position.z)*k}"
+    "let d=this._cr.y-c.rotation.y;d=Math.atan2(Math.sin(d),Math.cos(d));"
+    'c.rotation.set(c.rotation.x+(this._cr.p-c.rotation.x)*k,c.rotation.y+d*k,0,"ZYX");'
+    "requestAnimationFrame(step)};requestAnimationFrame(step)}}"
+)
+
+
 def patch_mindcraft() -> list[str]:
     """Small, repeatable edits to Mindcraft's packages (safe to run every start).
 
@@ -889,6 +931,7 @@ def patch_mindcraft() -> list[str]:
     done: list[str] = []
     edits = [
         (MINDCRAFT_DIR / "node_modules/prismarine-viewer/lib/mineflayer.js", VIEWER_ORIGINAL, VIEWER_SMOOTH),
+        (MINDCRAFT_DIR / "node_modules/prismarine-viewer/public/index.js", CAMERA_ORIGINAL, CAMERA_GLIDE),
         (
             MINDCRAFT_DIR / "node_modules/prismarine-viewer/lib/mineflayer.js",
             "  http.listen(port, () => {",
@@ -962,6 +1005,96 @@ def _default_conversing() -> str:
         return str(data.get("conversing") or "")
     except Exception:
         return ""
+
+
+RCON_PORT = 25575
+
+
+def _rcon_password() -> str:
+    path = RUNTIME_DIR / "rcon.txt"
+    try:
+        return path.read_text().strip()
+    except Exception:
+        import secrets
+
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        password = secrets.token_hex(12)
+        path.write_text(password)
+        return password
+
+
+def _set_properties(values: dict[str, str]) -> None:
+    path = SERVER_DIR / "server.properties"
+    try:
+        lines = path.read_text().splitlines()
+    except Exception:
+        return
+    seen = set()
+    out = []
+    for line in lines:
+        key = line.split("=", 1)[0]
+        if key in values:
+            out.append(f"{key}={values[key]}")
+            seen.add(key)
+        else:
+            out.append(line)
+    out += [f"{k}={v}" for k, v in values.items() if k not in seen]
+    path.write_text("\n".join(out) + "\n")
+
+
+def enable_rcon() -> None:
+    """Server console over the network, local only, for teleports."""
+    _set_properties({
+        "enable-rcon": "true",
+        "rcon.port": str(RCON_PORT),
+        "rcon.password": _rcon_password(),
+        "broadcast-rcon-to-ops": "false",
+    })
+
+
+async def rcon_online() -> Optional[set[str]]:
+    """Lower case names of the players online, or None without RCON."""
+    text = await rcon_command("list", reply=True)
+    if not isinstance(text, str):
+        return None
+    names = text.split(":", 1)[1] if ":" in text else ""
+    return {n.strip().lower() for n in names.split(",") if n.strip()}
+
+
+async def rcon_command(command: str, reply: bool = False) -> Any:
+    """Run one server command. False when the server has no RCON (yet)."""
+    import struct
+
+    def packet(pid: int, kind: int, body: str) -> bytes:
+        data = struct.pack("<ii", pid, kind) + body.encode() + b"\x00\x00"
+        return struct.pack("<i", len(data)) + data
+
+    async def read(reader: Any) -> tuple[int, str]:
+        size = struct.unpack("<i", await reader.readexactly(4))[0]
+        data = await reader.readexactly(size)
+        pid = struct.unpack("<i", data[:4])[0]
+        return pid, data[8:-2].decode("utf-8", "replace")
+
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", RCON_PORT), timeout=2)
+    except Exception:
+        return False
+    try:
+        writer.write(packet(1, 3, _rcon_password()))
+        await writer.drain()
+        pid, _body = await asyncio.wait_for(read(reader), timeout=3)
+        if pid == -1:
+            logger.warning("Minecraft: the server refused the RCON password")
+            return False
+        writer.write(packet(2, 2, command))
+        await writer.drain()
+        _pid, body = await asyncio.wait_for(read(reader), timeout=3)
+        return body if reply else True
+    except Exception as exc:
+        logger.debug(f"Minecraft: RCON failed: {exc}")
+        return False
+    finally:
+        writer.close()
 
 
 def set_difficulty(level: str) -> None:

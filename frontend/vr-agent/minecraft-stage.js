@@ -35,7 +35,6 @@
     over.id = "mc-over";
     over.innerHTML = `
       <div id="mc-panes"></div>
-      <div id="mc-watch"></div>
       <div id="mc-chat"></div>
       <div id="mc-problem"></div>
       <div id="mc-status"></div>`;
@@ -81,11 +80,7 @@
     }
     fresh(id);
     document.querySelectorAll("#mc-views .mc-view").forEach((v) => v.classList.toggle("focus", v.dataset.who === id));
-    const watch = $("mc-watch");
-    if (watch) {
-      watch.textContent = `👀 ${names[id] || id}'s eyes`;
-      watch.className = `mc-${side(cast.indexOf(id))}`;
-    }
+
   }
 
   function pane(id) { return document.querySelector(`#mc-panes .mc-pane[data-who="${id}"]`); }

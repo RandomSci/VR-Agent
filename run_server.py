@@ -202,7 +202,9 @@ class GoodbyeServer(uvicorn.Server):
         import time as _time
 
         if self._bye_task is not None and _time.time() - self._first_press < 12:
-            logger.info("Still ending the stream, one moment (Ctrl+C again after 12 s to force)")
+            if not getattr(self, "_told_wait", False):
+                self._told_wait = True
+                logger.info("Still ending the stream, one moment (Ctrl+C again after 12 s to force)")
             return
         if self.goodbye is None or self._bye_task is not None or self.should_exit:
             super().handle_exit(sig, frame)

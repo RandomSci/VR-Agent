@@ -47,6 +47,7 @@ class OBSError(RuntimeError):
 # OBS keeps its settings in files on this same computer. Since OBS 30 the
 # WebSocket password lives in user.ini (older: global.ini, then config.json),
 # so it is read from there and never has to be copied into .env.
+YOUTUBE_RTMPS = "rtmps://a.rtmps.youtube.com:443/live2"
 OBS_DIRS = (
     Path.home() / ".config/obs-studio",
     Path.home() / ".var/app/com.obsproject.Studio/config/obs-studio",
@@ -239,7 +240,7 @@ def _write_stream_key(key: str) -> None:
     if folder is None:
         logger.warning("OBS: profile folder not found, the stream key was not set")
         return
-    service = {"type": "rtmp_common", "settings": {"service": "YouTube - RTMPS", "server": "auto", "key": key}}
+    service = {"type": "rtmp_custom", "settings": {"server": YOUTUBE_RTMPS, "key": key}}
     try:
         (folder / "service.json").write_text(json.dumps(service, indent=4))
         logger.info(f"OBS: YouTube stream key set in profile '{folder.name}'")
@@ -532,8 +533,10 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
                 await obs.call(
                     "SetStreamServiceSettings",
                     {
-                        "streamServiceType": "rtmp_common",
-                        "streamServiceSettings": {"service": "YouTube - RTMPS", "server": "auto", "key": stream_key},
+                        # The YouTube address written out: "auto" set this way left
+                        # OBS "streaming" with nothing reaching YouTube.
+                        "streamServiceType": "rtmp_custom",
+                        "streamServiceSettings": {"server": YOUTUBE_RTMPS, "key": stream_key},
                     },
                 )
             except Exception as exc:
@@ -668,7 +671,16 @@ async def ensure_youtube_live(stream_key: str, timeout: float = 300.0) -> bool:
                         await call(client.transition, broadcast["id"], "live")
                         logger.info("YouTube: Go live sent")
                     except Exception as exc:
-                        logger.warning(f"YouTube: Go live refused: {str(exc)[:200]}")
+                        # "Invalid transition": YouTube wants the testing step first.
+                        logger.info(f"YouTube: Go live refused ({str(exc)[:80]}), trying testing first")
+                        try:
+                            await call(client.transition, broadcast["id"], "testing")
+                            await asyncio.sleep(15)
+                            await call(client.transition, broadcast["id"], "live")
+                            logger.info("YouTube: Go live sent after testing")
+                        except Exception as exc2:
+                            logger.warning(f"YouTube: Go live refused: {str(exc2)[:200]}")
+                            tried.discard(broadcast["id"])  # try again next round
                 elif not waiting and not created:
                     created = True
                     logger.warning("YouTube: no broadcast is waiting on the stream key, making a new one")
@@ -681,9 +693,6 @@ async def ensure_youtube_live(stream_key: str, timeout: float = 300.0) -> bool:
         await asyncio.sleep(20)
     logger.error("YouTube: still not live after 5 minutes. Open YouTube Studio and press Go live.")
     return False
-
-
-YOUTUBE_RTMPS = "rtmps://a.rtmps.youtube.com:443/live2"
 
 
 async def _really_streaming(obs: "OBS", seconds: float = 15) -> bool:
