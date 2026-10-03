@@ -90,10 +90,23 @@ if [ ! -d mindcraft/.git ]; then
     git clone "$MINDCRAFT_REPO" mindcraft
 fi
 ( cd mindcraft && git fetch -q origin "$MINDCRAFT_COMMIT" 2>/dev/null || true; git checkout -q "$MINDCRAFT_COMMIT" )
+# Mindcraft's fixes to mineflayer (digging, placing, item use) only fit 4.33.0,
+# so that exact version is installed and the fixes are applied again.
+MINEFLAYER="4.33.0"
 if [ ! -d mindcraft/node_modules ]; then
     say "Installing Mindcraft (a few minutes)"
-    ( cd mindcraft && npm install --no-audit --no-fund )
+    ( cd mindcraft && npm pkg set "dependencies.mineflayer=$MINEFLAYER" && npm install --no-audit --no-fund )
 fi
+have="$(cd mindcraft && node -p "require('./node_modules/mineflayer/package.json').version" 2>/dev/null || echo none)"
+if [ "$have" != "$MINEFLAYER" ]; then
+    say "Pinning mineflayer $MINEFLAYER (found $have)"
+    ( cd mindcraft && npm install --no-audit --no-fund --save-exact "mineflayer@$MINEFLAYER" )
+fi
+patched="$(cd mindcraft && npx --no-install patch-package 2>&1 || true)"
+case "$patched" in
+    *"mineflayer@$MINEFLAYER ✔"*) echo "Mindcraft fixes applied" ;;
+    *) echo "$patched"; echo "Mindcraft's mineflayer fixes did not apply. Send me the output above."; exit 1 ;;
+esac
 
 # ---------------------------------------------------------------- camera client
 python3 add_server.py || true
