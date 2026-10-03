@@ -418,7 +418,12 @@ def test_the_girls_choose_what_happens(monkeypatch):
         assert swapped.endswith("minecraft:quartz_block")
         assert eng.projects._swap("setblock {x0} {y5} {z9} minecraft:stone_brick_wall").endswith("stone_brick_wall")
         await eng._heard("Mika", "[VR] changeMaterial tnt")  # not allowed: told, nothing changes
-        assert eng.link.sent[-1][1]["message"].startswith("tnt cannot be used")
+        assert eng.link.sent[-1][1]["message"].startswith("tnt is not on the list")
+        # Nothing being built (training time / part done): a clear reason, not "cannot be used"
+        eng.projects.timed = lambda: True
+        await eng._heard("Mika", "[VR] changeMaterial birch_planks")
+        assert eng.link.sent[-1][1]["message"].startswith("Nothing is being built right now")
+        assert "Do not try other materials" in eng.link.sent[-1][1]["message"]
         profile = eng.profile("luna")["conversing"]
         assert "Selwyn Builds" in profile and "!flyToPlace" in profile
 
@@ -561,7 +566,7 @@ def test_hand_blocks_and_sounds():
 
 def test_lay_blocks_command_is_patched_in():
     assert "name: '!layBlocks'" in mm.FLY_COMMANDS and "[VR] put " in mm.FLY_COMMANDS
-    assert "(v8)" in mm.FLY_COMMANDS
+    assert "(v9)" in mm.FLY_COMMANDS
 
 
 def test_both_girls_never_get_the_same_spot(monkeypatch):
@@ -722,6 +727,6 @@ def test_a_wrong_guess_gets_an_argh(monkeypatch):
     eng = _engine()
     eng._exclaim("luna", "wrong", {"digit": 4, "guess": 9})
     text = eng.lines[0]["text"]
-    assert "4" in text and "9" in text and mm.pick_mood(text) in ("lose", "celebrate", "surprised")
+    assert "9" in text and "{" not in text  # the wrong guess, filled in
     eng._exclaim("mika", "done")  # too soon after the last one: quiet
     assert len(eng.lines) == 1

@@ -100,6 +100,7 @@ CHAT_MAX_AGE = 40.0  # a comment not answered by then is skipped (busy chat move
 ANSWER_BATCH = 3  # one spoken answer covers up to this many viewers
 BOT_BATCH = 4  # one message to a bot carries up to this many comments
 EXCLAIM_GAP = 20.0  # at most one engine exclamation this often
+ARRIVE_TELEPORT = 12.0  # farther than this from her spot after the flight: teleported there
 HAND_WAIT = 8.0  # seconds (plus some per block) for a run laid by hand before the rest just appears
 PART_DISTANCE = 4.5  # overlapping anyway: the other girl flies this far aside
 CHOICE_HOLD = 25.0  # after a girl flies somewhere herself, the builder leaves her alone this long
@@ -1473,6 +1474,10 @@ class MinecraftEngine:
         if verb == "buildNext":
             self._build_now = cid
             self._build_event.set()
+            if self.projects.timed():
+                await self.link.emit("send-message", name, {"from": "system", "message": (
+                    "Right now it is training time for the network, so there is no piece to build: you draw digits "
+                    "on its board instead. Do not say a piece is done.")})
         elif verb == "flyToPlace" and self.projects.state.get("base"):
             self._chose_at[cid] = time.time()
             if arg == "friend":
@@ -1493,11 +1498,22 @@ class MinecraftEngine:
                     "Not on the neural network: its colors show real weights and activations. "
                     "Pick materials again for the next project.")})
                 return
-            old = self.projects.set_material(arg)
-            note = (
-                f"Done: the rest of {self.projects.view().get('step', 'this part')} is built from {arg} instead of {old}."
-                if old else f"{arg} cannot be used here. Pick one of: {', '.join(sorted(MATERIALS)[:14])}."
-            )
+            block = arg.replace("minecraft:", "")
+            steps = [] if self.projects.timed() else self.projects.steps()
+            building = bool(steps) and int(self.projects.state.get("built", 0)) < len(steps)
+            old = self.projects.set_material(block) if building else ""
+            step = self.projects.view().get("step", "this part")
+            if old:
+                note = f"Done: the rest of {step} is built from {block} instead of {old}."
+            elif block not in MATERIALS:
+                note = f"{block} is not on the list. Pick one of: {', '.join(sorted(MATERIALS))}."
+            elif not building:
+                # The loop on stream: every pick refused, they kept trying others.
+                note = ("Nothing is being built right now (this part is finished or it is training time), so there is "
+                        "no material to change. Do not try other materials now: talk, test the network, or say "
+                        "!buildNext; pick a material when the next part starts.")
+            else:
+                note = f"This part is already built from {block}. Keep going!"
             await self.link.emit("send-message", name, {"from": "system", "message": note})
         elif verb == "testNetwork" and arg.isdigit():
             if not self.net_show.request(int(arg), name):
@@ -1526,15 +1542,16 @@ class MinecraftEngine:
             )})
 
     async def _arrive(self, cid: str, view: tuple, focus: tuple, flight: float) -> None:
-        """Wait for the flight; if a hill or a tree stopped her (players cannot
-        fly through blocks), put her there with a plain teleport."""
+        """Wait for the flight. She flies around blocks, never through them;
+        only when she is still far away (stuck, a crash) is she teleported,
+        and only into open air."""
         await asyncio.sleep(flight)
         bx, by, bz = self.projects.state["base"]
         # where she really flew to (her own side of the spot, see _own_spot)
         x, y, z = self._target.get(cid) or (bx + view[0], by + view[1], bz + view[2])
         here = self._pos.get(cid)
-        if here and ((here[0] - x) ** 2 + (here[1] - y) ** 2 + (here[2] - z) ** 2) ** 0.5 <= 3:
-            return
+        if here and ((here[0] - x) ** 2 + (here[1] - y) ** 2 + (here[2] - z) ** 2) ** 0.5 <= ARRIVE_TELEPORT:
+            return  # close enough: she flew as far as the blocks let her, no jump through walls
         # only into open air (never into a wall or into her friend)
         await rcon_command(
             f"execute positioned {x:.1f} {y:.1f} {z:.1f} if block ~ ~ ~ minecraft:air "
@@ -1544,7 +1561,7 @@ class MinecraftEngine:
         lx, ly, lz = bx + focus[0], by + focus[1], bz + focus[2]
         await self._command(cid, f"!flyTo({x:.1f}, {y:.1f}, {z:.1f}, {lx:.1f}, {ly:.1f}, {lz:.1f}, 0)")  # just to look
         await self._reload_view(cid)
-        logger.info(f"Minecraft: {self.names[cid]} was blocked on the way, teleported to her spot")
+        logger.info(f"Minecraft: {self.names[cid]} was stuck far from her spot, teleported there")
 
     async def _tell_one(self, text: str) -> None:
         """A note for one girl (whoever spoke least), so only one AI call answers it."""
@@ -1960,12 +1977,13 @@ CAMERA_GLIDE = (
 
 
 # Creative builders: the engine flies a girl to each spot she builds at (sent
-# from DIRECTOR, so it runs without an AI call). Up first, across, then down,
-# so the straight flight never cuts through the castle.
+# from DIRECTOR, so it runs without an AI call). She flies around blocks like
+# a player, never through them: a way through the air is planned first (A*),
+# and every step is checked against the blocks.
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v8)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v9)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -1979,16 +1997,22 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v8)
         },
         perform: runAsAction(async (agent, x, y, z, lx, ly, lz, cruise) => {
             // Our own flight (mineflayer's flyTo hangs and cannot be stopped).
-            // The head turns smoothly, a few degrees per tick: the stream
-            // camera looks through these eyes and a snap looks like lag.
+            // She flies AROUND blocks like a player: a way through the air is
+            // planned first (A* over free spots), every step is checked
+            // against the real block shapes, and she never moves into a
+            // block. The head turns smoothly (the stream camera looks through
+            // these eyes and a snap looks like lag).
             const bot = agent.bot;
             const Vec3 = bot.entity.position.constructor;
             if (bot.pathfinder) bot.pathfinder.stop();
             bot.clearControlStates();
             bot.creative.startFlying();
             const look = new Vec3(lx, ly, lz);
-            const FLY_STEP = 0.9; // blocks per tick, 18 a second: quick moves still read on a compressed stream
-            const MAX_TURN = 0.22; // radians per tick, about 250 degrees a second (fast reads better on stream)
+            const FLY_STEP = 0.9; // blocks per tick, 18 a second
+            const MAX_TURN = 0.22; // radians per tick
+            const HALF = 0.3; // half her width
+            const TALL = 1.8;
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
             const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
             const turn = async () => {
                 const eye = bot.entity.position.offset(0, bot.entity.height || 1.62, 0);
@@ -2002,32 +2026,173 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v8)
                 await bot.look(ny, np, true);
                 return Math.abs(dy) < 0.02 && Math.abs(dp) < 0.02;
             };
-            const p = bot.entity.position;
-            // cruise below -50: a short hop, straight there (laying blocks)
-            const legs = cruise <= -50 ? [new Vec3(x, y, z)]
-                : [new Vec3(p.x, Math.max(p.y + 1, y + 3, cruise), p.z), new Vec3(x, Math.max(p.y + 1, y + 3, cruise), z), new Vec3(x, y, z)];
-            for (const target of legs) {
-                let best = Infinity;
-                let since = 0;
-                for (let i = 0; i < 600; i++) {
-                    if (bot.interrupt_code) return;
-                    const delta = target.minus(bot.entity.position);
-                    const dist = Math.sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
-                    if (dist < 0.35) break;
-                    // a block in the way (a tree, a hill): the server keeps her
-                    // where she is, so stop trying this leg after a second
-                    if (dist < best - 0.05) { best = dist; since = 0; } else if (++since > 20) break;
-                    bot.entity.velocity = new Vec3(0, 0, 0);
-                    bot.entity.position = bot.entity.position.plus(delta.scaled(Math.min(FLY_STEP, dist) / dist));
-                    await turn();
-                    await new Promise((r) => setTimeout(r, 50));
+            // Does her body fit with her feet at p? (real block shapes: slabs, fences, stairs)
+            const fits = (p) => {
+                for (let bx = Math.floor(p.x - HALF); bx <= Math.floor(p.x + HALF - 1e-6); bx++) {
+                    for (let by = Math.floor(p.y - 0.5); by <= Math.floor(p.y + TALL - 1e-6); by++) {
+                        for (let bz = Math.floor(p.z - HALF); bz <= Math.floor(p.z + HALF - 1e-6); bz++) {
+                            const b = bot.blockAt(new Vec3(bx, by, bz));
+                            if (!b || b.boundingBox !== 'block') continue;
+                            const shapes = (b.shapes && b.shapes.length) ? b.shapes : [[0, 0, 0, 1, 1, 1]];
+                            for (const s of shapes) {
+                                if (p.x - HALF < bx + s[3] && p.x + HALF > bx + s[0] &&
+                                    p.y < by + s[4] && p.y + TALL > by + s[1] &&
+                                    p.z - HALF < bz + s[5] && p.z + HALF > bz + s[2]) return false;
+                            }
+                        }
+                    }
                 }
+                return true;
+            };
+            const clear = (a, b) => {
+                const d = b.minus(a);
+                const n = Math.max(1, Math.ceil(d.norm() / 0.25));
+                for (let i = 1; i <= n; i++) if (!fits(a.plus(d.scaled(i / n)))) return false;
+                return true;
+            };
+            // A way through the air from `from` to `to`, as a few straight legs (null: none).
+            const plan = (from, to) => {
+                if (clear(from, to)) return [to];
+                const key = (c) => c[0] + ',' + c[1] + ',' + c[2];
+                const known = new Map();
+                const free = (c) => {
+                    const k = key(c);
+                    let f = known.get(k);
+                    if (f === undefined) { f = fits(new Vec3(c[0] + 0.5, c[1], c[2] + 0.5)); known.set(k, f); }
+                    return f;
+                };
+                const start = [Math.floor(from.x), Math.floor(from.y), Math.floor(from.z)];
+                let goal = [Math.floor(to.x), Math.floor(to.y), Math.floor(to.z)];
+                let exact = fits(to);
+                if (!free(goal)) { // the spot itself is taken: the nearest free one
+                    let best = null;
+                    let bd = Infinity;
+                    for (let dx = -3; dx <= 3; dx++) for (let dy = -2; dy <= 3; dy++) for (let dz = -3; dz <= 3; dz++) {
+                        const c = [goal[0] + dx, goal[1] + dy, goal[2] + dz];
+                        const dd = dx * dx + dy * dy + dz * dz;
+                        if (dd < bd && free(c)) { bd = dd; best = c; }
+                    }
+                    if (!best) return null;
+                    goal = best;
+                    exact = false;
+                }
+                const gk = key(goal);
+                const h = (c) => Math.hypot(c[0] - goal[0], c[1] - goal[1], c[2] - goal[2]);
+                const heap = [];
+                const push = (f, c) => {
+                    heap.push([f, c]);
+                    let i = heap.length - 1;
+                    while (i > 0) {
+                        const up = (i - 1) >> 1;
+                        if (heap[up][0] <= heap[i][0]) break;
+                        [heap[up], heap[i]] = [heap[i], heap[up]];
+                        i = up;
+                    }
+                };
+                const pop = () => {
+                    const top = heap[0];
+                    const last = heap.pop();
+                    if (heap.length) {
+                        heap[0] = last;
+                        let i = 0;
+                        for (;;) {
+                            const l = 2 * i + 1;
+                            const r = l + 1;
+                            let m = i;
+                            if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+                            if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+                            if (m === i) break;
+                            [heap[m], heap[i]] = [heap[i], heap[m]];
+                            i = m;
+                        }
+                    }
+                    return top;
+                };
+                const cost = new Map([[key(start), 0]]);
+                const came = new Map();
+                push(h(start), start);
+                let found = false;
+                for (let n = 0; heap.length && n < 15000; n++) {
+                    const c = pop()[1];
+                    const ck = key(c);
+                    if (ck === gk) { found = true; break; }
+                    const base = cost.get(ck);
+                    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+                        if (!dx && !dy && !dz) continue;
+                        const nb = [c[0] + dx, c[1] + dy, c[2] + dz];
+                        if (!free(nb)) continue;
+                        let ok = true; // no cutting corners: each straight part of a diagonal is free too
+                        for (let m = 1; m < 7 && ok; m++) {
+                            const ox = (m & 1) ? dx : 0;
+                            const oy = (m & 2) ? dy : 0;
+                            const oz = (m & 4) ? dz : 0;
+                            if ((ox || oy || oz) && !(ox === dx && oy === dy && oz === dz)) ok = free([c[0] + ox, c[1] + oy, c[2] + oz]);
+                        }
+                        if (!ok) continue;
+                        const nk = key(nb);
+                        const g = base + Math.hypot(dx, dy, dz);
+                        if (g < (cost.has(nk) ? cost.get(nk) : Infinity)) {
+                            cost.set(nk, g);
+                            came.set(nk, c);
+                            push(g + 1.2 * h(nb), nb);
+                        }
+                    }
+                }
+                if (!found) return null;
+                const cells = [];
+                for (let k = gk, c = goal; k !== key(start); c = came.get(k), k = key(c)) {
+                    cells.push(new Vec3(c[0] + 0.5, c[1], c[2] + 0.5));
+                }
+                cells.reverse();
+                if (exact) cells.push(to);
+                const legs = []; // only the corners: straight legs where the air is free
+                let at = from;
+                let i = 0;
+                while (i < cells.length) {
+                    let j = Math.min(cells.length - 1, i + 40);
+                    while (j > i && !clear(at, cells[j])) j--;
+                    legs.push(cells[j]);
+                    at = cells[j];
+                    i = j + 1;
+                }
+                return legs;
+            };
+            const target = new Vec3(x, y, z);
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const here = bot.entity.position.clone();
+                let route = plan(here, target);
+                if (!route && cruise > -50) { // no way found nearby: up over everything, across, down
+                    const top = Math.max(here.y + 1, y + 3, cruise);
+                    const a = plan(here, new Vec3(here.x, top, here.z));
+                    const b = a && plan(new Vec3(here.x, top, here.z), new Vec3(x, top, z));
+                    const c = b && plan(new Vec3(x, top, z), target);
+                    if (a && b && c) route = a.concat(b, c);
+                }
+                if (!route) break;
+                let blocked = false;
+                for (const leg of route) {
+                    for (let i = 0; i < 600; i++) {
+                        if (bot.interrupt_code) return;
+                        const delta = leg.minus(bot.entity.position);
+                        const dist = delta.norm();
+                        if (dist < 0.05) break;
+                        const next = bot.entity.position.plus(delta.scaled(Math.min(FLY_STEP, dist) / dist));
+                        // never into a block (one just placed, a door shut); stuck inside one: out is fine
+                        if (!fits(next) && fits(bot.entity.position)) { blocked = true; break; }
+                        bot.entity.velocity = new Vec3(0, 0, 0);
+                        bot.entity.position = next;
+                        await turn();
+                        await sleep(50);
+                    }
+                    if (blocked) break;
+                }
+                if (!blocked) break; // there
             }
             bot.entity.velocity = new Vec3(0, 0, 0);
             for (let i = 0; i < 40; i++) {
                 if (bot.interrupt_code) return;
                 if (await turn()) break;
-                await new Promise((r) => setTimeout(r, 50));
+                await sleep(50);
             }
             bot.swingArm('right');
         })
@@ -2092,7 +2257,7 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v8)
         description: 'Fly to the next piece of your team project and build it right now.',
         perform: async function (agent) {
             (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] buildNext');
-            return 'You fly to the next piece and build it.';
+            return 'Building starts now, block by block. It is NOT done yet: wait until you see it finished before you say so.';
         }
     },
     {
@@ -2110,7 +2275,7 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v8)
         params: {'block': {type: 'BlockName', description: 'the new main block'}},
         perform: async function (agent, block) {
             (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] changeMaterial ' + block);
-            return 'From now on this part is built from ' + block + ' (if it is allowed).';
+            return 'You asked for ' + block + '. Wait for the answer before saying it worked.';
         }
     },
     {
