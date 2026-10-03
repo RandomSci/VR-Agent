@@ -286,9 +286,35 @@ def _passwords() -> list[str]:
     return list(dict.fromkeys(p for p in found if p)) or [""]
 
 
+def _config_report() -> str:
+    """Where OBS keeps its WebSocket settings and whether they match .env.
+    Never prints a password."""
+    env = os.environ.get("OBS_WEBSOCKET_PASSWORD", "").strip()
+    parts = []
+    for base in OBS_DIRS:
+        if not base.is_dir():
+            continue
+        for name in ("user.ini", "global.ini"):
+            path = base / name
+            if path.is_file() and _ini(path).has_section("OBSWebSocket"):
+                sec = _ini(path)["OBSWebSocket"]
+                same = "same as .env" if env and sec.get("ServerPassword") == env else "NOT the .env password"
+                parts.append(f"{path} (on={sec.get('ServerEnabled')}, auth={sec.get('AuthRequired')}, {same})")
+        legacy = base / "plugin_config/obs-websocket/config.json"
+        if legacy.is_file():
+            try:
+                cfg = json.loads(legacy.read_text())
+                same = "same as .env" if env and cfg.get("server_password") == env else "NOT the .env password"
+                parts.append(f"{legacy} (on={cfg.get('server_enabled')}, {same})")
+            except Exception:
+                parts.append(f"{legacy} (unreadable)")
+    return "; ".join(parts) or "no OBS WebSocket settings found"
+
+
 async def _connect_when_ready(wait_seconds: float) -> Optional[OBS]:
     deadline = time.time() + wait_seconds
     last = ""
+    refused_since = 0.0
     while time.time() < deadline:
         refused = 0
         candidates = _passwords()
@@ -301,8 +327,13 @@ async def _connect_when_ready(wait_seconds: float) -> Optional[OBS]:
                 last = str(exc)
                 break
         if refused == len(candidates):
-            logger.error("OBS: OBS refused every known WebSocket password (check OBS_WEBSOCKET_PASSWORD)")
-            return None
+            # A freshly opened OBS can answer before its settings are loaded:
+            # keep trying for 20 s before giving up on the password.
+            refused_since = refused_since or time.time()
+            if time.time() - refused_since > 20:
+                logger.error("OBS: OBS refused every known WebSocket password (check OBS_WEBSOCKET_PASSWORD)")
+                logger.error(f"OBS: WebSocket settings found: {_config_report()}")
+                return None
         await asyncio.sleep(3)
     logger.warning(f"OBS: no answer after {wait_seconds:.0f}s ({last[:80]}). Is OBS open with its WebSocket server on?")
     return None
@@ -426,10 +457,13 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
         # The server is already up, so the Stage page loads straight away.
         logger.warning("OBS: no remote control, so OBS is reopened and told to stream from the terminal")
         await close_obs()
+        prepare_obs_config(stream_key)  # OBS may have saved other settings when it closed
         if launch_obs(streaming=True):
             await asyncio.sleep(20)
             logger.info("OBS: reopened with streaming on")
         STREAM_LIVE.set()
+        # OBS is sending without remote control: YouTube still gets its Go live.
+        _keep_task(asyncio.create_task(ensure_youtube_live(stream_key), name="youtube-go-live"))
         return False
     logger.info("OBS: connected")
     try:
