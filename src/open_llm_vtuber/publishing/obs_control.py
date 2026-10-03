@@ -44,38 +44,119 @@ class OBSError(RuntimeError):
     pass
 
 
-# OBS keeps its WebSocket settings in a file on this same computer, so the
-# password never has to be copied into .env (and can never be wrong).
-CONFIG_PATHS = (
-    Path.home() / ".config/obs-studio/plugin_config/obs-websocket/config.json",
-    Path.home() / ".var/app/com.obsproject.Studio/config/obs-studio/plugin_config/obs-websocket/config.json",
+# OBS keeps its settings in files on this same computer. Since OBS 30 the
+# WebSocket password lives in user.ini (older: global.ini, then config.json),
+# so it is read from there and never has to be copied into .env.
+OBS_DIRS = (
+    Path.home() / ".config/obs-studio",
+    Path.home() / ".var/app/com.obsproject.Studio/config/obs-studio",
 )
 
 
+def _ini(path: Path):
+    import configparser
+
+    parser = configparser.RawConfigParser(strict=False, interpolation=None)
+    parser.optionxform = str  # OBS keys are CamelCase
+    parser.read(path, encoding="utf-8-sig")
+    return parser
+
+
+def _obs_dir() -> Optional[Path]:
+    return next((d for d in OBS_DIRS if d.is_dir()), None)
+
+
+def _settings_ini() -> Optional[Path]:
+    base = _obs_dir()
+    if base is None:
+        return None
+    for name in ("user.ini", "global.ini"):
+        path = base / name
+        if path.is_file() and _ini(path).has_section("OBSWebSocket"):
+            return path
+    for name in ("user.ini", "global.ini"):
+        if (base / name).is_file():
+            return base / name
+    return None
+
+
 def _obs_config() -> tuple[Optional[Path], dict[str, Any]]:
-    for path in CONFIG_PATHS:
-        try:
-            return path, json.loads(path.read_text())
-        except Exception:
-            continue
-    return None, {}
+    """{server_enabled, server_port, auth_required, server_password}."""
+    path = _settings_ini()
+    if path is not None:
+        ini = _ini(path)
+        if ini.has_section("OBSWebSocket"):
+            sec = ini["OBSWebSocket"]
+            return path, {
+                "server_enabled": sec.get("ServerEnabled", "false").lower() == "true",
+                "server_port": int(sec.get("ServerPort", "4455") or 4455),
+                "auth_required": sec.get("AuthRequired", "true").lower() == "true",
+                "server_password": sec.get("ServerPassword", ""),
+            }
+    base = _obs_dir()
+    legacy = base / "plugin_config/obs-websocket/config.json" if base else None
+    try:
+        return legacy, json.loads(legacy.read_text())  # type: ignore[union-attr]
+    except Exception:
+        return None, {}
 
 
 def obs_running() -> bool:
     return subprocess.run(["pgrep", "-x", "obs"], capture_output=True).returncode == 0
 
 
-def prepare_obs_config() -> None:
-    """Before OBS opens: make sure its WebSocket server is switched on."""
-    path, config = _obs_config()
-    if path is None or obs_running() or config.get("server_enabled"):
+def _write_ini(path: Path, ini) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        ini.write(handle, space_around_delimiters=False)
+
+
+def prepare_obs_config(stream_key: str = "") -> None:
+    """Before OBS opens: WebSocket server on, and the YouTube stream key in
+    the current profile (so Start Streaming never asks to pick a broadcast)."""
+    if obs_running():
         return
-    config["server_enabled"] = True
+    path = _settings_ini()
+    if path is not None:
+        ini = _ini(path)
+        if not ini.has_section("OBSWebSocket"):
+            ini.add_section("OBSWebSocket")
+        if ini["OBSWebSocket"].get("ServerEnabled", "").lower() != "true":
+            ini["OBSWebSocket"]["ServerEnabled"] = "true"
+            ini["OBSWebSocket"].setdefault("ServerPort", "4455")
+            try:
+                _write_ini(path, ini)
+                logger.info("OBS: WebSocket server switched on in OBS settings")
+            except Exception as exc:
+                logger.warning(f"OBS: could not switch the WebSocket server on: {exc}")
+    if stream_key:
+        _write_stream_key(stream_key)
+
+
+def _profile_dir() -> Optional[Path]:
+    base = _obs_dir()
+    path = _settings_ini()
+    if base is None or path is None:
+        return None
+    ini = _ini(path)
+    name = ini.get("Basic", "ProfileDir", fallback="") or ini.get("Basic", "Profile", fallback="")
+    folder = base / "basic/profiles" / name if name else None
+    if folder and folder.is_dir():
+        return folder
+    profiles = sorted((base / "basic/profiles").glob("*/"))
+    return profiles[0] if len(profiles) == 1 else None
+
+
+def _write_stream_key(key: str) -> None:
+    folder = _profile_dir()
+    if folder is None:
+        logger.warning("OBS: profile folder not found, the stream key was not set")
+        return
+    service = {"type": "rtmp_common", "settings": {"service": "YouTube - RTMPS", "server": "auto", "key": key}}
     try:
-        path.write_text(json.dumps(config, indent=4))
-        logger.info("OBS: WebSocket server switched on in OBS settings")
+        (folder / "service.json").write_text(json.dumps(service, indent=4))
+        logger.info(f"OBS: YouTube stream key set in profile '{folder.name}'")
     except Exception as exc:
-        logger.warning(f"OBS: could not switch the WebSocket server on: {exc}")
+        logger.warning(f"OBS: could not set the stream key: {exc}")
 
 
 def launch_obs(streaming: bool) -> bool:
@@ -115,6 +196,8 @@ class OBS:
     def __init__(self) -> None:
         _path, config = _obs_config()
         port = config.get("server_port") or 4455
+        if config and not config.get("auth_required", True):
+            config = {**config, "server_password": ""}
         self.url = os.environ.get("OBS_WEBSOCKET_URL", "").strip() or f"ws://127.0.0.1:{port}"
         # OBS's own settings file wins: it is always the current password.
         self.password = str(config.get("server_password") or "") or os.environ.get(
@@ -259,12 +342,38 @@ async def _ready_stage(obs: OBS, stage_loaded_since: Callable[[float], bool]) ->
     return False
 
 
+async def youtube_stream_key() -> str:
+    """YOUTUBE_STREAM_KEY from .env, else the channel's default key from the
+    YouTube API (same sign-in as the rest). Never logged."""
+    key = os.environ.get("YOUTUBE_STREAM_KEY", "").strip()
+    if key:
+        return key
+    try:
+        from .settings import PublishSettings
+        from .youtube import YouTubeClient
+
+        s = PublishSettings.from_env(read_dotenv=False)
+        if not s.youtube_ready:
+            return ""
+        client = YouTubeClient(s.youtube_client_id, s.youtube_client_secret, s.youtube_refresh_token)
+        keys = await asyncio.to_thread(client.stream_keys)
+    except Exception as exc:
+        logger.warning(f"OBS: could not read the YouTube stream key: {str(exc)[:120]}")
+        return ""
+    if not keys:
+        return ""
+    chosen = next((k for k in keys if "default" in k["title"].lower()), keys[0])
+    logger.info(f"OBS: using the YouTube stream key '{chosen['title']}'")
+    return chosen["key"]
+
+
 async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
     """The whole start sequence. Sets STREAM_LIVE when the stream is up."""
     if not manage_obs():
         STREAM_LIVE.set()
         return False
-    prepare_obs_config()
+    stream_key = await youtube_stream_key()
+    prepare_obs_config(stream_key)
     if not obs_running():
         logger.info("OBS: opening it (minimized)")
         launch_obs(streaming=False)
@@ -283,6 +392,19 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
         return False
     logger.info("OBS: connected")
     try:
+        if stream_key:
+            # Stream key mode: Start Streaming goes straight to YouTube, no
+            # "Select stream" step from the account connection.
+            try:
+                await obs.call(
+                    "SetStreamServiceSettings",
+                    {
+                        "streamServiceType": "rtmp_common",
+                        "streamServiceSettings": {"service": "YouTube - RTMPS", "server": "auto", "key": stream_key},
+                    },
+                )
+            except Exception as exc:
+                logger.debug(f"OBS: stream key not applied now: {exc}")
         streaming = (await obs.call("GetStreamStatus")).get("outputActive")
         ready = await _ready_stage(obs, stage_loaded_since)
         if streaming:

@@ -229,7 +229,7 @@ class StreamAutopilot:
         )
         if self.goodbye:
             try:
-                await asyncio.wait_for(self.goodbye(reason), timeout=30)
+                await asyncio.wait_for(self.goodbye(reason), timeout=15)
             except Exception as exc:
                 logger.warning(f"Goodbye failed: {exc}")
         try:

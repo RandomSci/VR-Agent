@@ -174,6 +174,14 @@ def run(console_log_level: str):
     uv_server.goodbye = server.ws_handler.end_session
     # The 12 hour limit stops the server cleanly (go-live.sh then does not restart).
     server.ws_handler.request_shutdown = lambda: setattr(uv_server, "should_exit", True)
+    # The chat window polls every second: keep that out of the terminal.
+    import logging
+
+    class _QuietPolls(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return "/vr-agent/chat-feed" not in record.getMessage()
+
+    logging.getLogger("uvicorn.access").addFilter(_QuietPolls())
     try:
         uv_server.run()
     except KeyboardInterrupt:

@@ -284,3 +284,16 @@ class YouTubeClient:
             params={"part": "brandingSettings"},
             json={"id": channel["id"], "brandingSettings": {"channel": current}},
         )
+
+    # -- the stream key ---------------------------------------------------------
+    def stream_keys(self) -> list[dict[str, str]]:
+        """The channel's reusable stream keys: [{title, key}] (1 unit)."""
+        data = self._call(
+            "GET", "/liveStreams", params={"part": "snippet,cdn", "mine": "true", "maxResults": 20}
+        )
+        keys = []
+        for item in data.get("items") or []:
+            key = ((item.get("cdn") or {}).get("ingestionInfo") or {}).get("streamName") or ""
+            if key:
+                keys.append({"title": str((item.get("snippet") or {}).get("title") or ""), "key": key})
+        return keys
