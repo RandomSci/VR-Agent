@@ -60,6 +60,12 @@ def _figures():
     return images
 
 
+def _is_plot_object(value):
+    if isinstance(value, (list, tuple)) and value:
+        return all(_is_plot_object(item) for item in value)
+    return type(value).__module__.startswith("matplotlib")
+
+
 def run(code):
     global cell_number
     cell_number += 1
@@ -76,6 +82,10 @@ def run(code):
             exec(compile(tree, name, "exec"), namespace)
             if last is not None:
                 value = eval(compile(last, name, "eval"), namespace)
+                # plt.title(...) as the last line returns a Text object:
+                # the picture is the output, not "Text(0.5, 1.0, ...)".
+                if _is_plot_object(value):
+                    value = None
                 if value is not None:
                     namespace["_"] = value
                     result = {"text": repr(value)[:MAX_TEXT], "latex": _latex(value)[:MAX_TEXT]}

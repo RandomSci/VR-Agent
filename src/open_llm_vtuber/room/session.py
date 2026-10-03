@@ -43,6 +43,7 @@ OP_KINDS = (
     "chat_seen",
     "teaching",
     "coding",
+    "class",
 )
 
 
@@ -105,6 +106,8 @@ class RoomSession:
         )
 
         self.traces: deque[dict[str, Any]] = deque(maxlen=300)
+        # Set by the websocket handler when VR_CLASS_MODE is on (class_mode.ClassEngine).
+        self.class_engine: Any = None
 
     def trace(self, name: str, **data: Any) -> None:
         """Observability: where time goes in each interaction (developer only)."""
@@ -402,6 +405,8 @@ class RoomSession:
             # A page that reconnects mid game redraws the board from this.
             "board": self.show.engine.view(),
             "teaching": self.teaching.session.snapshot(),
+            # Class mode: the slide, the notebook cells and an open quiz.
+            "class": self.class_engine.snapshot() if self.class_engine else None,
         }
 
     async def _send(self, client_uid: str, payload: dict[str, Any]) -> None:

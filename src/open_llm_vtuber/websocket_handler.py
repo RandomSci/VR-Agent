@@ -346,6 +346,37 @@ class WebSocketHandler:
 
         self._side_task = asyncio.create_task(go())
 
+    # ------------------------------------------------------------------
+    # Class mode (VR_CLASS_MODE=1): Mika teaches a course, chat joins in.
+    # ------------------------------------------------------------------
+    def _maybe_start_class(self, client_uid: str, websocket: WebSocket) -> None:
+        from .room.class_mode import ClassEngine, class_mode_enabled
+
+        if not class_mode_enabled():
+            return
+        try:
+            self._room_director_ready(client_uid, websocket)
+            engine = self.room_session.class_engine
+            if engine is None:
+                engine = ClassEngine(self._room_runtimes, self.room_session)
+                self.room_session.class_engine = engine
+            engine.start()
+        except Exception as exc:
+            logger.error(f"Class mode could not start: {exc}")
+
+    def class_active(self) -> bool:
+        engine = getattr(self.room_session, "class_engine", None)
+        return bool(engine is not None and engine.active)
+
+    def class_message(self, message) -> None:
+        """Chat during class: a quiz answer or a question for between steps."""
+        engine = self.room_session.class_engine
+        if engine is None:
+            return
+        self.room_session.note_viewer_activity()
+        usage.record_viewer_interaction()
+        engine.enqueue(message.author_display_name, message.text)
+
     def _room_is_primary(self) -> bool:
         primary = self._get_primary_client()
         return bool(primary and primary[0] in self.room_client_uids)
@@ -607,6 +638,7 @@ class WebSocketHandler:
             if self.room_session.active:
                 self.room_client_uids.add(client_uid)
                 await self.room_session.register(client_uid, websocket.send_text)
+                self._maybe_start_class(client_uid, websocket)
                 try:
                     # Which engine and voice each character really uses (no keys).
                     self.room_session.voices.log_report()

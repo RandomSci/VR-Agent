@@ -13,6 +13,7 @@ import httpx
 from loguru import logger
 
 from ..vr_agent.state import VRAgentState, runtime
+from ..room.class_mode import class_mode_enabled
 
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
@@ -60,6 +61,9 @@ class SelectionResult:
     selected_message_id: Optional[str]
     reason: str
     confidence: float
+
+
+QUIZ_ANSWER_RE = re.compile(r"\s*\(?[abcdABCD]\)?[.!]?\s*")
 
 
 def _truncate(text: str, limit: int = 140) -> str:
@@ -392,11 +396,13 @@ class YouTubeMessageBuffer:
         if len(text) > 280:
             return False, "too_long"
         normalized = _normalize_message(text)
-        if len(normalized) <= 1:
+        # Class mode quizzes are answered with one letter, by many people.
+        quiz_answer = bool(QUIZ_ANSWER_RE.fullmatch(text)) and class_mode_enabled()
+        if len(normalized) <= 1 and not quiz_answer:
             return False, "noise"
         if self.UNSAFE_RE.search(normalized):
             return False, "unsafe"
-        if self.recent_normalized[normalized] >= 2:
+        if self.recent_normalized[normalized] >= 2 and not quiz_answer:
             return False, "repeated_spam"
 
         self.messages.append(message)
@@ -732,6 +738,8 @@ class YouTubeLiveChatService:
                         force=buffer_size > 0,
                     )
                     continue
+                if self._route_to_class():
+                    continue
                 if not self.connection_provider.is_idle():
                     self._maybe_side_chat()
                     continue
@@ -782,6 +790,18 @@ class YouTubeLiveChatService:
                 logger.error(f"YouTube response loop error: {exc}")
                 runtime.set(VRAgentState.ERROR_RECOVERABLE, f"response loop: {exc}"[:200])
                 await asyncio.sleep(1.0)
+
+    def _route_to_class(self) -> bool:
+        """Class mode: every waiting message goes to the class (answered
+        between lesson steps, or counted as a quiz answer)."""
+        active = getattr(self.connection_provider, "class_active", None)
+        if not active or not active():
+            return False
+        for message in self.buffer.get_eligible(self.config.selector_max_messages):
+            self.buffer.mark_answered(message)
+            logger.info(f"Class chat from {message.author_display_name}: {_truncate(message.text, 60)}")
+            self.connection_provider.class_message(message)
+        return True
 
     def _maybe_side_chat(self) -> None:
         """While Mika or Luna is coding, the other one still answers chat.

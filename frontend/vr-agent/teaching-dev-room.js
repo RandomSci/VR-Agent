@@ -1223,6 +1223,9 @@
   }
 
   const opHandlers = {
+    class(op) {
+      if (window.classStage) window.classStage.apply(op);
+    },
     coding(op) {
       if (window.teachingStage && typeof window.teachingStage.coding === "function") {
         window.teachingStage.coding(op);
@@ -1383,6 +1386,10 @@
       case "vr-room-config":
         configReceived = true;
         applyConfig(payload).then(() => {
+          if (payload.class && payload.class.active && window.classStage) {
+            window.classStage.restore(payload.class);
+            return;
+          }
           const lesson = payload.teaching || {};
           if (!lesson.active || !window.teachingStage) return;
           const enter = lesson.teacher === "luna"
@@ -1753,6 +1760,29 @@
       return true;
     },
 
+    // Class mode: the teacher and the sidekick stand side by side to the
+    // right of the slide and notebook.
+    classroom: (teacherId, sidekickId) => {
+      if (!window.vrRoom.teaching(teacherId)) return false;
+      const spots = [
+        [String(teacherId || "").toLowerCase(), 0.8, 0.6],
+        [String(sidekickId || "").toLowerCase(), 0.925, 0.54],
+      ];
+      for (const [id, x, scale] of spots) {
+        const c = room.characters.get(id);
+        const base = c && room._teachingView && room._teachingView.saved.get(id);
+        if (!c || !c.model || !base) continue;
+        c.model.visible = true;
+        c.move = null;
+        c.model.scale.set(base.scaleX * scale, base.scaleY * scale);
+        c.model.position.set(STAGE_W * x, STAGE_H * 1.03);
+        c.home = { x: c.model.position.x, y: c.model.position.y };
+        c.baseX = c.model.position.x;
+        c.lane = { min: c.model.position.x, max: c.model.position.x };
+        c.direct("VIEWER", 60 * 60 * 1000, 0);
+      }
+      return true;
+    },
     normal: () => {
       const view =
         room._teachingView;
