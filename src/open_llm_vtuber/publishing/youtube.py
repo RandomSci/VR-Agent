@@ -394,8 +394,22 @@ class YouTubeClient:
             params={"broadcastStatus": status, "id": broadcast_id, "part": "status"},
         )
 
+    def broadcast_status(self, broadcast_id: str) -> str:
+        """Life cycle of one broadcast: created, ready, testStarting, testing,
+        liveStarting, live, complete... "" when it is gone (1 unit)."""
+        data = self._call("GET", "/liveBroadcasts", params={"part": "status", "id": broadcast_id})
+        items = data.get("items") or []
+        return str(((items[0].get("status") or {}).get("lifeCycleStatus")) or "") if items else ""
+
+    def delete_broadcast(self, broadcast_id: str) -> None:
+        """Remove a broadcast that never went live (50 units)."""
+        self._call("DELETE", "/liveBroadcasts", params={"id": broadcast_id})
+
     def create_broadcast(self, title: str, description: str = "") -> str:
-        """A new public broadcast that starts by itself when video arrives (50 units)."""
+        """A new public broadcast started by hand: preview first, then Go live
+        (50 units). Auto start only fires when video starts AFTER binding; our
+        stream is already running, and YouTube then refuses every manual Go
+        live on an auto start broadcast ("Invalid transition")."""
         from datetime import datetime, timezone
 
         data = self._call(
@@ -410,9 +424,9 @@ class YouTubeClient:
                 },
                 "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
                 "contentDetails": {
-                    "enableAutoStart": True,
+                    "enableAutoStart": False,
                     "enableAutoStop": True,
-                    "monitorStream": {"enableMonitorStream": False},
+                    "monitorStream": {"enableMonitorStream": True, "broadcastStreamDelayMs": 0},
                 },
             },
         )

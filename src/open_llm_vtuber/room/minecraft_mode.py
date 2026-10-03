@@ -121,8 +121,9 @@ SYSTEM_FACTS = (
 CAMERA_HOLD = 15.0  # "eyes": the camera stays on one girl at least this long
 # "director": your camera floats behind both girls, aimed at them and what they
 # build, and glides to a new angle when they move. "eyes": through her eyes.
-CAMERA_SHOT_SECONDS = 8.0  # a new angle at most this often
-CAMERA_MOVE = (2.0, 15)  # seconds, steps per second of a camera move
+CAMERA_HZ = 20  # the camera stand moves this often; the game smooths moving entities
+CAMERA_EASE = 0.05  # share of the way to the new angle per step (about a second and a half)
+CAM_TAG = "vr_cam"
 CAMERA_REFRESH = 20.0  # spectate again this often (a respawn ends it)
 DIRECTOR = "Director"  # a plain command from this name runs right away in Mindcraft (no AI call)
 # Mindcraft's automatic behaviours. elbow_room fought our teleports (the HUD
@@ -175,7 +176,7 @@ MOODS = (
 )
 NOT_SPEECH = re.compile(
     r"^\s*\[|\b(error|exception)\s*:|\btraceback\b|econnrefused|my brain disconnected|"
-    r"agent process|unknown command|^\s*code output|^\s*hello world! i am|agent stopped|"
+    r"agent process|unknown command|^\s*code output|^\s*hello world! i am|agent stopped|action output|"
     r"self-prompting|auto-prompts|did not use command|^\s*(sure|ok)?[.!,]?\s*setting (my|the) goal",
     re.I,
 )
@@ -371,8 +372,10 @@ class MinecraftEngine:
         self._cam_focus_at = 0.0
         self._cam_sent_at = 0.0
         self.camera_style = (os.environ.get("VR_MINECRAFT_CAMERA", "") or "director").strip().lower()
-        self._shot: Optional[tuple[tuple[float, float, float], tuple[float, float, float]]] = None
-        self._shot_at = 0.0
+        self._shot: Optional[tuple[tuple[float, float, float], tuple[float, float, float]]] = None  # target
+        self._pose: Optional[list[float]] = None  # where the camera stand is now: x, y, z, lx, ly, lz
+        self._cam_ready = False
+        self._cam_checked = 0.0
         self.build_focus: Optional[tuple[float, float, float]] = None  # absolute, what is being built
         self.line_ready = asyncio.Event()
         self.outbox: deque[dict[str, Any]] = deque(maxlen=12)
@@ -545,6 +548,7 @@ class MinecraftEngine:
                 asyncio.create_task(self._fidget_loop(), name="mc-fidget"),
                 asyncio.create_task(self._watchdog(), name="mc-watchdog"),
                 asyncio.create_task(self._camera_loop(), name="mc-camera"),
+                asyncio.create_task(self._camera_follow(), name="mc-camera-follow"),
                 asyncio.create_task(self._net_loop(), name="mc-net"),
                 asyncio.create_task(self._build_loop(), name="mc-build"),
                 asyncio.create_task(self._nudge_loop(), name="mc-nudge"),
@@ -559,15 +563,21 @@ class MinecraftEngine:
             logger.exception(f"Minecraft mode stopped: {exc}")
 
     async def _title_loop(self) -> None:
-        """The stream title and description (again later if YouTube had no stream yet)."""
-        for delay in (0, 60, 180, 600):
-            await asyncio.sleep(delay)
-            if self.on_start:
-                try:
-                    title, head = (CREATIVE_TITLE, CREATIVE_HEAD) if self.creative else (STREAM_TITLE, STREAM_HEAD)
-                    await self.on_start(title, head, str(THUMBNAIL) if THUMBNAIL.exists() else "")
-                except Exception as exc:
-                    logger.warning(f"Minecraft: title not set: {exc}")
+        """Title, description, thumbnail and playlist: tried every 30 s until
+        they are on the live video (it can take minutes to go live)."""
+        if not self.on_start:
+            return
+        title, head = (CREATIVE_TITLE, CREATIVE_HEAD) if self.creative else (STREAM_TITLE, STREAM_HEAD)
+        for attempt in range(40):  # 20 minutes
+            try:
+                if await self.on_start(title, head, str(THUMBNAIL) if THUMBNAIL.exists() else "") is not False:
+                    if attempt:
+                        logger.info("Minecraft: title, description and thumbnail are on the stream")
+                    return
+            except Exception as exc:
+                logger.warning(f"Minecraft: title not set: {exc}")
+            await asyncio.sleep(30)
+        logger.warning("Minecraft: the stream never went live, title and thumbnail were not set")
 
     async def _wait_live(self) -> None:
         from ..publishing.obs_control import STREAM_LIVE
@@ -656,7 +666,8 @@ class MinecraftEngine:
             "auto_open_ui": False,
             "base_profile": "creative" if self.creative else "survival",
             "profiles": profiles,
-            "load_memory": True,
+            # creative: no old memories ("find seeds for the farm" from survival days)
+            "load_memory": not self.creative,
             "init_message": (
                 f"You just logged in. You ({other}) are live on YouTube in creative Minecraft, building big projects "
                 "from scratch together. Say hi to your friend and to chat in one short line."
@@ -721,8 +732,9 @@ class MinecraftEngine:
                 f"{persona} Right now you are LIVE on YouTube in CREATIVE Minecraft with {friend}: you can fly and have "
                 f"every block. Together you build big projects from scratch, piece by piece: a castle, then a REAL neural "
                 f"network that learns to read handwritten digits, a farm, a garden. {role}"
-                "You fly to each spot and place the blocks yourselves (that happens automatically, you never need "
-                "movement or gathering commands). Your job is the talking: say what you are building right now, argue "
+                "You fly to each spot and place the blocks yourselves. You have EVERY block already: never gather, "
+                "never look for seeds, food or materials. Places like the farm and the garden only exist once you "
+                "build them. Your job is the talking: say what you are building right now, argue "
                 f"with {friend} about how it should look, complain when it is tedious, be proud when a part is done. "
                 "About the neural network you really know your stuff: inputs, hidden layers, weights, backpropagation, "
                 "loss, accuracy, and you get nervous when it guesses wrong. "
@@ -1016,6 +1028,7 @@ class MinecraftEngine:
             await rcon_command(f"gamemode creative {self.camera_player}")
             await rcon_command(f"gamemode spectator {self.camera_player}")
             self._shot = None
+            self._cam_ready = False
             self.camera_on = True
             self._cam_sent_at = 0.0
             self.view["camera"] = "client"
@@ -1071,37 +1084,49 @@ class MinecraftEngine:
         return camera, (lx, ly + 0.8, lz)
 
     async def _director_shot(self, here: list[str]) -> None:
+        """The camera man: your view rides an invisible armor stand that glides
+        after both girls. Teleporting the player itself stuttered; a moving
+        entity is smoothed by the game."""
         girls = [self._pos[c] for c in here if c in self._pos and time.time() - self._seen_at.get(c, 0) < 10]
         shot = self.shot_for(girls)
         if shot is None:
             return
-        now = time.time()
-        if self._shot:
-            (cx, cy, cz), (ox, oy, oz) = self._shot
-            (nx, ny, nz), (tx, ty, tz) = shot
-            moved = ((nx - cx) ** 2 + (ny - cy) ** 2 + (nz - cz) ** 2) ** 0.5
-            turned = ((tx - ox) ** 2 + (ty - oy) ** 2 + (tz - oz) ** 2) ** 0.5
-            if (moved < 4 and turned < 4) or now - self._shot_at < CAMERA_SHOT_SECONDS:
-                return
-        await self._glide(shot)
-
-    async def _glide(self, shot: tuple[tuple[float, float, float], tuple[float, float, float]]) -> None:
-        """Move the camera smoothly (a teleport every frame-ish) to the new angle."""
-        seconds, rate = CAMERA_MOVE
-        old = self._shot or shot
-        steps = max(1, int(seconds * rate)) if self._shot else 1
-        for i in range(1, steps + 1):
-            t = i / steps
-            t = t * t * (3 - 2 * t)  # ease in and out
-            c = [a + (b - a) * t for a, b in zip(old[0], shot[0])]
-            look = [a + (b - a) * t for a, b in zip(old[1], shot[1])]
-            await rcon_command(
-                f"tp {self.camera_player} {c[0]:.2f} {c[1]:.2f} {c[2]:.2f} facing {look[0]:.2f} {look[1]:.2f} {look[2]:.2f}"
-            )
-            if i < steps:
-                await asyncio.sleep(1.0 / rate)
         self._shot = shot
-        self._shot_at = time.time()
+        now = time.time()
+        if self._cam_ready and now - self._cam_checked > 30:
+            self._cam_checked = now
+            alive = await rcon_command(f"execute if entity @e[tag={CAM_TAG}]", reply=True)
+            self._cam_ready = isinstance(alive, str) and "passed" in alive
+        if not self._cam_ready:
+            (x, y, z), (lx, ly, lz) = shot
+            await rcon_command(f"kill @e[tag={CAM_TAG}]")
+            await rcon_command(
+                f"summon minecraft:armor_stand {x:.2f} {y:.2f} {z:.2f} "
+                f'{{Tags:["{CAM_TAG}"],Invisible:1b,Marker:1b,NoGravity:1b,Invulnerable:1b,Silent:1b}}'
+            )
+            await rcon_command(f"tp @e[tag={CAM_TAG},limit=1] {x:.2f} {y:.2f} {z:.2f} facing {lx:.2f} {ly:.2f} {lz:.2f}")
+            reply = await rcon_command(f"spectate @e[tag={CAM_TAG},limit=1] {self.camera_player}", reply=True)
+            self._pose = [x, y, z, lx, ly, lz]
+            self._cam_ready = reply is not False
+            self._cam_checked = now
+            logger.info(f"Minecraft: camera man ready ({str(reply)[:60]})")
+
+    async def _camera_follow(self) -> None:
+        """Glide the camera stand toward the current shot, CAMERA_HZ times a second."""
+        while True:
+            await asyncio.sleep(1.0 / CAMERA_HZ)
+            if not (self.camera_on and self._cam_ready and self._shot and self._pose):
+                continue
+            target = [*self._shot[0], *self._shot[1]]
+            moved = 0.0
+            for i in range(6):
+                step = (target[i] - self._pose[i]) * CAMERA_EASE
+                self._pose[i] += step
+                moved = max(moved, abs(step))
+            if moved < 0.004:
+                continue
+            x, y, z, lx, ly, lz = self._pose
+            await rcon_command(f"tp @e[tag={CAM_TAG},limit=1] {x:.3f} {y:.3f} {z:.3f} facing {lx:.3f} {ly:.3f} {lz:.3f}")
 
     async def _camera_to(self, cid: str) -> None:
         """The one who talks gets the camera (held CAMERA_HOLD so it does not flicker)."""
@@ -1218,6 +1243,12 @@ class MinecraftEngine:
                 view, focus = PLACES.get(arg, PLACES["base"])
             asyncio.create_task(self._arrive(cid, view, focus, await self._fly(cid, view, focus)))
         elif verb == "changeMaterial":
+            current = self.projects.current()
+            if current and current[0]["id"] == "neural_net":
+                await self.link.emit("send-message", name, {"from": "system", "message": (
+                    "Not on the neural network: its colors show real weights and activations. "
+                    "Pick materials again for the next project.")})
+                return
             old = self.projects.set_material(arg)
             note = (
                 f"Done: the rest of {self.projects.view().get('step', 'this part')} is built from {arg} instead of {old}."
@@ -1841,40 +1872,84 @@ async def rcon_online() -> Optional[set[str]]:
     return {n.strip().lower() for n in names.split(",") if n.strip()}
 
 
-async def rcon_command(command: str, reply: bool = False) -> Any:
-    """Run one server command. False when the server has no RCON (yet)."""
-    import struct
+class _Rcon:
+    """One server console connection, kept open and shared (one command at a
+    time). The camera sends 20 commands a second; a new connection for each
+    one was slow and filled the server log."""
 
+    def __init__(self) -> None:
+        self.reader: Any = None
+        self.writer: Any = None
+        self.lock: Optional[asyncio.Lock] = None
+        self.loop: Any = None
+        self.next_id = 10
+
+    @staticmethod
     def packet(pid: int, kind: int, body: str) -> bytes:
+        import struct
+
         data = struct.pack("<ii", pid, kind) + body.encode() + b"\x00\x00"
         return struct.pack("<i", len(data)) + data
 
-    async def read(reader: Any) -> tuple[int, str]:
-        size = struct.unpack("<i", await reader.readexactly(4))[0]
-        data = await reader.readexactly(size)
-        pid = struct.unpack("<i", data[:4])[0]
-        return pid, data[8:-2].decode("utf-8", "replace")
+    async def read(self) -> tuple[int, str]:
+        import struct
 
-    try:
-        reader, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", RCON_PORT), timeout=2)
-    except Exception:
-        return False
-    try:
-        writer.write(packet(1, 3, _rcon_password()))
-        await writer.drain()
-        pid, _body = await asyncio.wait_for(read(reader), timeout=3)
+        size = struct.unpack("<i", await self.reader.readexactly(4))[0]
+        data = await self.reader.readexactly(size)
+        return struct.unpack("<i", data[:4])[0], data[8:-2].decode("utf-8", "replace")
+
+    def close(self) -> None:
+        if self.writer is not None:
+            try:
+                self.writer.close()
+            except Exception:
+                pass
+        self.reader = self.writer = None
+
+    async def connect(self) -> bool:
+        try:
+            self.reader, self.writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", RCON_PORT), timeout=2)
+            self.writer.write(self.packet(1, 3, _rcon_password()))
+            await self.writer.drain()
+            pid, _body = await asyncio.wait_for(self.read(), timeout=3)
+        except Exception:
+            self.close()
+            return False
         if pid == -1:
             logger.warning("Minecraft: the server refused the RCON password")
+            self.close()
             return False
-        writer.write(packet(2, 2, command))
-        await writer.drain()
-        _pid, body = await asyncio.wait_for(read(reader), timeout=3)
-        return body if reply else True
-    except Exception as exc:
-        logger.debug(f"Minecraft: RCON failed: {exc}")
-        return False
-    finally:
-        writer.close()
+        return True
+
+    async def run(self, command: str, reply: bool) -> Any:
+        loop = asyncio.get_running_loop()
+        if self.lock is None or self.loop is not loop:  # a new event loop (tests, restarts)
+            self.close()
+            self.lock, self.loop = asyncio.Lock(), loop
+        async with self.lock:
+            for attempt in range(2):
+                if self.writer is None and not await self.connect():
+                    return False
+                try:
+                    self.next_id = self.next_id % 1_000_000 + 1
+                    self.writer.write(self.packet(self.next_id, 2, command))
+                    await self.writer.drain()
+                    while True:
+                        pid, body = await asyncio.wait_for(self.read(), timeout=3)
+                        if pid == self.next_id:
+                            return body if reply else True
+                except Exception as exc:
+                    logger.debug(f"Minecraft: RCON failed ({exc}), reconnecting")
+                    self.close()
+            return False
+
+
+_RCON = _Rcon()
+
+
+async def rcon_command(command: str, reply: bool = False) -> Any:
+    """Run one server command. False when the server has no RCON (yet)."""
+    return await _RCON.run(command, reply)
 
 
 def set_difficulty(level: str) -> None:

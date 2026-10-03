@@ -201,10 +201,10 @@ class GoodbyeServer(uvicorn.Server):
     def handle_exit(self, sig, frame) -> None:
         import time as _time
 
-        if self._bye_task is not None and _time.time() - self._first_press < 12:
+        if self._bye_task is not None and _time.time() - self._first_press < 3:
             if not getattr(self, "_told_wait", False):
                 self._told_wait = True
-                logger.info("Still ending the stream, one moment (Ctrl+C again after 12 s to force)")
+                logger.info("Still ending the stream, one moment (Ctrl+C again to stop right away)")
             return
         if self.goodbye is None or self._bye_task is not None or self.should_exit:
             super().handle_exit(sig, frame)
@@ -216,7 +216,7 @@ class GoodbyeServer(uvicorn.Server):
 
         async def bye() -> None:
             try:
-                await asyncio.wait_for(self.goodbye("stop"), timeout=50)
+                await asyncio.wait_for(self.goodbye("stop"), timeout=30)
             except Exception as exc:
                 logger.warning(f"Goodbye skipped: {exc}")
             uvicorn.Server.handle_exit(self, sig, frame)

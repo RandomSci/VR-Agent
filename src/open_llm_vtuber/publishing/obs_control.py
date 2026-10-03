@@ -23,6 +23,7 @@ import hashlib
 import itertools
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -652,9 +653,47 @@ async def ensure_youtube_live(stream_key: str, timeout: float = 300.0) -> bool:
     async def call(fn, *args):
         return await asyncio.to_thread(fn, *args)
 
+    async def status(bid: str) -> str:
+        try:
+            return await call(client.broadcast_status, bid)
+        except Exception:
+            return ""
+
+    async def wait_for(bid: str, wanted: tuple[str, ...], seconds: float) -> str:
+        life = ""
+        stop = time.time() + seconds
+        while time.time() < stop:
+            life = await status(bid)
+            if life in wanted:
+                return life
+            await asyncio.sleep(4)
+        return life
+
+    async def start(bid: str) -> bool:
+        """The documented manual way: ready, preview (testing), then live."""
+        life = await status(bid)
+        if life in ("ready", "created"):
+            try:
+                await call(client.transition, bid, "testing")
+                logger.info("YouTube: preview started")
+            except Exception as exc:
+                logger.info(f"YouTube: preview refused ({_short(exc)})")
+            life = await wait_for(bid, ("testing", "live"), 60)
+        if life == "live":
+            return True
+        try:
+            await call(client.transition, bid, "live")
+        except Exception as exc:
+            logger.warning(f"YouTube: Go live refused ({_short(exc)})")
+            return False
+        if await wait_for(bid, ("live",), 60) == "live":
+            logger.info("YouTube: Go live done, the stream is public")
+            return True
+        return False
+
     end = time.time() + timeout
     tried: set[str] = set()
-    created = False
+    created = 0
     await asyncio.sleep(25)  # the normal auto start usually happens by now
     while time.time() < end:
         try:
@@ -666,63 +705,106 @@ async def ensure_youtube_live(stream_key: str, timeout: float = 300.0) -> bool:
             # counts. An older broadcast still marked active, or one stuck in
             # its preview, made this say "live" while viewers saw "Waiting".
             ours = [b for b in await call(client.active_broadcasts) if b["stream"] == stream["id"]]
-            if any(b["life"] == "live" for b in ours):
+            live = [b for b in ours if b["life"] == "live"]
+            if live:
+                set_target_broadcast(live[0]["id"])
                 logger.info("YouTube: the stream is live")
                 return True
-            stuck = [b for b in ours if b["life"] in ("testing", "testStarting")]
-            if stuck and stream.get("status") == "active":
-                try:
-                    await call(client.transition, stuck[0]["id"], "live")
-                    logger.info("YouTube: the broadcast was stuck in its preview, Go live sent")
-                except Exception as exc:
-                    logger.warning(f"YouTube: Go live from the preview refused: {str(exc)[:200]}")
-                await asyncio.sleep(20)
-                continue
-            if any(b["life"] == "liveStarting" for b in ours):
-                logger.info("YouTube: going live now")
-                await asyncio.sleep(10)
-                continue
             if stream.get("status") != "active":
                 logger.info(f"YouTube: waiting for video to arrive (stream {stream.get('status') or 'unknown'})")
-            else:
-                waiting = [b for b in await call(client.upcoming_broadcasts) if b["stream"] == stream["id"]]
-                fresh = [b for b in waiting if b["id"] not in tried]
-                if fresh:
-                    broadcast = fresh[0]
-                    tried.add(broadcast["id"])
-                    logger.warning("YouTube: the stream is waiting for Go live, starting it")
-                    if broadcast["monitor"] and broadcast["life"] in ("ready", "created"):
-                        try:
-                            await call(client.transition, broadcast["id"], "testing")
-                            await asyncio.sleep(12)
-                        except Exception as exc:
-                            logger.debug(f"YouTube: testing step skipped: {str(exc)[:160]}")
+                await asyncio.sleep(10)
+                continue
+            stuck = [b for b in ours if b["life"] in ("testing", "testStarting", "liveStarting")]
+            if stuck:
+                set_target_broadcast(stuck[0]["id"])
+                if await start(stuck[0]["id"]):
+                    return True
+                await asyncio.sleep(10)
+                continue
+            waiting = [b for b in await call(client.upcoming_broadcasts) if b["stream"] == stream["id"]]
+            fresh = [b for b in waiting if b["id"] not in tried]
+            if fresh:
+                broadcast = fresh[0]
+                tried.add(broadcast["id"])
+                set_target_broadcast(broadcast["id"])
+                logger.warning("YouTube: the stream is waiting for Go live, starting it")
+                if await start(broadcast["id"]):
+                    return True
+                if broadcast["id"] in _made_broadcasts():
+                    # one of ours that YouTube will not start: remove it, so the
+                    # channel does not fill up with "Upcoming" videos
                     try:
-                        await call(client.transition, broadcast["id"], "live")
-                        logger.info("YouTube: Go live sent")
+                        await call(client.delete_broadcast, broadcast["id"])
+                        _forget_broadcast(broadcast["id"])
+                        logger.info("YouTube: removed a broadcast that could not start")
                     except Exception as exc:
-                        # "Invalid transition": YouTube wants the testing step first.
-                        logger.info(f"YouTube: Go live refused ({str(exc)[:80]}), trying testing first")
-                        try:
-                            await call(client.transition, broadcast["id"], "testing")
-                            await asyncio.sleep(15)
-                            await call(client.transition, broadcast["id"], "live")
-                            logger.info("YouTube: Go live sent after testing")
-                        except Exception as exc2:
-                            logger.warning(f"YouTube: Go live refused: {str(exc2)[:200]}")
-                            tried.discard(broadcast["id"])  # try again next round
-                elif not waiting and not created:
-                    created = True
-                    logger.warning("YouTube: no broadcast is waiting on the stream key, making a new one")
-                    broadcast_id = await call(client.create_broadcast, "VR Agent LIVE 🔴")
-                    if broadcast_id:
-                        await call(client.bind, broadcast_id, stream["id"])
-                        logger.info("YouTube: new broadcast bound to the stream key, it starts by itself")
+                        logger.debug(f"YouTube: could not remove it: {_short(exc)}")
+                continue
+            if created < 2:
+                created += 1
+                logger.warning("YouTube: no broadcast can start on the stream key, making a new one")
+                title, description = PENDING_DETAILS
+                broadcast_id = await call(client.create_broadcast, title or "VR Agent LIVE 🔴", description)
+                if broadcast_id:
+                    _remember_broadcast(broadcast_id)
+                    set_target_broadcast(broadcast_id)
+                    await call(client.bind, broadcast_id, stream["id"])
+                    tried.add(broadcast_id)
+                    if await start(broadcast_id):
+                        return True
+                continue
         except Exception as exc:
-            logger.warning(f"YouTube go live check failed: {str(exc)[:200]}")
-        await asyncio.sleep(20)
+            logger.warning(f"YouTube go live check failed: {_short(exc)}")
+        await asyncio.sleep(15)
     logger.error("YouTube: still not live after 5 minutes. Open YouTube Studio and press Go live.")
     return False
+
+
+# The broadcast we are trying to make live: titles and the thumbnail go on it
+# even while it is still upcoming (no expensive search needed).
+TARGET_BROADCAST = ""
+# Title and description of the show, for a broadcast we have to make ourselves.
+PENDING_DETAILS: tuple[str, str] = ("", "")
+_MADE_FILE = Path("data/youtube_made_broadcasts.json")
+
+
+def set_target_broadcast(broadcast_id: str) -> None:
+    global TARGET_BROADCAST
+    TARGET_BROADCAST = broadcast_id or TARGET_BROADCAST
+
+
+def set_pending_details(title: str, description: str) -> None:
+    global PENDING_DETAILS
+    PENDING_DETAILS = (title, description)
+
+
+def _made_broadcasts() -> list[str]:
+    try:
+        data = json.loads(_MADE_FILE.read_text())
+        return [str(x) for x in data] if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _remember_broadcast(broadcast_id: str) -> None:
+    try:
+        _MADE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _MADE_FILE.write_text(json.dumps((_made_broadcasts() + [broadcast_id])[-50:]))
+    except Exception:
+        pass
+
+
+def _forget_broadcast(broadcast_id: str) -> None:
+    try:
+        _MADE_FILE.write_text(json.dumps([b for b in _made_broadcasts() if b != broadcast_id]))
+    except Exception:
+        pass
+
+
+def _short(exc: Exception) -> str:
+    text = str(exc)
+    match = re.search(r'"message":\s*"([^"]+)"', text)
+    return (match.group(1) if match else text)[:160]
 
 
 async def _really_streaming(obs: "OBS", seconds: float = 15) -> bool:

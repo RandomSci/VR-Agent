@@ -153,7 +153,12 @@ class StreamAutopilot:
     async def _client_call(self, fn: Callable[..., Any], *args: Any) -> Any:
         return await asyncio.to_thread(fn, *args)
 
-    def _video_id(self, client: Any) -> str:
+    def _video_id(self, client: Any, fresh: bool = False) -> str:
+        if fresh:
+            try:
+                return self.publisher._video_id(client, fresh=True)
+            except TypeError:  # a publisher without the fresh option
+                pass
         return self.publisher._video_id(client)
 
     # ------------------------------------------------------------ start
@@ -225,14 +230,18 @@ class StreamAutopilot:
             await asyncio.sleep(delay)
             await self._show_extras("class")
 
-    async def mode_started(self, title: str, head: str, thumbnail: str = "", show: str = "minecraft") -> None:
+    async def mode_started(self, title: str, head: str, thumbnail: str = "", show: str = "minecraft") -> bool:
         """Minecraft and other modes: their own title, their text above the
-        channel text, their thumbnail and their playlist."""
+        channel text, their thumbnail and their playlist. True once the title
+        is on the live video (the caller tries again until then)."""
         self.goodbye_timeout = 35.0  # the goodbye also stops the game processes
-        await self._rename(title[:100], head + STREAM_BODY)
+        renamed = await self._rename(title[:100], head + STREAM_BODY)
+        if not renamed:
+            return False
         if thumbnail:
             await self.set_thumbnail(thumbnail)
         await self._show_extras(show, thumbnail=bool(thumbnail))
+        return True
 
     async def _show_extras(self, show: str, thumbnail: bool = False) -> None:
         if not thumbnail and THUMBNAILS.get(show, Path("")).is_file():
@@ -309,22 +318,27 @@ class StreamAutopilot:
         except Exception as exc:
             logger.warning(f"Thumbnail not set: {exc}")
 
-    async def _rename(self, title: str, body: str) -> None:
+    async def _rename(self, title: str, body: str) -> bool:
+        """True when the live video has this title (now or already)."""
         if not (self.ready and self.auto_title):
-            return
+            return True  # nothing to do, nothing to retry
         if title == self._last_title:
-            return
+            return True
         self._last_title = title
         if self.settings.dry_run:
             logger.info(f"Dry run: would rename the stream to: {title}")
-            return
+            return True
         try:
             client = self.publisher._youtube_factory()
-            video_id = await self._client_call(self._video_id, client)
+            # fresh: a video id remembered from before going live may be an old broadcast
+            video_id = await self._client_call(self._video_id, client, True)
             if not video_id:
+                from .obs_control import set_pending_details
+
+                set_pending_details(title, body)  # a broadcast we make ourselves gets them
                 logger.info("Stream autopilot: no live stream found to rename yet")
                 self._last_title = ""
-                return
+                return False
             published = self.publisher.store.published()
             if published:
                 body = desc.fit_description(
@@ -333,9 +347,11 @@ class StreamAutopilot:
             snippet = await self._client_call(client.get_snippet, video_id)
             await self._client_call(client.set_title_and_description, video_id, snippet, title, body)
             logger.info(f"Stream autopilot: stream renamed to: {title}")
+            return True
         except Exception as exc:
             self._last_title = ""
             logger.warning(f"Stream title not updated: {exc}")
+            return False
 
     # ------------------------------------------------------------ ending
     async def end_stream(self, reason: str = "limit") -> None:

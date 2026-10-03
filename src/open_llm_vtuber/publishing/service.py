@@ -116,7 +116,15 @@ class PublicationService:
         try:
             client = client or self._youtube_factory()
             found = client.find_active_broadcast_video_id()
-            if not found and s.youtube_channel_id:
+            if not found:
+                # the broadcast being started right now (still upcoming): its
+                # title and thumbnail can be set before it goes live
+                from .obs_control import TARGET_BROADCAST
+
+                found = TARGET_BROADCAST
+            if not found and s.youtube_channel_id and now - getattr(self, "_searched_at", 0.0) > 1800:
+                # 100 quota units a call: it ran out the daily search quota
+                self._searched_at = now
                 found = client.find_live_video_by_channel(s.youtube_channel_id)
         except YouTubeError as exc:
             logger.warning(f"Could not find the live stream: {exc}")

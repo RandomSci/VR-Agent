@@ -23,6 +23,19 @@ class FakeClient:
     def upcoming_broadcasts(self):
         return self.upcoming
 
+    def broadcast_status(self, bid):
+        if self.live and any(c[:3] == ("transition", bid, "live") for c in self.calls):
+            return "live"
+        if any(c[:3] == ("transition", bid, "testing") for c in self.calls):
+            return "testing"
+        for b in self.upcoming + self.active:
+            if b["id"] == bid:
+                return b["life"]
+        return "ready" if bid == "new1" else ""
+
+    def delete_broadcast(self, bid):
+        self.calls.append(("delete", bid))
+
     def transition(self, bid, status):
         self.calls.append(("transition", bid, status))
         if status == "live":

@@ -341,16 +341,11 @@ def test_director_camera_frames_both_girls_and_the_build(monkeypatch):
         eng = _live_engine(monkeypatch)
         clock = [1000.0]
         monkeypatch.setattr(mm.time, "time", lambda: clock[0])
-
-        async def no_wait(_s):
-            return None
-
-        monkeypatch.setattr(mm.asyncio, "sleep", no_wait)
         commands = []
 
         async def rcon(cmd, reply=False):
             commands.append(cmd)
-            return True
+            return "Test passed" if cmd.startswith("execute if entity") else "ok"
 
         async def who():
             return {"mika", "luna", "selwyn"}
@@ -362,20 +357,37 @@ def test_director_camera_frames_both_girls_and_the_build(monkeypatch):
             eng._seen_at[cid] = clock[0]
         eng.build_focus = (20.0, 72.0, 3.0)
         await eng._camera_tick()
-        assert not any(c.startswith("spectate") for c in commands)
-        tp = [c for c in commands if c.startswith("tp Selwyn")]
-        assert len(tp) == 1 and " facing " in tp[0]
-        cx, cy, cz = map(float, tp[0].split()[2:5])
-        assert cx < 0 and cy > 70  # behind and above the girls, looking at them and the build
-        await eng._camera_tick()
-        assert len([c for c in commands if c.startswith("tp Selwyn")]) == 1  # nothing moved: same shot
-        clock[0] += mm.CAMERA_SHOT_SECONDS + 1
+        # your view rides an invisible camera stand: no teleports of the player itself
+        assert not any(c.startswith("tp Selwyn") for c in commands)
+        assert any(c.startswith("summon minecraft:armor_stand") and "Invisible:1b" in c for c in commands)
+        assert commands[-1] == f"spectate @e[tag={mm.CAM_TAG},limit=1] Selwyn"
+        x, y, z = eng._pose[:3]
+        assert x < 0 and y > 70  # behind and above the girls, looking at them and the build
+        # the next piece is on the other side: the stand glides there in small steps
+        eng.build_focus = (-30.0, 72.0, 3.0)
+        clock[0] += 1
         eng._seen_at = {"mika": clock[0], "luna": clock[0]}
-        eng.build_focus = (-30.0, 72.0, 3.0)  # the next piece is on the other side
         await eng._camera_tick()
-        glide = [c for c in commands if c.startswith("tp Selwyn")][1:]
-        assert len(glide) == int(mm.CAMERA_MOVE[0] * mm.CAMERA_MOVE[1])  # a smooth move, not a jump
-        assert float(glide[-1].split()[2]) > 0  # now from the other side
+        assert eng._shot[0][0] > 0
+        start = eng._pose[0]
+        steps = []
+        real_sleep = asyncio.sleep
+
+        async def tick(_s):
+            await real_sleep(0)
+            if len(steps) >= 40:
+                raise asyncio.CancelledError
+            steps.append(eng._pose[0])
+
+        monkeypatch.setattr(mm.asyncio, "sleep", tick)
+        try:
+            await eng._camera_follow()
+        except asyncio.CancelledError:
+            pass
+        moves = [c for c in commands if c.startswith(f"tp @e[tag={mm.CAM_TAG}")]
+        assert len(moves) >= 20  # many tiny moves, not one jump
+        deltas = [abs(b - a) for a, b in zip(steps, steps[1:])]
+        assert max(deltas) < 3 and eng._pose[0] > start  # smooth, heading to the new side
 
     asyncio.run(run())
 
