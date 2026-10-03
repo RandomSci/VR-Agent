@@ -94,6 +94,9 @@ CREATIVE_BLOCKED = [
     "!startConversation", "!endConversation",
 ]
 PIECE_SECONDS = (4.0, 20.0)  # creative: at least / at most this long per piece
+SIDE_GAP = 2.5  # each girl hovers this far to her own side of a shared spot (they are 5 apart)
+PERSONAL_SPACE = 3.0  # closer than this (sideways) and she moves further aside
+PART_DISTANCE = 4.5  # overlapping anyway: the other girl flies this far aside
 CHOICE_HOLD = 25.0  # after a girl flies somewhere herself, the builder leaves her alone this long
 NUDGE_SECONDS = 45.0  # creative: one girl is asked what she wants to do next this often
 # Places a girl can fly to herself (!flyToPlace): where she hovers and what she looks at, base relative.
@@ -411,6 +414,9 @@ class MinecraftEngine:
         self._build_event = asyncio.Event()
         self._chose_at: dict[str, float] = {}
         self._opped: set[str] = set()
+        self._target: dict[str, tuple[float, float, float]] = {}  # where each girl is flying to (absolute)
+        self._close_since = 0.0
+        self._parted_at = 0.0
         from .minecraft_net_show import NetShow
 
         self.net_show = NetShow(self.projects, lambda *a, **k: rcon_command(*a, **k), self._tell_one, self._push)
@@ -892,6 +898,8 @@ class MinecraftEngine:
             return
         if not self.creative:
             await self._keep_together()
+        else:
+            await self._part_if_overlapping()
         try:
             await self.projects.update(
                 {self.names[c]: self._pos[c] for c in hud if c in self._pos},
@@ -1206,11 +1214,23 @@ class MinecraftEngine:
                 logger.warning(f"Minecraft: building failed: {exc}")
                 await asyncio.sleep(5)
 
+    def _hop_spot(self, cid: str, x: float, y: float, z: float, lx: float, lz: float) -> tuple[float, float, float]:
+        """While building: her hover point, unless her friend is (or is going) right there."""
+        friend = self._friend(cid)
+        for other in (self._target.get(friend), self._pos.get(friend)) if friend != cid else ():
+            if other is None:
+                continue
+            if ((x - other[0]) ** 2 + (z - other[2]) ** 2) ** 0.5 < PERSONAL_SPACE and abs(y - other[1]) < 2.5:
+                return self._own_spot(cid, x, y, z, lx, lz)
+        self._target[cid] = (x, y, z)
+        return x, y, z
+
     async def _hop(self, cid: str, hover: tuple, look: tuple, last: Optional[tuple]) -> float:
         """A short straight hop (base relative), looking at what she lays next."""
         bx, by, bz = self.projects.state["base"]
         x, y, z = bx + hover[0], by + hover[1], bz + hover[2]
         lx, ly, lz = bx + look[0], by + look[1], bz + look[2]
+        x, y, z = self._hop_spot(cid, x, y, z, lx, lz)
         # cruise -60 (the lowest the command takes) means: straight there, a short hop
         await self._command(cid, f"!flyTo({x:.1f}, {y:.1f}, {z:.1f}, {lx:.1f}, {ly:.1f}, {lz:.1f}, -60)")
         if last is None:
@@ -1287,11 +1307,37 @@ class MinecraftEngine:
         if progress >= 1.0:
             await self.projects.finish_timed()
 
+    def _own_spot(self, cid: str, x: float, y: float, z: float, lx: float, lz: float) -> tuple[float, float, float]:
+        """Her own spot: never where her friend is or is flying to.
+
+        Both girls used to get the very same point for a place ("garden"), so
+        they ended up inside each other and Mika's eyes (the stream camera)
+        showed nothing but Luna's face. Each girl now keeps to her own side of
+        the spot (Mika left, Luna right, seen from the spot toward what they
+        look at), and moves further aside if her friend is still too close."""
+        dx, dz = lx - x, lz - z
+        length = (dx * dx + dz * dz) ** 0.5
+        if length < 0.5:
+            dx, dz, length = 1.0, 0.0, 1.0
+        side = (-dz / length, dx / length)  # to the left of the view direction
+        sign = 1.0 if self.cast.index(cid) % 2 == 0 else -1.0
+        x, z = x + side[0] * SIDE_GAP * sign, z + side[1] * SIDE_GAP * sign
+        friend = self._friend(cid)
+        if friend != cid:
+            for other in (self._target.get(friend), self._pos.get(friend)):
+                if other is None:
+                    continue
+                if ((x - other[0]) ** 2 + (z - other[2]) ** 2) ** 0.5 < PERSONAL_SPACE and abs(y - other[1]) < 2.5:
+                    x, z = x + side[0] * PERSONAL_SPACE * sign, z + side[1] * PERSONAL_SPACE * sign
+        self._target[cid] = (x, y, z)
+        return x, y, z
+
     async def _fly(self, cid: str, view: tuple, focus: tuple) -> float:
         """Send her flying to `view` (base relative), looking at `focus`. Returns about how long it takes."""
         bx, by, bz = self.projects.state["base"]
         x, y, z = bx + view[0], by + view[1], bz + view[2]
         lx, ly, lz = bx + focus[0], by + focus[1], bz + focus[2]
+        x, y, z = self._own_spot(cid, x, y, z, lx, lz)
         here = self._pos.get(cid, (x, y, z))
         across = ((here[0] - x) ** 2 + (here[2] - z) ** 2) ** 0.5
         cruise = by + 22 if across > 12 else 0  # long trips go over the castle
@@ -1366,11 +1412,16 @@ class MinecraftEngine:
         fly through blocks), put her there with a plain teleport."""
         await asyncio.sleep(flight)
         bx, by, bz = self.projects.state["base"]
-        x, y, z = bx + view[0], by + view[1], bz + view[2]
+        # where she really flew to (her own side of the spot, see _own_spot)
+        x, y, z = self._target.get(cid) or (bx + view[0], by + view[1], bz + view[2])
         here = self._pos.get(cid)
         if here and ((here[0] - x) ** 2 + (here[1] - y) ** 2 + (here[2] - z) ** 2) ** 0.5 <= 3:
             return
-        await rcon_command(f"tp {self.names[cid]} {x:.1f} {y:.1f} {z:.1f}")
+        # only into open air (never into a wall or into her friend)
+        await rcon_command(
+            f"execute positioned {x:.1f} {y:.1f} {z:.1f} if block ~ ~ ~ minecraft:air "
+            f"if block ~ ~1 ~ minecraft:air run tp {self.names[cid]} {x:.1f} {y:.1f} {z:.1f}"
+        )
         await asyncio.sleep(1.0)
         lx, ly, lz = bx + focus[0], by + focus[1], bz + focus[2]
         await self._command(cid, f"!flyTo({x:.1f}, {y:.1f}, {z:.1f}, {lx:.1f}, {ly:.1f}, {lz:.1f}, 0)")  # just to look
@@ -1403,6 +1454,38 @@ class MinecraftEngine:
             await self.link.emit("send-message", self.names[cid], {"from": "system", "message": text})
         for cid in self.cast:
             await self._react(cid, "celebrate")
+
+    async def _part_if_overlapping(self) -> None:
+        """Creative: the two girls inside each other for a few seconds (after a
+        restart they log in where they stood, a flight got blocked): the one
+        who is not the camera flies a few blocks aside, still in view."""
+        now = time.time()
+        if len(self.cast) < 2 or not all(
+            c in self._pos and now - self._seen_at.get(c, 0) < 10 for c in self.cast[:2]
+        ):
+            return
+        eyes = self.cam_focus if self.cam_focus in self.cast else self.cast[0]
+        other = self._friend(eyes)
+        (ex, ey, ez), (ox, oy, oz) = self._pos[eyes], self._pos[other]
+        if ((ex - ox) ** 2 + (ez - oz) ** 2) ** 0.5 >= 1.5 or abs(ey - oy) >= 2.0:
+            self._close_since = 0.0
+            return
+        self._close_since = self._close_since or now
+        if now - self._close_since < 2.0 or now - self._parted_at < 8.0:
+            return
+        self._parted_at = now
+        dx, dz = ox - ex, oz - ez
+        length = (dx * dx + dz * dz) ** 0.5
+        if length < 0.3:  # exactly on top of each other: step to the side
+            dx, dz, length = (1.0, 0.0, 1.0) if self.build_focus is None else (
+                -(self.build_focus[2] - ez), self.build_focus[0] - ex, 1.0)
+            length = (dx * dx + dz * dz) ** 0.5 or 1.0
+        tx, tz = ex + dx / length * PART_DISTANCE, ez + dz / length * PART_DISTANCE
+        ty = ey + 0.5
+        lx, ly, lz = self.build_focus or (ex, ey + 1.6, ez)
+        self._target[other] = (tx, ty, tz)
+        await self._command(other, f"!flyTo({tx:.1f}, {ty:.1f}, {tz:.1f}, {lx:.1f}, {ly:.1f}, {lz:.1f}, -60)")
+        logger.info(f"Minecraft: {self.names[other]} was inside {self.names[eyes]}'s view, moved {PART_DISTANCE:.0f} blocks aside")
 
     async def _keep_together(self) -> None:
         """Far apart for a minute: the one who wandered off walks back."""
@@ -1973,13 +2056,13 @@ def enable_rcon() -> None:
 
 
 async def bring_into_view(mover: str, friend: str) -> bool:
-    """Put `mover` a few blocks in front of `friend` so the
-    camera (through the friend's eyes) shows both girls. Spots that are not
+    """Put `mover` a few blocks in front of `friend` (a little to the side) so
+    the camera through the friend's eyes shows all of her. Spots that are not
     free (a wall, a tree, a slope) are skipped, so nobody ends up inside
-    blocks; a plain tp is the last resort."""
-    for up, ahead in ((0, 3), (1, 3), (0, 2), (1, 2), (2, 3), (0, 4)):
+    blocks. No free spot: False (she is told to come back instead)."""
+    for up, ahead in ((0, 4), (1, 4), (0, 5), (1, 5), (0, 3), (2, 4)):
         command = (
-            f"execute at {friend} rotated ~ 0 positioned ^ ^{up} ^{ahead} "
+            f"execute at {friend} rotated ~ 0 positioned ^1.5 ^{up} ^{ahead} "
             f"if block ~ ~ ~ minecraft:air if block ~ ~1 ~ minecraft:air "
             f"run tp {mover} ~ ~ ~"
         )
@@ -1988,7 +2071,9 @@ async def bring_into_view(mover: str, friend: str) -> bool:
             return False  # no RCON at all
         if isinstance(reply, str) and reply.startswith("Teleported"):
             return True
-    return bool(await rcon_command(f"tp {mover} {friend}"))
+    # No free spot: never "tp mover friend", that puts her inside her friend
+    # (the camera through the friend's eyes then shows only a face).
+    return False
 
 
 async def rcon_online() -> Optional[set[str]]:

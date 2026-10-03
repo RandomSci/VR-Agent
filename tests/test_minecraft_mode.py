@@ -485,3 +485,71 @@ def test_both_girls_lay_a_piece_block_by_block(monkeypatch):
         assert {c for c, t in hops if t.endswith(", -60)")} == {"mika", "luna"} and len(short) == len(runs)
 
     asyncio.run(run())
+
+
+def test_both_girls_never_get_the_same_spot(monkeypatch):
+    """"Go to the garden" for both used to put them in one point: Mika's eyes
+    (the stream camera) then showed only Luna's face."""
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng.projects.state.update({"base": [8, 62, -81]})
+        sent = []
+
+        async def command(cid, text):
+            sent.append((cid, text))
+            return True
+
+        eng._command = command
+        view, focus = mm.PLACES["garden"]
+        await eng._fly("mika", view, focus)
+        await eng._fly("luna", view, focus)
+        (mx, my, mz), (lx, ly, lz) = eng._target["mika"], eng._target["luna"]
+        assert ((mx - lx) ** 2 + (mz - lz) ** 2) ** 0.5 >= 2 * mm.SIDE_GAP - 0.01
+        # Luna already hovers where Mika's spot would be: Mika moves further aside
+        eng._target.clear()
+        eng._pos["luna"] = (8 + view[0] + mm.SIDE_GAP * 0.0, 62 + view[1], -81 + view[2])
+        await eng._fly("mika", view, focus)
+        mx, _my, mz = eng._target["mika"]
+        lx, _ly, lz = eng._pos["luna"]
+        assert ((mx - lx) ** 2 + (mz - lz) ** 2) ** 0.5 >= mm.PERSONAL_SPACE
+
+    asyncio.run(run())
+
+
+def test_overlapping_girls_are_parted(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        sent = []
+
+        async def command(cid, text):
+            sent.append((cid, text))
+            return True
+
+        eng._command = command
+        now = mm.time.time()
+        eng._pos = {"mika": (10.0, 70.0, 10.0), "luna": (10.4, 70.0, 10.2)}
+        eng._seen_at = {"mika": now, "luna": now}
+        await eng._part_if_overlapping()
+        assert not sent  # a moment of overlap is fine
+        eng._close_since = now - 3
+        await eng._part_if_overlapping()
+        assert sent and sent[0][0] == "luna" and sent[0][1].startswith("!flyTo(")  # never the camera girl
+        tx, _ty, tz = eng._target["luna"]
+        assert ((tx - 10) ** 2 + (tz - 10) ** 2) ** 0.5 >= mm.PART_DISTANCE - 0.01
+
+    asyncio.run(run())
+
+
+def test_bring_into_view_never_stacks_them(monkeypatch):
+    async def run():
+        commands = []
+
+        async def rcon(cmd, reply=False):
+            commands.append(cmd)
+            return "No entity was found"  # no free spot anywhere
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        assert await mm.bring_into_view("Luna", "Mika") is False
+        assert "tp Luna Mika" not in commands
+
+    asyncio.run(run())
