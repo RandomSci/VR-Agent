@@ -630,3 +630,98 @@ def test_bring_into_view_never_stacks_them(monkeypatch):
         assert "tp Luna Mika" not in commands
 
     asyncio.run(run())
+
+
+def test_a_flood_of_comments_is_answered_in_batches(monkeypatch):
+    """30 viewers at once: one AI call at a time, up to three viewers per answer,
+    newcomers first, nothing piles up behind old answers."""
+    async def run():
+        eng = _live_engine(monkeypatch)
+        calls = []
+
+        async def reply_text(cid, author, text, more=None):
+            calls.append([author] + [a for a, _t in more or []])
+            await asyncio.sleep(0.01)
+            return f"Hi {author}!"
+
+        eng.reply_text = reply_text
+        for i in range(30):
+            eng.enqueue(f"viewer{i}", f"Luna build a tower {i}")
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if eng.viewer_lines:
+                eng.viewer_lines.popleft()  # she speaks them
+            if not eng.chat_queue and eng._answer_task and eng._answer_task.done():
+                break
+        answered = [a for call in calls for a in call]
+        assert len(answered) == 30 and len(set(answered)) == 30  # everyone once
+        assert len(calls) <= 11 and max(len(c) for c in calls) == mm.ANSWER_BATCH
+
+    asyncio.run(run())
+
+
+def test_old_comments_are_skipped_when_chat_is_busy(monkeypatch):
+    eng = _engine()
+    now = mm.time.time()
+    eng.chat_queue.extend([
+        {"who": "luna", "author": "old", "text": "hi", "at": now - 100, "first": True},
+        {"who": "luna", "author": "regular", "text": "hi", "at": now - 5, "first": False},
+        {"who": "luna", "author": "new", "text": "hi", "at": now - 1, "first": True},
+    ])
+    batch = eng._next_batch()
+    assert [c["author"] for c in batch] == ["new", "regular"]  # newcomers first, the stale one dropped
+
+
+def test_a_bot_gets_a_busy_chat_in_one_message(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng.link.connected.set()
+        now = mm.time.time()
+        for i in range(3):
+            eng.outbox.append({"to": "luna", "from": f"v{i}", "text": f"hello {i}", "at": now})
+        task = asyncio.create_task(eng._deliver_loop())
+        await asyncio.sleep(0.7)
+        task.cancel()
+        luna = [m for m in eng.link.sent if m[0] == "Luna"]
+        assert len(luna) == 1 and all(f"v{i}: hello {i}" in luna[0][1]["message"] for i in range(3))
+
+    asyncio.run(run())
+
+
+def test_she_goes_back_to_building_after_a_viewer_request(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng.projects.state.update({"base": [8, 62, -81]})
+        flights = []
+
+        async def fly(cid, view, focus):
+            flights.append((cid, view))
+            return 0.0
+
+        async def arrive(*a):
+            return None
+
+        clock = [1000.0]
+        monkeypatch.setattr(mm.time, "time", lambda: clock[0])
+
+        async def tick(_s):
+            clock[0] += 5.0  # time passes while the build waits for her
+
+        monkeypatch.setattr(mm.asyncio, "sleep", tick)
+        eng._fly, eng._arrive = fly, arrive
+        eng._chose_at["luna"] = 1000.0  # a viewer just sent her to the castle
+        assert await eng._back_to_work("luna", (1, 2, 3), (0, 0, 0))
+        assert clock[0] - 1000.0 >= mm.CHOICE_HOLD and flights == [("luna", (1, 2, 3))]
+        assert eng.lines and eng.lines[0]["text"] in mm.EXCLAIM["back"]
+        assert not await eng._back_to_work("luna", (1, 2, 3), (0, 0, 0))  # not busy: no wait
+
+    asyncio.run(run())
+
+
+def test_a_wrong_guess_gets_an_argh(monkeypatch):
+    eng = _engine()
+    eng._exclaim("luna", "wrong", {"digit": 4, "guess": 9})
+    text = eng.lines[0]["text"]
+    assert "4" in text and "9" in text and mm.pick_mood(text) in ("lose", "celebrate", "surprised")
+    eng._exclaim("mika", "done")  # too soon after the last one: quiet
+    assert len(eng.lines) == 1

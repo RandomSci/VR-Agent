@@ -96,6 +96,10 @@ CREATIVE_BLOCKED = [
 PIECE_SECONDS = (4.0, 20.0)  # creative: at least / at most this long per piece
 SIDE_GAP = 2.5  # each girl hovers this far to her own side of a shared spot (they are 5 apart)
 PERSONAL_SPACE = 3.0  # closer than this (sideways) and she moves further aside
+CHAT_MAX_AGE = 40.0  # a comment not answered by then is skipped (busy chat moves on)
+ANSWER_BATCH = 3  # one spoken answer covers up to this many viewers
+BOT_BATCH = 4  # one message to a bot carries up to this many comments
+EXCLAIM_GAP = 20.0  # at most one engine exclamation this often
 HAND_WAIT = 8.0  # seconds (plus some per block) for a run laid by hand before the rest just appears
 PART_DISTANCE = 4.5  # overlapping anyway: the other girl flies this far aside
 CHOICE_HOLD = 25.0  # after a girl flies somewhere herself, the builder leaves her alone this long
@@ -108,6 +112,20 @@ PLACES = {
     "garden": ((0, 14, 42), (0, 0, 21)),
     "base": ((-6, 6, -14), (0, 2, 0)),
     "sky": ((-20, 48, -40), (0, 0, 0)),
+}
+# How the girls sound: real reactions, not polite narration.
+EMOTIONS = (
+    "Show big feelings out loud with short interjections: Argh!!! when something fails or gets in your way, "
+    "Yesss! or Woohoo! when a piece is done, Nooo! when the network guesses wrong, Wait, what?! when surprised, "
+    "Hmph! when your friend teases you, Ugh! when it is tedious. Mix them up, never the same one twice in a row. "
+)
+# Said by the engine itself at big moments (no AI call): quick, loud, varied.
+EXCLAIM = {
+    "done": ("Yesss! That piece is done!", "Woohoo! Look at that, finished!", "Ha! Nailed it!",
+             "Done! Oh, that looks so good!", "Wheee! Another piece up!", "Yes yes yes! Next one!"),
+    "wrong": ("Argh!!! It guessed {guess}? That was a {digit}!", "Nooo! A {guess}?! Come on, it is a {digit}!",
+              "Ugh, so close! It said {guess}, it was a {digit}.", "Wait, what?! {guess}? Little network, focus!"),
+    "back": ("Okay okay, back to building!", "Right, where was I? Back to work!", "Hmph, fine, back to the build!"),
 }
 # What the girls know about themselves and the show (true facts).
 SYSTEM_FACTS = (
@@ -173,9 +191,9 @@ STREAM_HEAD = (
 )
 
 MOODS = (
-    ("lose", re.compile(r"\b(died|dead|i lost|oh no|nooo|ugh|lost everything)\b", re.I)),
+    ("lose", re.compile(r"\b(died|dead|i lost|oh no|noo+|ugh+|argh+|hmph|lost everything)\b", re.I)),
     ("surprised", re.compile(r"\b(creeper|zombie|skeleton|spider|whoa|woah|help|run|lava|ouch|ow)\b", re.I)),
-    ("celebrate", re.compile(r"\b(diamonds?|found|got it|did it|finally|yay|woo+|built|crafted|done)\b|!{2,}", re.I)),
+    ("celebrate", re.compile(r"\b(diamonds?|found|got it|did it|finally|yay|yes+s|woo+|wheee+|built|crafted|done|nailed it)\b|!{2,}", re.I)),
     ("thinking", re.compile(r"\b(hmm+|let me think|where|maybe|i wonder)\b", re.I)),
 )
 NOT_SPEECH = re.compile(
@@ -415,6 +433,11 @@ class MinecraftEngine:
         self._build_event = asyncio.Event()
         self._chose_at: dict[str, float] = {}
         self._opped: set[str] = set()
+        self.chat_queue: deque[dict[str, Any]] = deque(maxlen=40)  # comments waiting for a spoken answer
+        self._answer_task: Optional[asyncio.Task] = None
+        self._answered: set[str] = set()  # viewers who already got an answer (newcomers go first)
+        self._exclaimed_at = 0.0
+        self._net_seen: Any = None
         self._jobs: dict[int, dict[str, Any]] = {}  # runs being laid by hand
         self._job_seq = 0
         self._target: dict[str, tuple[float, float, float]] = {}  # where each girl is flying to (absolute)
@@ -466,7 +489,9 @@ class MinecraftEngine:
         # Mindcraft alone took minutes: a bot drops its reply whenever another
         # message reaches it while it is still thinking.
         answer = targets[0] if len(targets) == 1 else self._quietest(targets)
-        asyncio.create_task(self._quick_reply(answer, author, heard))
+        first_time = author not in self._answered
+        self.chat_queue.append({"who": answer, "author": author, "text": heard, "at": now, "first": first_time})
+        self._kick_answers()
         for cid in targets:
             note = (
                 " (You already answered out loud. Do not greet again: if this asks for something, "
@@ -728,6 +753,7 @@ class MinecraftEngine:
             "one or two short, lively sentences with real personality and emotion, never lists, never robot talk, "
             "never call yourself a bot or an AI assistant. "
             "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
+            + EMOTIONS +
             f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by name, "
             "react to them, and do what they ask when it is fun and possible, but you decide. "
             f"You and {friend} are a team: stay near her, "
@@ -754,6 +780,7 @@ class MinecraftEngine:
                 "one or two short, lively sentences with real personality and emotion, never lists, never robot talk, "
                 "never call yourself a bot or an AI assistant. "
                 "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
+                + EMOTIONS +
                 f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by "
                 "name and react to them. " + SYSTEM_FACTS
             )
@@ -1198,9 +1225,11 @@ class MinecraftEngine:
                 self.build_focus = (bx + step["focus"][0], by + step["focus"][1], bz + step["focus"][2])
                 runs = [r for c in step["commands"] for r in lay(c)]
                 # whoever did not just fly somewhere of her own choosing builds
-                free = [c for c in here if time.time() - self._chose_at.get(c, 0) > CHOICE_HOLD] or here
+                free = [c for c in here if time.time() - self._chose_at.get(c, 0) > CHOICE_HOLD]
                 if self._build_now in here and self._build_now not in free:
                     free.append(self._build_now)
+                if not free:
+                    continue  # both are doing what chat asked: the build waits for them
                 self._build_now = None
                 self._build_event.clear()
                 half = (len(runs) + 1) // 2
@@ -1212,6 +1241,7 @@ class MinecraftEngine:
                 self.projects.state["built"] = done + 1
                 self.projects.state["progress"] = (done + 1) / len(steps)
                 self.projects._save()
+                self._exclaim(random.choice(free), "done")
                 self.view["project"] = self.projects.view()
                 await self._push({"kind": "project", **self.view["project"]})
             except asyncio.CancelledError:
@@ -1265,13 +1295,27 @@ class MinecraftEngine:
         for run in runs:
             cx, cy, cz = center(run)
             hover = (cx + dx * 3, cy + 1.5, cz + dz * 3)
-            await asyncio.sleep(await self._hop(cid, hover, (cx, cy, cz), last))
-            last = hover
-            if not await self._lay_by_hand(cid, run):
+            if await self._back_to_work(cid, hover, (cx, cy, cz)):
+                last = hover  # she flew back from what a viewer asked: right at this run
+            else:
+                await asyncio.sleep(await self._hop(cid, hover, (cx, cy, cz), last))
+                last = hover
+            if not await self._lay_by_hand(cid, run, hover, (cx, cy, cz)):
                 return False
         return True
 
-    async def _lay_by_hand(self, cid: str, run: str) -> bool:
+    async def _back_to_work(self, cid: str, hover: tuple, look: tuple) -> bool:
+        """She flew off because a viewer (or she herself) asked for something:
+        the build waits for her, then she flies back to where she left off."""
+        if time.time() - self._chose_at.get(cid, 0) >= CHOICE_HOLD:
+            return False
+        while time.time() - self._chose_at.get(cid, 0) < CHOICE_HOLD:
+            await asyncio.sleep(1.0)
+        self._exclaim(cid, "back")
+        await self._arrive(cid, hover, look, await self._fly(cid, hover, look))
+        return True
+
+    async def _lay_by_hand(self, cid: str, run: str, hover: Optional[tuple] = None, look: Optional[tuple] = None) -> bool:
         """She lays a run block by block with her hand: block in hand, a look
         and a swing per block, and each block appears on its swing (with the
         place sound). Whatever she could not lay (interrupted, an old
@@ -1281,29 +1325,38 @@ class MinecraftEngine:
         if blocks is None:  # a summon, clearing, a special fill: it just happens
             return await self.projects.place_one(run)
         spots, block = blocks
-        self._job_seq += 1
-        job = self._job_seq
         sound = place_sound(block)
-        self._jobs[job] = {
-            "commands": [
-                (f"setblock {x} {y} {z} {block}", f"playsound minecraft:{sound} block @a {x} {y} {z} 1 1")
-                for x, y, z in spots
-            ],
-            "done": set(),
-            "event": asyncio.Event(),
-        }
-        spot_text = ";".join(f"{x} {y} {z}" for x, y, z in spots)
-        try:
-            if await self._command(cid, f'!layBlocks({job}, "{hand_item(block)}", "{spot_text}")'):
-                try:
-                    await asyncio.wait_for(self._jobs[job]["event"].wait(), timeout=HAND_WAIT + len(spots) * 0.6)
-                except asyncio.TimeoutError:
-                    logger.debug(f"Minecraft: {self.names[cid]} did not finish laying by hand, the rest appears")
-            if len(self._jobs[job]["done"]) < len(spots):
-                return await self.projects.place_one(run)
-            return True
-        finally:
-            self._jobs.pop(job, None)
+        for _attempt in range(3):
+            started = time.time()
+            self._job_seq += 1
+            job = self._job_seq
+            self._jobs[job] = {
+                "commands": [
+                    (f"setblock {x} {y} {z} {block}", f"playsound minecraft:{sound} block @a {x} {y} {z} 1 1")
+                    for x, y, z in spots
+                ],
+                "done": set(),
+                "event": asyncio.Event(),
+            }
+            spot_text = ";".join(f"{x} {y} {z}" for x, y, z in spots)
+            try:
+                if await self._command(cid, f'!layBlocks({job}, "{hand_item(block)}", "{spot_text}")'):
+                    try:
+                        await asyncio.wait_for(self._jobs[job]["event"].wait(), timeout=HAND_WAIT + len(spots) * 0.6)
+                    except asyncio.TimeoutError:
+                        logger.debug(f"Minecraft: {self.names[cid]} did not finish laying by hand")
+                done = self._jobs[job]["done"]
+            finally:
+                self._jobs.pop(job, None)
+            spots = [p for i, p in enumerate(spots) if i not in done]
+            if not spots:
+                return True
+            # A viewer sent her somewhere mid-run: she comes back and lays the rest herself.
+            if hover is not None and look is not None and self._chose_at.get(cid, 0) >= started:
+                await self._back_to_work(cid, hover, look)
+                continue
+            break
+        return await self.projects.place_one(run)  # whatever is left just appears
 
     async def _hand_event(self, words: list[str]) -> None:
         """'put <job> <i>': her hand hit block i, set it now. 'laid <job>': done."""
@@ -1509,6 +1562,11 @@ class MinecraftEngine:
             try:
                 await self.net_show.tick()
                 self.view["net"] = self.net_show.stats()
+                result = getattr(self.net_show, "last", None)
+                if isinstance(result, dict) and result is not self._net_seen:
+                    self._net_seen = result
+                    if result.get("right") is False:
+                        self._exclaim(self._quietest(self._present()), "wrong", result)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1604,23 +1662,24 @@ class MinecraftEngine:
             if not self.outbox or not self.link.connected.is_set():
                 continue
             now = time.time()
-            waiting = list(self.outbox)
+            waiting = [item for item in self.outbox if now - item["at"] <= 90]
             self.outbox.clear()
-            for item in waiting:
-                if now - item["at"] > 90:
-                    continue
-                cid = item["to"]
+            for cid in dict.fromkeys(item["to"] for item in waiting):
+                mine = [item for item in waiting if item["to"] == cid]
                 if now - self.last_to_bot.get(cid, 0) < BOT_GAP:
-                    self.outbox.append(item)
+                    self.outbox.extend(mine)
                     continue
                 self.last_to_bot[cid] = now
-                ok = await self.link.emit(
-                    "send-message", self.names[cid], {"from": item["from"], "message": item["text"]}
-                )
+                if len(mine) == 1:
+                    sender, text = mine[0]["from"], mine[0]["text"]
+                else:  # a busy chat: one message (one AI call) with all of them
+                    sender = "YouTube chat"
+                    text = " | ".join(f"{m['from']}: {m['text']}" for m in mine[-BOT_BATCH:])
+                ok = await self.link.emit("send-message", self.names[cid], {"from": sender, "message": text})
                 if ok:
-                    logger.info(f"Minecraft chat {item['from']} -> {self.names[cid]}: {item['text'][:60]}")
+                    logger.info(f"Minecraft chat {sender} -> {self.names[cid]}: {text[:60]}")
                 else:
-                    self.outbox.append(item)
+                    self.outbox.extend(mine)
 
     # ------------------------------------------------------------ voice and body
     async def _speak_loop(self) -> None:
@@ -1639,17 +1698,74 @@ class MinecraftEngine:
                 continue
             await self._say(line["who"], line["text"], pick_mood(line["text"]), short=True)
 
-    async def _quick_reply(self, cid: str, author: str, text: str) -> None:
+    async def _quick_reply(self, cid: str, author: str, text: str, more: Optional[list[tuple[str, str]]] = None) -> None:
         started = time.time()
-        line = await self.reply_text(cid, author, text)
+        line = await self.reply_text(cid, author, text, more)
         if not line:
             return
         self.viewer_lines.append({"who": cid, "text": line, "at": time.time()})
         self.line_ready.set()
-        logger.info(f"Minecraft: {self.names[cid]} answers {author} ({time.time() - started:.1f}s): {line}")
+        who = ", ".join([author] + [a for a, _t in more or []])
+        logger.info(f"Minecraft: {self.names[cid]} answers {who} ({time.time() - started:.1f}s): {line}")
 
-    async def reply_text(self, cid: str, author: str, text: str) -> str:
-        """One or two short spoken sentences from her to a viewer."""
+    def _exclaim(self, cid: str, kind: str, info: Optional[dict[str, Any]] = None) -> None:
+        """A loud, quick reaction at a big moment, said by the engine (no AI call)."""
+        now = time.time()
+        if now - self._exclaimed_at < EXCLAIM_GAP or cid not in self.names:
+            return
+        self._exclaimed_at = now
+        text = random.choice(EXCLAIM[kind]).format(**(info or {}))
+        self.lines.appendleft({"who": cid, "text": text, "at": now})
+        self.line_ready.set()
+
+    def _kick_answers(self) -> None:
+        if self._answer_task is None or self._answer_task.done():
+            self._answer_task = asyncio.create_task(self._answer_loop(), name="mc-answers")
+
+    def _next_batch(self) -> list[dict[str, Any]]:
+        """The comments for the next spoken answer: first-time viewers and
+        whoever waited longest first, up to ANSWER_BATCH for the same girl.
+        Comments older than CHAT_MAX_AGE are dropped (the moment has passed)."""
+        now = time.time()
+        fresh = [c for c in self.chat_queue if now - c["at"] <= CHAT_MAX_AGE]
+        self.chat_queue.clear()
+        if not fresh:
+            return []
+        fresh.sort(key=lambda c: (not c["first"], c["at"]))
+        who = fresh[0]["who"]
+        batch = [c for c in fresh if c["who"] == who][:ANSWER_BATCH]
+        self.chat_queue.extend(c for c in fresh if c not in batch)
+        return batch
+
+    async def _answer_loop(self) -> None:
+        """One answer at a time, however busy chat gets: each AI call answers
+        up to three viewers, and nothing waits behind a pile of old answers."""
+        while self.chat_queue:
+            while len(self.viewer_lines) >= 2:  # she still has answers to speak: let her catch up
+                await asyncio.sleep(0.5)
+            batch = self._next_batch()
+            if not batch:
+                return
+            for c in batch:
+                self._answered.add(c["author"])
+            first, rest = batch[0], batch[1:]
+            try:
+                await self._quick_reply(first["who"], first["author"], first["text"],
+                                        [(c["author"], c["text"]) for c in rest])
+            except Exception as exc:  # pragma: no cover - network dependent
+                logger.warning(f"Minecraft: chat answer failed: {exc}")
+
+    async def reply_text(self, cid: str, author: str, text: str, more: Optional[list[tuple[str, str]]] = None) -> str:
+        """One or two short spoken sentences from her to a viewer (or a few at once)."""
+        more = more or []
+        if more:
+            ask = (f"{len(more) + 1} viewers wrote in the live chat. Answer all of them together out loud in two or "
+                   "three short sentences, under 40 words, saying each name once.")
+            user = "\n".join(f"{a} wrote: {t}" for a, t in [(author, text), *more])
+        else:
+            ask = ("A viewer wrote in the live chat. Answer them out loud in one or two short sentences, "
+                   "under 25 words. Say their name once.")
+            user = f"{author} wrote: {text}"
         name = self.names[cid]
         friend = self.names[self._friend(cid)]
         doing = str((self.hud.get(cid) or {}).get("doing") or "playing").replace("action:", "")
@@ -1664,8 +1780,9 @@ class MinecraftEngine:
             f"Right now you are: {doing}. Team project: {strip_emoji(view.get('title', ''))}, working on {view.get('step', '')}. "
             f"Just said on stream: {recent or 'nothing yet'}. {self.net_show.describe()} "
             f"{SYSTEM_FACTS if self.creative else ''} "
-            "A viewer wrote in the live chat. Answer them out loud in one or two short sentences, under 25 words. "
-            "Say their name once. If they ask you to do something, say you will do it, or cheekily why not. "
+            f"{ask} "
+            "Be expressive: open with a real reaction when it fits (Argh!, Yesss!, Ooh!, Hmph!, Wait, what?!). "
+            "If they ask you to do something, say you will do it, or cheekily why not. "
             "Plain spoken words only: no emojis, no emoticons, no symbols, no hashtags, no commands, no quotes."
         )
         reply = ""
@@ -1680,9 +1797,9 @@ class MinecraftEngine:
                     model=self.model,
                     messages=[
                         {"role": "system", "content": system},
-                        {"role": "user", "content": f"{author} wrote: {text}"},
+                        {"role": "user", "content": user},
                     ],
-                    max_tokens=70,
+                    max_tokens=110 if more else 70,
                     temperature=0.8,
                 )
                 reply = response.choices[0].message.content or ""
@@ -1695,6 +1812,9 @@ class MinecraftEngine:
             except Exception as exc:
                 logger.warning(f"Minecraft: quick answer failed ({exc}), short answer instead")
         reply = strip_emoji(COMMAND_RE.sub(" ", reply)).strip().strip('"').strip()
+        if not re.search(r"[A-Za-z]", reply) and more:
+            names = [author] + [a for a, _t in more]
+            reply = f"Hi {', '.join(names[:-1])} and {names[-1]}! I see you all, one second!"
         if not re.search(r"[A-Za-z]", reply):
             reply = random.choice(
                 (
@@ -1703,7 +1823,7 @@ class MinecraftEngine:
                     f"{author}, I hear you! Let me see what I can do.",
                 )
             )
-        return reply[:220]
+        return reply[:320 if more else 220]
 
     async def _say(self, cid: str, text: str, mood: str = "", short: bool = False) -> None:
         await self._wait_ready()
