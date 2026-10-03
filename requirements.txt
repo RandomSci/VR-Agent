@@ -26,6 +26,8 @@ letta-client==1.7.6
     # via open-llm-vtuber (pyproject.toml)
 loguru==0.7.3
     # via open-llm-vtuber (pyproject.toml)
+matplotlib==3.11.2
+    # via open-llm-vtuber (pyproject.toml)
 mcp==1.26.0
     # via open-llm-vtuber (pyproject.toml)
 numpy==1.26.4
@@ -33,6 +35,8 @@ numpy==1.26.4
 onnxruntime==1.23.2
     # via open-llm-vtuber (pyproject.toml)
 openai==2.15.0
+    # via open-llm-vtuber (pyproject.toml)
+pandas==3.0.6
     # via open-llm-vtuber (pyproject.toml)
 playwright==1.63.0
     # via open-llm-vtuber (pyproject.toml)
@@ -57,6 +61,8 @@ scipy==1.17.0
 sherpa-onnx==1.10.46
     # via open-llm-vtuber (pyproject.toml)
 soundfile==0.13.1
+    # via open-llm-vtuber (pyproject.toml)
+sympy==1.14.0
     # via open-llm-vtuber (pyproject.toml)
 tomli==2.4.0
     # via open-llm-vtuber (pyproject.toml)
