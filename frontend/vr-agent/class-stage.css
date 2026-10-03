@@ -35,18 +35,18 @@ html.class-mode body { background: radial-gradient(1400px 900px at 10% 0%, #2c3f
 @keyframes class-in { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
 #class-visual { margin-top: auto; padding-top: 2vh; }
 .cv-list { display: flex; flex-wrap: wrap; gap: .5vw; align-items: flex-end; }
-.cv-name { width: 100%; margin-bottom: .6vh; font: 800 clamp(13px, 1.2vw, 24px) "VR Mono", monospace; color: #6b3fd1; }
+.cv-name { width: 100%; margin-bottom: .6vh; font: 800 clamp(13px, 1.2vw, 24px) "VR Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", monospace; color: #6b3fd1; }
 .cv-cell { text-align: center; }
 .cv-cell b { display: block; min-width: 3.6vw; padding: 1.1vh .5vw; border: 3px solid #4c8dff; border-radius: 12px; background: #fff;
-  font: 700 clamp(12px, 1.15vw, 24px) "VR Mono", monospace; color: #182040; }
+  font: 700 clamp(12px, 1.15vw, 24px) "VR Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", monospace; color: #182040; }
 .cv-cell.hi b { border-color: #ff6f9c; background: #ffe6ee; transform: translateY(-6px); box-shadow: 0 8px 18px #ff6f9c55; }
-.cv-cell small { display: block; margin-top: .5vh; font: 700 clamp(10px, .9vw, 18px) "VR Mono", monospace; color: #8a93a8; }
+.cv-cell small { display: block; margin-top: .5vh; font: 700 clamp(10px, .9vw, 18px) "VR Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", monospace; color: #8a93a8; }
 .cv-vars { display: flex; flex-wrap: wrap; gap: 1vh .8vw; }
 .cv-var { padding: .8vh .9vw; border-radius: 14px; background: #eef4ff; border: 2px solid #c9dbff; }
-.cv-var span { display: block; font: 800 clamp(11px, 1vw, 20px) "VR Mono", monospace; color: #6b3fd1; }
-.cv-var b { font: 700 clamp(14px, 1.4vw, 28px) "VR Mono", monospace; color: #182040; }
+.cv-var span { display: block; font: 800 clamp(11px, 1vw, 20px) "VR Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", monospace; color: #6b3fd1; }
+.cv-var b { font: 700 clamp(14px, 1.4vw, 28px) "VR Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", monospace; color: #182040; }
 .cv-math { padding: 1.4vh 1vw; border-radius: 14px; background: #fff; border: 2px dashed #ffb55e; text-align: center; font-size: clamp(16px, 1.7vw, 36px); overflow-x: auto; }
-.cv-table { border-collapse: collapse; font: 700 clamp(12px, 1.1vw, 22px) "VR Mono", monospace; }
+.cv-table { border-collapse: collapse; font: 700 clamp(12px, 1.1vw, 22px) "VR Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", monospace; }
 .cv-table td { padding: .6vh .8vw; border: 2px solid #d9deea; background: #fff; }
 .cv-table tr:first-child td { background: #182040; color: #fff; }
 
@@ -83,16 +83,16 @@ html.class-mode body { background: radial-gradient(1400px 900px at 10% 0%, #2c3f
 #class-nb-state { margin-left: auto; color: #8a93a8; }
 #class-cells { flex: 1; overflow: hidden; padding: 1.4vh 1.2vw 2vh; scroll-behavior: smooth; }
 .nb-cell { display: grid; grid-template-columns: 4.6vw 1fr; gap: 0 .6vw; margin-bottom: 1.6vh; }
-.nb-in, .nb-out { padding-top: 1.1vh; text-align: right; font: 700 clamp(10px, .95vw, 19px) "VR Mono", monospace; color: #3f6fd8; }
+.nb-in, .nb-out { padding-top: 1.1vh; text-align: right; font: 700 clamp(10px, .95vw, 19px) "VR Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", monospace; color: #3f6fd8; }
 .nb-out { color: #d1495b; padding-top: .9vh; }
 .nb-code { position: relative; margin: 0; padding: 1.1vh 1vw; border-radius: 10px; background: #f6f8fb; border: 1px solid #dfe4ee; border-left: 5px solid #dfe4ee;
-  white-space: pre-wrap; word-break: break-word; font: 500 clamp(13px, 1.32vw, 28px)/1.45 "VR Mono", "DejaVu Sans Mono", monospace; color: #1d2433; }
+  white-space: pre-wrap; word-break: break-word; font: 500 clamp(13px, 1.32vw, 28px)/1.45 "VR Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", monospace; color: #1d2433; }
 .nb-cell.active .nb-code { border-left-color: #4c8dff; background: #f2f7ff; }
 .nb-for { display: inline-block; margin-bottom: .6vh; padding: .2vh .6vw; border-radius: 99px; background: #ffe6ee; color: #b0275a; font: 800 clamp(10px, .85vw, 17px) Nunito, system-ui, sans-serif; }
 .nb-caret { display: inline-block; width: .55em; height: 1.1em; margin-left: 1px; vertical-align: text-bottom; background: #4c8dff; animation: class-blink .9s steps(1) infinite; }
 @keyframes class-blink { 50% { opacity: 0; } }
 .nb-result { grid-column: 2; margin-top: .6vh; }
-.nb-result pre { margin: 0; padding: .7vh 1vw; white-space: pre-wrap; word-break: break-word; font: 500 clamp(12px, 1.22vw, 26px)/1.4 "VR Mono", monospace; color: #1d2433; }
+.nb-result pre { margin: 0; padding: .7vh 1vw; white-space: pre-wrap; word-break: break-word; font: 500 clamp(12px, 1.22vw, 26px)/1.4 "VR Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", monospace; color: #1d2433; }
 .nb-result .value { color: #0f5132; }
 .nb-result .latex { padding: .8vh 1vw; font-size: clamp(15px, 1.5vw, 32px); overflow-x: auto; }
 .nb-result img { display: block; max-width: 100%; max-height: 38vh; margin: .6vh 0 0 1vw; border-radius: 10px; border: 1px solid #e1e5ee; }

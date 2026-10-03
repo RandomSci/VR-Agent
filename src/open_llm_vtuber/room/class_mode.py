@@ -246,10 +246,16 @@ class ClassEngine:
         self.sidekick = next((c for c in cast if c != self.teacher), self.teacher)
         self.course_id = course_id or os.environ.get("VR_CLASS_COURSE", "").strip() or "python-basics"
         self.quiz_seconds = max(8, min(60, int(os.environ.get("VR_CLASS_QUIZ_SECONDS", "20") or 20)))
+        # Viewers see the stream about this many seconds late (YouTube latency),
+        # so a quiz stays open that much longer and late answers still count.
+        self.stream_delay = max(0, min(40, int(os.environ.get("VR_STREAM_DELAY_SECONDS", "12") or 12)))
+        self.last_quiz: Optional[dict[str, Any]] = None
+        self.quiz_closed_at = 0.0
+        self.late_votes: list[tuple[str, int]] = []
         self.data_dir = DATA_DIR
         self.kernel = NotebookKernel()
         self.scratch = NotebookKernel()
-        self.inbox: deque[dict[str, str]] = deque(maxlen=12)
+        self.inbox: deque[dict[str, Any]] = deque(maxlen=12)
         self.viewers: deque[str] = deque(maxlen=8)
         self.last_chat_at = 0.0
         self.quiz_votes: Optional[dict[str, int]] = None
@@ -296,12 +302,18 @@ class ClassEngine:
         self.last_chat_at = time.time()
         if author not in self.viewers:
             self.viewers.append(author)
-        if self.quiz_votes is not None:
-            match = re.fullmatch(r"\s*\(?([abcd])\)?[.!]?\s*", text, re.IGNORECASE)
-            if match:
-                self.quiz_votes[author] = LETTERS.index(match.group(1).upper())
-                return
-        self.inbox.append({"author": author, "text": text})
+        match = re.fullmatch(r"\s*\(?([abcd])\)?[.!]?\s*", text, re.IGNORECASE)
+        if match:
+            choice = LETTERS.index(match.group(1).upper())
+            if self.quiz_votes is not None:
+                self.quiz_votes[author] = choice
+            elif self.last_quiz and time.time() - self.quiz_closed_at < 90:
+                self.late_votes.append((author, choice))
+            return  # a lone letter is a quiz answer, never a chat question
+        message: dict[str, Any] = {"author": author, "text": text}
+        # Start writing the reply now, so it is ready at the next pause.
+        message["reply"] = asyncio.create_task(self._compose_reply(author, text))
+        self.inbox.append(message)
 
     def snapshot(self) -> dict[str, Any]:
         return self.view
@@ -688,18 +700,27 @@ class ClassEngine:
                 break
 
     async def _quiz(self, who: str, say: str, quiz: dict[str, Any], record: list) -> None:
-        busy_chat = time.time() - self.last_chat_at < 300
-        seconds = self.quiz_seconds if busy_chat else 8
+        seconds = self.quiz_seconds + self.stream_delay
         self.quiz_votes = {}
+        self.late_votes = []
         self.view["quiz"] = {"question": quiz["question"], "choices": quiz["choices"]}
         await self._push({"kind": "quiz", "question": quiz["question"], "choices": quiz["choices"], "seconds": seconds})
         intro = say or quiz["question"]
         letters = ", ".join(LETTERS[: len(quiz["choices"])])
         await self._say(who, f"{intro} Type {letters} in chat!", "smirk")
         deadline = time.time() + seconds
+        nudged = False
         while time.time() < deadline:
             await asyncio.sleep(0.5)
+            if not nudged and not self.quiz_votes and deadline - time.time() < seconds / 2:
+                nudged = True
+                await self._say(
+                    "sidekick",
+                    "Take your time chat, the stream reaches you a few seconds late. Just type the letter!",
+                    "smirk",
+                )
         votes, self.quiz_votes = self.quiz_votes or {}, None
+        self.last_quiz, self.quiz_closed_at = quiz, time.time()
         answer = quiz["answer"]
         counts = [0] * len(quiz["choices"])
         for choice in votes.values():
@@ -731,33 +752,55 @@ class ClassEngine:
     # ------------------------------------------------------------ chat
     async def _chat_break(self, lesson_title: str, record: Optional[list] = None) -> None:
         """Answer up to two chat messages, newest first."""
+        if self.late_votes and self.last_quiz:
+            late, self.late_votes = self.late_votes[:3], []
+            answer = self.last_quiz["answer"]
+            right = [name for name, choice in late if choice == answer]
+            if right:
+                line = f"Late but correct, {', '.join(right)}! It was {LETTERS[answer]}."
+            else:
+                name, choice = late[0]
+                line = f"{name} said {LETTERS[choice]}, close! It was {LETTERS[answer]}."
+            await self._say("sidekick", line, "joy" if right else "")
         for _ in range(2):
             if not self.inbox:
                 return
             message = self.inbox.pop()
-            await self._answer(message, lesson_title, record)
+            await self._answer(message, record)
         if len(self.inbox) > 4:  # a flood: the oldest ones are skipped
             for _ in range(len(self.inbox) - 2):
                 self.inbox.popleft()
 
-    async def _answer(self, message: dict[str, str], lesson_title: str, record: Optional[list]) -> None:
-        author, text = message["author"], message["text"]
+    def _speaker_for(self, text: str) -> str:
         addressed_teacher = re.search(rf"\b{re.escape(self._name(self.teacher))}\b", text, re.IGNORECASE)
-        who = "teacher" if addressed_teacher else "sidekick"
+        return "teacher" if addressed_teacher else "sidekick"
+
+    async def _compose_reply(self, author: str, text: str) -> str:
+        """The LLM reply, started the moment the message arrives."""
+        who = self._speaker_for(text)
         character = self.teacher if who == "teacher" else self.sidekick
         slide = (self.view.get("slide") or {}).get("title")
         prompt = CHAT_PROMPT.format(
             name=self._name(character),
             role="You are the teacher." if who == "teacher" else f"You are the sidekick student; {self._name(self.teacher)} is teaching.",
             persona=self._persona(character)[:400],
-            lesson=lesson_title,
+            lesson=self.view.get("lesson") or "Python",
             slide=f', slide "{slide}"' if slide else "",
         )
-        await self._push({"kind": "chat", "author": author, "text": text})
-        reply = await self._ask(
+        return await self._ask(
             [{"role": "system", "content": prompt}, {"role": "user", "content": f"{author}: {text}"}],
             timeout=12,
         )
+
+    async def _answer(self, message: dict[str, Any], record: Optional[list]) -> None:
+        author, text = message["author"], message["text"]
+        who = self._speaker_for(text)
+        await self._push({"kind": "chat", "author": author, "text": text})
+        task = message.get("reply")
+        try:
+            reply = await asyncio.wait_for(task, timeout=12) if task else await self._compose_reply(author, text)
+        except Exception:
+            reply = ""
         data = parse_json_object(reply) or {"say": reply if reply and "{" not in reply else ""}
         say = _clip(data.get("say"), 400)
         if not say:

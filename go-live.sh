@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # Go live from a plain terminal (no VS Code needed):
-#   ./go-live.sh
+#   ./go-live.sh            (add --fresh to start the course from lesson 1)
 # Starts the server, and if it ever crashes it starts again by itself.
 # Press Ctrl+C to stop for real.
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
+
+# ./go-live.sh --fresh   starts the course again from lesson 1
+if [ "${1:-}" = "--fresh" ]; then
+    rm -f data/class/progress.json
+    echo "Class progress cleared: starting from lesson 1"
+fi
 
 # The notebook and the coding runs use VR_CODING_PYTHON from .env.
 CODING_PY="$(grep -E '^VR_CODING_PYTHON=' .env 2>/dev/null | cut -d= -f2- | tr -d '"')"

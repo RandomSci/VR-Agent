@@ -136,10 +136,21 @@ class StreamAutopilot:
     def start(self) -> None:
         if not getattr(self, "_obs_started", False):
             self._obs_started = True
-            asyncio.create_task(start_obs_stream())
+            asyncio.create_task(self._start_obs_when_ready())
         if not self.ready or (self.task and not self.task.done()):
             return
         self.task = asyncio.create_task(self._run(), name="stream-autopilot")
+
+    async def _start_obs_when_ready(self) -> None:
+        """Go live only once the Stage has really drawn (models loaded), so
+        viewers never get minutes of black screen while it loads."""
+        probe = getattr(self, "stage_ready", None)
+        for _ in range(180):
+            if probe is None or probe():
+                break
+            await asyncio.sleep(1)
+        await asyncio.sleep(4)  # the first frames, the slide fading in
+        await start_obs_stream()
 
     async def _run(self) -> None:
         if self.auto_channel:

@@ -208,6 +208,10 @@ class RoomSession:
                 return client_uid, send
         return None
 
+    def stage_loaded(self) -> bool:
+        """A Stage page has reported its characters as loaded."""
+        return any((m or {}).get("loaded") for m in self._client_models.values())
+
     def speech_allowed(self, now: Optional[float] = None) -> bool:
         """TTS may only run for viewer-triggered work: someone chatted recently."""
         from ..vr_agent.state import runtime
@@ -237,6 +241,8 @@ class RoomSession:
             platform=message.platform,
             user=message.display_name,
         )
+        if self.class_engine is not None and self.class_engine.active:
+            return False  # class mode: no games or camera commands, chat goes to the class
         camera_ops = self._camera_request(message)
         if camera_ops is not None:
             from ..vr_agent.usage import usage

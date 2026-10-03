@@ -376,6 +376,8 @@ class WebSocketHandler:
 
             self.autopilot = StreamAutopilot(runtimes.publisher)
             self.autopilot.goodbye = self.say_goodbye
+            # A Stage page whose characters have loaded (OBS shows a picture).
+            self.autopilot.stage_ready = self.room_session.stage_loaded
             self.autopilot.shutdown = lambda: (getattr(self, "request_shutdown", None) or (lambda: None))()
             self.autopilot.start()
         except Exception as exc:
