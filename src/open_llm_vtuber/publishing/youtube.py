@@ -124,19 +124,36 @@ class YouTubeClient:
         return response.json() if response.content else {}
 
     # -- finding the stream -------------------------------------------------
-    def find_active_broadcast_video_id(self) -> str:
-        """Your broadcast that is live right now (1 quota unit). Its id is the video id."""
+    def active_broadcasts(self) -> list[dict[str, Any]]:
+        """Broadcasts YouTube counts as active: id, life cycle (live, testing,
+        liveStarting...) and bound stream (1 quota unit)."""
         data = self._call(
             "GET",
             "/liveBroadcasts",
             params={
-                "part": "id,snippet",
+                "part": "id,status,contentDetails",
                 "broadcastStatus": "active",
                 "broadcastType": "all",
+                "maxResults": 20,
             },
         )
-        items = data.get("items") or []
-        return str(items[0].get("id") or "") if items else ""
+        return [
+            {
+                "id": str(item.get("id") or ""),
+                "life": str((item.get("status") or {}).get("lifeCycleStatus") or ""),
+                "stream": str((item.get("contentDetails") or {}).get("boundStreamId") or ""),
+            }
+            for item in data.get("items") or []
+        ]
+
+    def find_active_broadcast_video_id(self) -> str:
+        """Your broadcast that is live right now (1 quota unit). Its id is the video id.
+
+        "Active" also covers a broadcast stuck in its preview (testing), which
+        viewers see as "Waiting": a really live one wins."""
+        items = self.active_broadcasts()
+        live = [b for b in items if b["life"] == "live"] or items
+        return live[0]["id"] if live else ""
 
     def find_live_video_by_channel(self, channel_id: str) -> str:
         """Fallback: public search for a live video on the channel (100 units)."""

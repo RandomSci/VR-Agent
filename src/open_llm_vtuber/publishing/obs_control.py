@@ -164,6 +164,19 @@ def _write_stream_quality() -> None:
         _write_ini(path, ini)
     except Exception as exc:
         logger.debug(f"OBS: stream quality not written: {exc}")
+    # Advanced output mode keeps the stream encoder's bitrate in its own file;
+    # only SimpleOutput was set before, so OBS in Advanced mode sent 12000+.
+    encoder = folder / "streamEncoder.json"
+    try:
+        data = json.loads(encoder.read_text()) if encoder.is_file() else {}
+        if not isinstance(data, dict):
+            data = {}
+        if data.get("bitrate") != kbps or data.get("rate_control", "CBR") != "CBR":
+            data.update({"bitrate": kbps, "rate_control": "CBR"})
+            encoder.write_text(json.dumps(data, indent=4))
+            logger.info(f"OBS: stream bitrate set to {kbps} kbps (advanced output)")
+    except Exception as exc:
+        logger.debug(f"OBS: advanced bitrate not written: {exc}")
 
 
 async def _tune_obs(obs: "OBS") -> None:
@@ -645,13 +658,30 @@ async def ensure_youtube_live(stream_key: str, timeout: float = 300.0) -> bool:
     await asyncio.sleep(25)  # the normal auto start usually happens by now
     while time.time() < end:
         try:
-            if await call(client.find_active_broadcast_video_id):
-                logger.info("YouTube: the stream is live")
-                return True
             stream = await call(client.stream_for_key, stream_key)
             if not stream.get("id"):
                 logger.warning("YouTube: no stream found for the stream key, cannot press Go live")
                 return False
+            # Only a broadcast that is really live AND fed by this stream key
+            # counts. An older broadcast still marked active, or one stuck in
+            # its preview, made this say "live" while viewers saw "Waiting".
+            ours = [b for b in await call(client.active_broadcasts) if b["stream"] == stream["id"]]
+            if any(b["life"] == "live" for b in ours):
+                logger.info("YouTube: the stream is live")
+                return True
+            stuck = [b for b in ours if b["life"] in ("testing", "testStarting")]
+            if stuck and stream.get("status") == "active":
+                try:
+                    await call(client.transition, stuck[0]["id"], "live")
+                    logger.info("YouTube: the broadcast was stuck in its preview, Go live sent")
+                except Exception as exc:
+                    logger.warning(f"YouTube: Go live from the preview refused: {str(exc)[:200]}")
+                await asyncio.sleep(20)
+                continue
+            if any(b["life"] == "liveStarting" for b in ours):
+                logger.info("YouTube: going live now")
+                await asyncio.sleep(10)
+                continue
             if stream.get("status") != "active":
                 logger.info(f"YouTube: waiting for video to arrive (stream {stream.get('status') or 'unknown'})")
             else:
