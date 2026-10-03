@@ -137,17 +137,24 @@ def chunks(text: str, limit: int = MAX_SAY) -> list[str]:
     return out[:3]
 
 
-async def port_open(port: int, host: str = "127.0.0.1") -> bool:
-    try:
-        _reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=1.5)
+# Node binds "localhost" to ::1 on many Linux PCs (Mindcraft does), so both
+# loopback addresses are tried.
+LOOPBACKS = ("127.0.0.1", "::1")
+
+
+async def port_open(port: int, host: str = "") -> bool:
+    for candidate in (host,) if host else LOOPBACKS:
+        try:
+            _reader, writer = await asyncio.wait_for(asyncio.open_connection(candidate, port), timeout=1.5)
+        except Exception:
+            continue
         writer.close()
         try:
             await writer.wait_closed()
         except Exception:
             pass
         return True
-    except Exception:
-        return False
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -163,8 +170,10 @@ class MindLink:
     async def run(self) -> None:
         import aiohttp
 
-        url = f"http://127.0.0.1:{self.port}/socket.io/?EIO=4&transport=websocket"
+        hosts = ["127.0.0.1", "[::1]"]
         while True:
+            host = hosts[0]
+            url = f"http://{host}:{self.port}/socket.io/?EIO=4&transport=websocket"
             try:
                 async with aiohttp.ClientSession() as http:
                     async with http.ws_connect(url, heartbeat=None, timeout=10) as ws:
@@ -172,7 +181,8 @@ class MindLink:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.debug(f"Minecraft: mindserver not reachable yet ({exc})")
+                logger.debug(f"Minecraft: mindserver not reachable on {host} yet ({exc})")
+                hosts.append(hosts.pop(0))  # try the other loopback next
             self.ws = None
             self.connected.clear()
             await asyncio.sleep(3)
@@ -519,6 +529,8 @@ class MinecraftEngine:
         await self._server_done()
         env = dict(os.environ)
         env["SETTINGS_JSON"] = json.dumps(self.mindcraft_settings())
+        # Mindcraft listens on "localhost": make that 127.0.0.1, not ::1.
+        env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " --dns-result-order=ipv4first").strip()
         log = open(LOG_DIR / "mindcraft.log", "ab")
         proc = await asyncio.create_subprocess_exec(
             "node", "main.js",
