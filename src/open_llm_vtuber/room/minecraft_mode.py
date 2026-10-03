@@ -8,7 +8,8 @@ What runs:
   offline mode, only reachable from this PC
 * Mindcraft (minecraft/mindcraft), which logs two Mineflayer bots named Mika and
   Luna into it. Their brains are OpenAI chat models, their eyes are the
-  prismarine viewers on ports 3000 (Mika) and 3001 (Luna)
+  prismarine viewers on ports 3790 (Mika) and 3791 (Luna); 3000 is left
+  alone because so many other tools use it
 * this engine, which keeps both alive, talks to the Mindcraft "mindserver"
   over socket.io, speaks every bot chat line with Mika's and Luna's own voices
   and Live2D models, and passes YouTube chat to the bots
@@ -21,6 +22,8 @@ characters, captions, the chat that reached them and a small HUD
     VR_MINECRAFT_PORT=25565          the Minecraft server port
     VR_MINDSERVER_PORT=8080          the Mindcraft control port
     VR_MINECRAFT_RAM=2G              Java heap for the server
+    VR_MINECRAFT_DIFFICULTY=peaceful no hostile mobs (easy and up: the bots
+                                     fight at night and get kicked)
     VR_MINECRAFT_GOAL=...            replaces the default long term goal
     VR_MINECRAFT_THINK_SECONDS=10    at most one AI call per bot this often:
                                      lower is livelier but costs more
@@ -55,7 +58,8 @@ LINE_MAX_AGE = 25.0  # a bot line older than this is shown, not spoken
 VIEWER_GAP = 8.0  # one message per viewer per this many seconds
 BOT_GAP = 6.0  # one viewer message per bot per this many seconds
 STUCK_SECONDS = 180  # no real movement this long: she is told to get out
-TOGETHER_BLOCKS = 40  # farther apart than this for a minute: one walks back
+TOGETHER_BLOCKS = 20
+VIEWER_PORT_BASE = 3790  # the bots' first person views (Mindcraft's default 3000 often clashes)  # farther apart than this for a minute: one walks back
 
 DEFAULT_GOAL = (
     "Survive and thrive together forever: gather wood and stone, make better tools, "
@@ -248,6 +252,9 @@ class MinecraftEngine:
         self.mind_port = int(os.environ.get("VR_MINDSERVER_PORT", "8080") or 8080)
         self.model = os.environ.get("VR_MINECRAFT_MODEL", "").strip() or "gpt-4o-mini"
         self.ram = os.environ.get("VR_MINECRAFT_RAM", "").strip() or "2G"
+        # peaceful: no hostile mobs. With mobs the bots fight at night, and the
+        # fight code sends moves the server rejects, so it kicks them out.
+        self.difficulty = os.environ.get("VR_MINECRAFT_DIFFICULTY", "").strip().lower() or "peaceful"
         self.goal = os.environ.get("VR_MINECRAFT_GOAL", "").strip() or DEFAULT_GOAL
         # Seconds between AI calls per bot: the main cost knob (see the module doc).
         self.cooldown = max(2.0, float(os.environ.get("VR_MINECRAFT_THINK_SECONDS", "10") or 10))
@@ -368,7 +375,7 @@ class MinecraftEngine:
     async def _run(self) -> None:
         try:
             self.problem = setup_problem()
-            ports = {cid: 3000 + i for i, cid in enumerate(self.cast)}
+            ports = {cid: VIEWER_PORT_BASE + i for i, cid in enumerate(self.cast)}
             self.view = {
                 "active": True,
                 "cast": self.cast,
@@ -461,6 +468,7 @@ class MinecraftEngine:
 
     async def _launch_server(self) -> Any:
         LOG_DIR.mkdir(exist_ok=True)
+        set_difficulty(self.difficulty)
         log = open(LOG_DIR / "minecraft-server.log", "ab")
         proc = await asyncio.create_subprocess_exec(
             "java", f"-Xms{self.ram}", f"-Xmx{self.ram}", "-jar", "server.jar", "nogui",
@@ -576,6 +584,7 @@ class MinecraftEngine:
         env["SETTINGS_JSON"] = json.dumps(self.mindcraft_settings())
         # Mindcraft listens on "localhost": make that 127.0.0.1, not ::1.
         env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " --dns-result-order=ipv4first").strip()
+        env["VR_VIEWER_PORT_BASE"] = str(VIEWER_PORT_BASE)
         log = open(LOG_DIR / "mindcraft.log", "ab")
         proc = await asyncio.create_subprocess_exec(
             "node", "main.js",
@@ -587,16 +596,19 @@ class MinecraftEngine:
         return proc
 
     async def _watchdog(self) -> None:
-        """Mindcraft up but no bot in the world for 3 minutes: start it again."""
+        """One of them out of the world for 2 minutes (Mindcraft gives up on a
+        bot that crashes twice quickly): start Mindcraft again."""
         since = time.time()
         while True:
             await asyncio.sleep(20)
             if not self.link.connected.is_set() or not await port_open(self.port):
                 since = time.time()
                 continue
-            last = max(self._state_at, since)
-            if time.time() - last > 180:
-                logger.warning("Minecraft: the bots are not in the world, restarting Mindcraft")
+            now = time.time()
+            missing = [c for c in self.cast if now - max(self._seen_at.get(c, 0), since) > 120]
+            if missing:
+                names = " and ".join(self.names[c] for c in missing)
+                logger.warning(f"Minecraft: {names} left the world, restarting Mindcraft")
                 await asyncio.to_thread(stop_one, "mindcraft", 10.0)
                 since = time.time()
 
@@ -705,7 +717,7 @@ class MinecraftEngine:
             self._apart_since = 0.0
             return
         self._apart_since = self._apart_since or now
-        if now - self._apart_since < 60 or now - self._nudged_at < 120:
+        if now - self._apart_since < 30 or now - self._nudged_at < 60:
             return
         self._nudged_at = now
         self.turn += 1
@@ -871,10 +883,24 @@ def patch_mindcraft() -> list[str]:
 
     * prismarine viewer: smooth camera (no whiplash on stream)
     * pathfinder: walk instead of sprint, so moves are easy to follow
+    * viewer: its own ports (VR_VIEWER_PORT_BASE), and a busy port no longer
+      crashes the bot (Mika kept dropping out when port 3000 was taken)
     """
     done: list[str] = []
     edits = [
         (MINDCRAFT_DIR / "node_modules/prismarine-viewer/lib/mineflayer.js", VIEWER_ORIGINAL, VIEWER_SMOOTH),
+        (
+            MINDCRAFT_DIR / "node_modules/prismarine-viewer/lib/mineflayer.js",
+            "  http.listen(port, () => {",
+            "  // VR Agent: a busy port must not crash the bot\n"
+            "  http.on('error', (e) => console.error(`Prismarine viewer could not start on ${port}: ${e.message}`))\n"
+            "  http.listen(port, () => {",
+        ),
+        (
+            MINDCRAFT_DIR / "src/agent/vision/browser_viewer.js",
+            "port: 3000+count_id,",
+            "port: (parseInt(process.env.VR_VIEWER_PORT_BASE) || 3000) + count_id,",
+        ),
         (
             MINDCRAFT_DIR / "node_modules/mineflayer-pathfinder/lib/movements.js",
             "    this.allowSprinting = true\n",
@@ -936,6 +962,20 @@ def _default_conversing() -> str:
         return str(data.get("conversing") or "")
     except Exception:
         return ""
+
+
+def set_difficulty(level: str) -> None:
+    if level not in ("peaceful", "easy", "normal", "hard"):
+        return
+    path = SERVER_DIR / "server.properties"
+    try:
+        lines = path.read_text().splitlines()
+    except Exception:
+        return
+    out = [f"difficulty={level}" if line.startswith("difficulty=") else line for line in lines]
+    if not any(line.startswith("difficulty=") for line in lines):
+        out.append(f"difficulty={level}")
+    path.write_text("\n".join(out) + "\n")
 
 
 def _write_pid(name: str, pid: int) -> None:

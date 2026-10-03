@@ -14,7 +14,7 @@
   let root = null;
   let cast = ["mika", "luna"];
   let names = { mika: "Mika", luna: "Luna" };
-  let ports = { mika: 3000, luna: 3001 };
+  let ports = { mika: 3790, luna: 3791 };
   const seen = {}; // character id -> last time the bot was in the world
   const loaded = {}; // character id -> the view iframe was pointed at the bot
   let layoutTimer = 0;
@@ -73,7 +73,13 @@
     const was = focus;
     focus = id;
     focusAt = Date.now();
-    if (was) fresh(id); // a view that sat hidden starts clean (no frozen or blank 3D)
+    // Only the watched view is loaded: a hidden one would still stream chunks
+    // and build meshes in the background, for nothing.
+    if (was) {
+      const old = viewPane(was);
+      if (old) old.querySelector("iframe").src = "about:blank";
+    }
+    fresh(id);
     document.querySelectorAll("#mc-views .mc-view").forEach((v) => v.classList.toggle("focus", v.dataset.who === id));
     const watch = $("mc-watch");
     if (watch) {
@@ -128,9 +134,9 @@
   const REFRESH_MS = 6 * 60 * 1000;
   function fresh(id) {
     const p = viewPane(id);
-    if (!p || !loaded[id]) return;
+    if (!p || !loaded[id] || id !== focus) return;
     const frame = p.querySelector("iframe");
-    frame.src = `http://${location.hostname || "127.0.0.1"}:${ports[id] || 3000}/?t=${Date.now()}`;
+    frame.src = `http://${location.hostname || "127.0.0.1"}:${ports[id] || 3790}/?t=${Date.now()}`;
   }
   setInterval(() => { if (focus && document.documentElement.classList.contains("minecraft-mode")) fresh(focus); }, REFRESH_MS);
 
@@ -142,10 +148,9 @@
     seen[id] = now;
     if (loaded[id] && !gone) return;
     loaded[id] = true;
-    const frame = p.querySelector("iframe");
     setTimeout(() => {
-      frame.src = `http://${location.hostname || "127.0.0.1"}:${ports[id] || 3000}/?t=${now}`;
       p.classList.add("live");
+      if (id === focus) fresh(id);
     }, 2500);
   }
 

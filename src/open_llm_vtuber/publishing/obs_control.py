@@ -468,14 +468,7 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
         # No remote control: restart OBS from the terminal, streaming at once.
         # The server is already up, so the Stage page loads straight away.
         logger.warning("OBS: no remote control, so OBS is reopened and told to stream from the terminal")
-        await close_obs()
-        prepare_obs_config(stream_key)  # OBS may have saved other settings when it closed
-        if launch_obs(streaming=True):
-            await asyncio.sleep(20)
-            logger.info("OBS: reopened with streaming on")
-        STREAM_LIVE.set()
-        # OBS is sending without remote control: YouTube still gets its Go live.
-        _keep_task(asyncio.create_task(ensure_youtube_live(stream_key), name="youtube-go-live"))
+        await _terminal_stream(stream_key)
         return False
     logger.info("OBS: connected")
     try:
@@ -502,17 +495,55 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
                 return False
             await asyncio.sleep(2)  # first frames drawn
             await obs.call("StartStream")
-            logger.info(f"OBS: streaming started ({time.time() - started:.0f}s after the server)")
+            if await _really_streaming(obs):
+                logger.info(f"OBS: streaming started ({time.time() - started:.0f}s after the server)")
+            else:
+                # OBS said yes but nothing reached YouTube: try once more with
+                # the YouTube address written out, then the terminal way.
+                logger.warning("OBS: Start Streaming did not connect to YouTube, trying again")
+                try:
+                    await obs.call("StopStream")
+                except Exception:
+                    pass
+                await asyncio.sleep(2)
+                if stream_key:
+                    await obs.call(
+                        "SetStreamServiceSettings",
+                        {"streamServiceType": "rtmp_custom", "streamServiceSettings": {"server": YOUTUBE_RTMPS, "key": stream_key}},
+                    )
+                await obs.call("StartStream")
+                if not await _really_streaming(obs):
+                    raise OBSError("OBS could not connect to YouTube twice")
+                logger.info("OBS: streaming started on the second try")
     except Exception as exc:
-        logger.warning(f"OBS: start sequence failed: {exc}")
-        STREAM_LIVE.set()
+        logger.warning(f"OBS: start sequence failed ({exc}), reopening OBS to stream from the terminal")
+        try:
+            await obs.__aexit__()
+        except Exception:
+            pass
+        await _terminal_stream(stream_key)
         return False
     finally:
-        await obs.__aexit__()
+        try:
+            await obs.__aexit__()
+        except Exception:
+            pass
     await asyncio.sleep(8)  # YouTube needs a few seconds to show the stream
     STREAM_LIVE.set()
     _keep_task(asyncio.create_task(ensure_youtube_live(stream_key), name="youtube-go-live"))
     return True
+
+
+async def _terminal_stream(stream_key: str) -> None:
+    """The way that always worked: OBS closed and reopened with --startstreaming
+    (the stream key is in its profile), then YouTube gets its Go live."""
+    await close_obs()
+    prepare_obs_config(stream_key)  # OBS may have saved other settings when it closed
+    if launch_obs(streaming=True):
+        await asyncio.sleep(20)
+        logger.info("OBS: reopened with streaming on")
+    STREAM_LIVE.set()
+    _keep_task(asyncio.create_task(ensure_youtube_live(stream_key), name="youtube-go-live"))
 
 
 _TASKS: set = set()
@@ -594,6 +625,26 @@ async def ensure_youtube_live(stream_key: str, timeout: float = 300.0) -> bool:
             logger.warning(f"YouTube go live check failed: {str(exc)[:200]}")
         await asyncio.sleep(20)
     logger.error("YouTube: still not live after 5 minutes. Open YouTube Studio and press Go live.")
+    return False
+
+
+YOUTUBE_RTMPS = "rtmps://a.rtmps.youtube.com:443/live2"
+
+
+async def _really_streaming(obs: "OBS", seconds: float = 15) -> bool:
+    """True once OBS is connected and the bytes sent keep growing."""
+    end = time.time() + seconds
+    last = -1
+    while time.time() < end:
+        await asyncio.sleep(2.5)
+        try:
+            status = await obs.call("GetStreamStatus")
+        except Exception:
+            continue
+        sent = int(status.get("outputBytes") or 0)
+        if status.get("outputActive") and not status.get("outputReconnecting") and last >= 0 and sent > last:
+            return True
+        last = sent if status.get("outputActive") else -1
     return False
 
 
