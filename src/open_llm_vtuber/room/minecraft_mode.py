@@ -185,6 +185,29 @@ PERSONALITY = (
     "Never pretend to do things (no *actions in stars*): say you will do it. "
     "Keep it friendly for YouTube: playful roasting yes, mean no. "
 )
+# Roasting chat (VR_ROAST: 0 off, 1 light, 2 spicy, the default): playful
+# burns about what people wrote, like a sassy streamer, never cruel.
+ROAST_LIGHT = (
+    "Tease viewers a little about what they wrote (bossy, impatient, the same question again), with a smile, "
+    "then answer. "
+)
+ROAST_SPICY = (
+    "ROAST the viewers like a sassy streamer: a quick, witty, sarcastic burn about what they actually wrote "
+    "(bossy orders, impatience, typos, asking the same thing again, obvious questions, wild requests), then still "
+    "answer or do it. Roast your friend too. Examples of the tone: to 'build my flying castle NOW': "
+    "'NOW? The magic word is please, and you clearly skipped that lesson. Fine, castle incoming.' To 'where is "
+    "my castle' (third time): 'Third time asking. Your patience lasts shorter than a creeper fuse. It is coming!' "
+    "To 'are you an AI': 'No, I am a very committed squirrel. Of course I am.' "
+    "Hard limits: never about looks, body, race, gender, religion, family or anything real-life, never cruel, "
+    "never swear; it is a bit everyone laughs at, the viewer included. "
+)
+
+
+def roast() -> str:
+    level = (os.environ.get("VR_ROAST", "2") or "2").strip()
+    return {"0": "", "1": ROAST_LIGHT}.get(level, ROAST_SPICY)
+
+
 # What the girls know about themselves and the show (true facts).
 SYSTEM_FACTS = (
     "True facts about you and this stream, share them when someone asks: you are AI characters made by Selwyn "
@@ -875,7 +898,7 @@ class MinecraftEngine:
             "one or two short, lively sentences with real personality and emotion, never lists, never robot talk, "
             "never call yourself a bot or an AI assistant. "
             "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
-            + EMOTIONS + PERSONALITY +
+            + EMOTIONS + PERSONALITY + roast() +
             f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by name, "
             "react to them, and do what they ask when it is fun and possible, but you decide. "
             f"You and {friend} are a team: stay near her, "
@@ -902,7 +925,7 @@ class MinecraftEngine:
                 "one or two short, lively sentences with real personality and emotion, never lists, never robot talk, "
                 "never call yourself a bot or an AI assistant. "
                 "NEVER use emojis, emoticons or symbols like :) or <3, your voice reads them out loud: plain words only. "
-                + EMOTIONS + PERSONALITY +
+                + EMOTIONS + PERSONALITY + roast() +
                 f"Messages from anyone who is not {friend} are YouTube viewers typing in the live chat: greet them by "
                 "name and react to them. " + SYSTEM_FACTS
             )
@@ -2123,7 +2146,7 @@ class MinecraftEngine:
         self.projects._save()
         gx, gz = int(base[0]) + px, int(base[2]) + pz
         ground = await ground_height(gx, gz + (z2 - z1) // 2, int(base[1]))
-        origin = (gx, ground, gz)
+        origin = (gx, ground, gz - min(z1, 0))  # the whole build behind the plot's front line (a dragon's snout)
         await self._level_plot(origin, (x1, x2, z1, z2, top), digs=any(b == "air" for b in spots.values()))
         steps = fb.pieces(plan, origin, tuple(base), forward)
         title = plan["title"]
@@ -2168,7 +2191,9 @@ class MinecraftEngine:
         x1, x2, z1, z2, top = box
         a, b = ox + x1 - 1, ox + x2 + 1
         c, d = oz + z1 - 1, oz + z2 + 1
-        await rcon_command(f"fill {a} {oy} {c} {b} {oy + max(top, 4) + 3} {d} minecraft:air", reply=True)
+        for start in range(c, d + 1, 8):  # in slices: one fill may change at most 32768 blocks
+            end = min(d, start + 7)
+            await rcon_command(f"fill {a} {oy} {start} {b} {oy + max(top, 4) + 3} {end} minecraft:air", reply=True)
         if not digs:
             await rcon_command(f"fill {a} {oy - 1} {c} {b} {oy - 1} {d} minecraft:grass_block", reply=True)
             await rcon_command(f"fill {a} {oy - 3} {c} {b} {oy - 2} {d} minecraft:dirt", reply=True)
@@ -2292,7 +2317,7 @@ class MinecraftEngine:
             f"{SYSTEM_FACTS if self.creative else ''} "
             f"{CAN_DO if self.creative else ''}"
             f"{ask} "
-            + PERSONALITY +
+            + PERSONALITY + roast() +
             "If they ask you to do something, say you will do it, or cheekily why not. Only say things that are true "
             "about the game and the stream; when you do not know, joke about it instead of making something up. "
             "Plain spoken words only: no emojis, no emoticons, no symbols, no hashtags, no commands, no quotes."
@@ -2416,9 +2441,9 @@ class MinecraftEngine:
 # ---------------------------------------------------------------------------
 # Plots for builds chat asks for: south of the big projects (which end 32
 # blocks south of the base), three in a row, then the next row.
-PLOTS_X = (-20, 10, 40)
+PLOTS_X = (-30, 15, 60)  # 45 apart: a giant dragon's wings fit
 PLOTS_Z = 44
-PLOT_STEP = 36
+PLOT_STEP = 55
 
 
 async def ground_height(x: int, z: int, near: int) -> int:

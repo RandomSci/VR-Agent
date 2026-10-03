@@ -116,6 +116,7 @@ def test_a_viewer_build_is_laid_by_hand_in_front_of_the_camera(monkeypatch):
         monkeypatch.setattr(mm.asyncio, "sleep", no_wait)
         eng._command, eng._arrive = command, arrive
         eng.projects.place_one, eng.projects.ensure_loaded = place_one, loaded
+        eng.projects.state["plots"] = 0  # the first plot
         note = eng.request_build("build a sky castle with my name Selwyn on it", "MathUnlockedYT")
         assert "by hand" in note
         for _ in range(500):
@@ -259,3 +260,27 @@ def test_a_sky_castle_floats_with_the_name_on_it():
     assert min(p[1] for p, _b in blocks) >= 8  # floating
     assert sum(1 for _p, b in blocks if b == "gold_block") > 30  # SELWYN in gold
     assert len(blocks) <= fb.MAX_TEMPLATE_BLOCKS
+
+
+def test_a_giant_dragon_is_a_dragon():
+    design = fb.parse_design(json.dumps({"title": "Giant dragon", "template": "dragon", "size": "large",
+                                         "main": "red_concrete", "accent": "orange_terracotta", "sky": False}))
+    blocks = fb.blocks_of(design)
+    kinds = {b for _p, b in blocks}
+    assert 1500 < len(blocks) <= fb.MAX_TEMPLATE_BLOCKS
+    assert {"red_concrete", "orange_terracotta", "gold_block", "quartz_block", "red_wool"} <= kinds  # eyes, horns, wings
+    assert min(p[1] for p, _b in blocks) == 0  # it stands on the ground
+    xs = [p[0] for p, _b in blocks]
+    assert max(xs) - min(xs) > 35  # the wings spread wide
+    assert fb.parse_design('{"template": "dragon"}')["template"] == "dragon"
+
+
+def test_they_roast_chat_unless_told_not_to(monkeypatch):
+    eng = _live_engine(monkeypatch)
+    monkeypatch.delenv("VR_ROAST", raising=False)
+    system, _u = eng._reply_prompt("mika", "MathUnlockedYT", "where is my castle", [])
+    assert "ROAST the viewers" in system and "never cruel" in system
+    assert "ROAST the viewers" in eng.profile("mika")["conversing"]
+    monkeypatch.setenv("VR_ROAST", "0")
+    system, _u = eng._reply_prompt("mika", "MathUnlockedYT", "where is my castle", [])
+    assert "ROAST" not in system

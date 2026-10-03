@@ -194,12 +194,117 @@ def castle(size: int, main: str, accent: str, rng: random.Random, sky: bool = Fa
     return out
 
 
+def _ellipsoid(out: Spots, c: tuple[float, float, float], r: tuple[float, float, float], block: str,
+               belly: str = "", shell: bool = True) -> None:
+    """A rounded shape (only its skin when shell: it looks solid and costs far fewer blocks)."""
+    cx, cy, cz = c
+    rx, ry, rz = (max(0.6, v) for v in r)
+    for x in range(int(cx - rx) - 1, int(cx + rx) + 2):
+        for y in range(int(cy - ry) - 1, int(cy + ry) + 2):
+            for z in range(int(cz - rz) - 1, int(cz + rz) + 2):
+                d = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 + ((z - cz) / rz) ** 2
+                if d > 1.0:
+                    continue
+                if shell:  # inside, not touching the outside: skip
+                    inner = ((x - cx) / max(rx - 1, 0.5)) ** 2 + ((y - cy) / max(ry - 1, 0.5)) ** 2 + \
+                        ((z - cz) / max(rz - 1, 0.5)) ** 2
+                    if inner < 1.0 and rx > 1.5 and ry > 1.5 and rz > 1.5:
+                        continue
+                if y < 0:
+                    continue
+                out[(x, y, z)] = belly if belly and y < cy - ry * 0.35 else block
+
+
+def _line(out: Spots, a: tuple[float, float, float], b: tuple[float, float, float], block: str) -> None:
+    steps = int(max(abs(b[0] - a[0]), abs(b[1] - a[1]), abs(b[2] - a[2]))) + 1
+    for i in range(steps + 1):
+        t = i / steps
+        p = (round(a[0] + (b[0] - a[0]) * t), round(a[1] + (b[1] - a[1]) * t), round(a[2] + (b[2] - a[2]) * t))
+        if p[1] >= 0:
+            out[p] = block
+
+
+def dragon(size: int, main: str, accent: str, rng: random.Random) -> Spots:
+    """A dragon statue facing the girls: head and neck in front, body,
+    spread wings, four legs with claws, a long curling tail, back spikes."""
+    k = (0.75, 1.0, 1.4)[size]
+
+    def p(x: float, y: float, z: float) -> tuple[float, float, float]:
+        return x * k, y * k, z * k
+
+    out: Spots = {}
+    wing = "red_wool" if main not in ("red_wool",) else "black_wool"
+    if accent in (main,):
+        accent = "yellow_terracotta"
+    # body, with a lighter belly
+    _ellipsoid(out, p(0, 6, 14), (4 * k, 3.8 * k, 7.5 * k), main, belly=accent)
+    # legs and claws
+    for sx in (-1, 1):
+        for lz in (9, 18):
+            x, z = round(3 * sx * k), round(lz * k)
+            for y in range(0, round(4 * k) + 1):
+                for dx in (0, sx):
+                    for dz in (0, 1):
+                        out[(x + dx, y, z + dz)] = main
+            for dx in (-1, 0, 1):
+                out[(x + dx, 0, z - 1)] = "quartz_block"  # claws
+    # neck: a curve of rounded pieces up and forward
+    for i in range(6):
+        t = i / 5
+        _ellipsoid(out, p(0, 8 + 6 * t, 8 - 5 * t), (2.2 * k, 2.2 * k, 2.2 * k), main, belly=accent)
+    # head, snout, eyes, horns, teeth
+    _ellipsoid(out, p(0, 15, 1.5), (2.6 * k, 2.2 * k, 3 * k), main)
+    _ellipsoid(out, p(0, 14, -2), (1.7 * k, 1.3 * k, 2.2 * k), main)
+    for sx in (-1, 1):
+        ex, ey, ez = p(2.4 * sx, 16, 0.5)
+        out[(round(ex), round(ey), round(ez))] = "gold_block"  # glowing eyes
+        out[(round(ex), round(ey) - 1, round(ez))] = "black_concrete"
+        _line(out, p(1.4 * sx, 17, 2), p(2.4 * sx, 20, 5), "quartz_block")  # horns
+        _line(out, p(1.4 * sx, 16.5, 3), p(2 * sx, 18.5, 6), "quartz_block")
+        tx, ty, tz = p(1 * sx, 12.8, -3)
+        out[(round(tx), round(ty), round(tz))] = "quartz_block"  # teeth
+        out[(round(tx), round(ty), round(tz) + 1)] = "quartz_block"
+    nx, ny, nz = p(0, 14.6, -4)
+    out[(round(nx) - 1, round(ny), round(nz))] = "black_concrete"  # nostrils
+    out[(round(nx) + 1, round(ny), round(nz))] = "black_concrete"
+    # wings: a bone from the shoulder to the tip, the skin hanging behind it
+    for sx in (-1, 1):
+        shoulder = p(3.5 * sx, 9, 11)
+        tip = p(16 * sx, 18, 14)
+        _line(out, shoulder, tip, main)
+        for i in range(0, 13):
+            t = i / 12
+            bone = (shoulder[0] + (tip[0] - shoulder[0]) * t, shoulder[1] + (tip[1] - shoulder[1]) * t,
+                    shoulder[2] + (tip[2] - shoulder[2]) * t)
+            edge = (bone[0], 8 * k + (bone[1] - 8 * k) * (0.35 + 0.5 * t), 20 * k - 4 * k * t)
+            _line(out, bone, edge, wing)
+        for f in (0.35, 0.65, 1.0):  # finger bones through the skin
+            bone = (shoulder[0] + (tip[0] - shoulder[0]) * f, shoulder[1] + (tip[1] - shoulder[1]) * f,
+                    shoulder[2] + (tip[2] - shoulder[2]) * f)
+            _line(out, bone, (bone[0], 8 * k + (bone[1] - 8 * k) * (0.35 + 0.5 * f), 20 * k - 4 * k * f), main)
+    # tail: thinner and thinner, curling to the side at the end
+    for i in range(10):
+        t = i / 9
+        x = 5 * t * t * (1 if rng.random() < 2 else -1)
+        _ellipsoid(out, p(x, 5 - 3 * t, 21 + 11 * t), ((2.4 - 1.6 * t) * k,) * 3, main, belly=accent if t < 0.5 else "")
+    # spikes along the back and the tail
+    for i in range(12):
+        t = i / 11
+        z = (5 + 25 * t)
+        y = 11 - 3 * t if z < 21 else 7.5 - 3 * (z - 21) / 11
+        x = 5 * ((z - 21) / 11) ** 2 if z > 21 else 0
+        sx, sy, sz = p(x, y, z)
+        _line(out, (sx, sy, sz), (sx, sy + 1.5 * k, sz + 0.5), "quartz_block" if accent == "quartz_block" else accent)
+    return out
+
+
 TEMPLATES: dict[str, Callable[..., Spots]] = {
-    "garden": garden, "house": house, "tower": tower, "castle": castle,
+    "garden": garden, "house": house, "tower": tower, "castle": castle, "dragon": dragon,
 }
 DEFAULT_COLOURS = {
     "garden": ("stone_bricks", "dirt_path"), "house": ("spruce_planks", "dark_oak_planks"),
     "tower": ("stone_bricks", "polished_andesite"), "castle": ("stone_bricks", "polished_andesite"),
+    "dragon": ("green_concrete", "lime_terracotta"),
 }
 
 

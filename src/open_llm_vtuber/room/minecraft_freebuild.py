@@ -28,7 +28,7 @@ DIG_Y = -10  # holes go this deep at most
 SIZE_Z = 20
 MAX_PARTS = 30
 MAX_BLOCKS = 700  # a free design: about two minutes for both girls by hand
-MAX_TEMPLATE_BLOCKS = 1400  # a castle: about four minutes, every block by hand
+MAX_TEMPLATE_BLOCKS = 2400  # a giant dragon: about six minutes, every block by hand
 LAYER_RUNS = 40  # blocks per piece (one piece = one hop to a new spot)
 BLOCK_ID = re.compile(r"^[a-z0-9_]{2,40}$")
 FALLBACK_BLOCK = "stone_bricks"
@@ -36,7 +36,8 @@ FALLBACK_BLOCK = "stone_bricks"
 DESIGN_SYSTEM = (
     "You plan ONE Minecraft build that two players lay block by block, live on stream. "
     "FIRST choose a template when it fits: garden (any garden, park, flower field), house (house, cottage, hut, "
-    "home, shop), tower (tower, lighthouse, watchtower), castle (castle, fort, palace). Then answer ONLY JSON: "
+    "home, shop), tower (tower, lighthouse, watchtower), castle (castle, fort, palace), dragon (any dragon, "
+    "wyvern, giant dragon statue: large when they say giant or huge). Then answer ONLY JSON: "
     '{"title": "short name", "template": "garden", "size": "small" or "medium" or "large", "main": "block id for '
     'walls", "accent": "block id for floors, roofs, details", "sky": true when it should float (sky, flying, '
     'cloud), "text": {"words": "SELWYN", "block": "gold_block"} or null}. '
