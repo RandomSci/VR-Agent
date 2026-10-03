@@ -1,0 +1,32 @@
+import asyncio
+from types import SimpleNamespace
+
+from open_llm_vtuber.publishing.stream_autopilot import (
+    CHANNEL_DESCRIPTION,
+    StreamAutopilot,
+    stream_title,
+)
+
+
+def test_titles_fit_youtube():
+    title = stream_title("Math with Python", 7, 9, "A very long lesson name " * 5)
+    assert len(title) <= 100 and "Lesson 7" in title
+    assert len(CHANNEL_DESCRIPTION) <= 1000
+
+
+def test_end_stream_says_goodbye_then_stops(monkeypatch):
+    monkeypatch.setenv("OBS_WEBSOCKET_PASSWORD", "")
+    settings = SimpleNamespace(
+        youtube_enabled=True, youtube_chat_enabled=False, dry_run=True, youtube_ready=False
+    )
+    pilot = StreamAutopilot(SimpleNamespace(settings=settings))
+    calls = []
+
+    async def goodbye(reason):
+        calls.append(reason)
+
+    pilot.goodbye = goodbye
+    pilot.shutdown = lambda: calls.append("shutdown")
+    asyncio.run(pilot.end_stream("limit"))
+    asyncio.run(pilot.end_stream("limit"))  # only once
+    assert calls == ["limit", "shutdown"]

@@ -163,12 +163,42 @@ def run(console_log_level: str):
 
     # Run the Uvicorn server
     logger.info(f"Starting server on {server_config.host}:{server_config.port}")
-    uvicorn.run(
-        app=server.app,
-        host=server_config.host,
-        port=server_config.port,
-        log_level=console_log_level.lower(),
+    uv_server = GoodbyeServer(
+        uvicorn.Config(
+            app=server.app,
+            host=server_config.host,
+            port=server_config.port,
+            log_level=console_log_level.lower(),
+        )
     )
+    uv_server.goodbye = server.ws_handler.say_goodbye
+    # The 12 hour limit stops the server cleanly (go-live.sh then does not restart).
+    server.ws_handler.request_shutdown = lambda: setattr(uv_server, "should_exit", True)
+    uv_server.run()
+
+
+class GoodbyeServer(uvicorn.Server):
+    """First Ctrl+C: Mika and Luna say goodbye on stream, then the server stops.
+    Second Ctrl+C: stop right away."""
+
+    goodbye = None
+    _bye_task = None
+
+    def handle_exit(self, sig, frame) -> None:
+        if self.goodbye is None or self._bye_task is not None or self.should_exit:
+            return super().handle_exit(sig, frame)
+        logger.info("Saying goodbye on stream before stopping (Ctrl+C again to stop now)")
+        loop = asyncio.get_event_loop()
+
+        async def bye() -> None:
+            try:
+                await asyncio.wait_for(self.goodbye("stop"), timeout=30)
+            except Exception as exc:
+                logger.warning(f"Goodbye skipped: {exc}")
+            uvicorn.Server.handle_exit(self, sig, frame)
+
+        self._bye_task = True
+        loop.call_soon_threadsafe(lambda: setattr(self, "_bye_task", loop.create_task(bye())))
 
 
 if __name__ == "__main__":

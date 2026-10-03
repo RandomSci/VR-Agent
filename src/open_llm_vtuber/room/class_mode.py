@@ -259,6 +259,8 @@ class ClassEngine:
         self._lesson_cells: list[str] = []
         self.lessons_taught = 0
         self.view: dict[str, Any] = {"active": False}
+        # Called at each lesson start (the stream title follows the lesson).
+        self.on_lesson = None
 
     # ------------------------------------------------------------ public
     @property
@@ -595,6 +597,12 @@ class ClassEngine:
     # ------------------------------------------------------------ teaching
     async def _teach(self, course_id: str, index: int, lesson: dict[str, Any]) -> None:
         await self._push_start(course_id, index, lesson["title"])
+        if self.on_lesson is not None:
+            info = course(course_id)
+            goals = lesson_at(course_id, index)[3]
+            asyncio.create_task(
+                self.on_lesson(info["title"], index + 1, len(info["lessons"]), lesson["title"], goals)
+            )
         try:
             await self.kernel.reset()
         except Exception as exc:

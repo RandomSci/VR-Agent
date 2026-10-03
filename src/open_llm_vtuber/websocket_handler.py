@@ -360,9 +360,58 @@ class WebSocketHandler:
             if engine is None:
                 engine = ClassEngine(self._room_runtimes, self.room_session)
                 self.room_session.class_engine = engine
+            autopilot = getattr(self, "autopilot", None)
+            if autopilot is not None:
+                engine.on_lesson = autopilot.lesson_started
             engine.start()
         except Exception as exc:
             logger.error(f"Class mode could not start: {exc}")
+
+    def _start_autopilot(self, runtimes) -> None:
+        """Title, description, channel page and the 11h55m limit (YouTube)."""
+        if getattr(self, "autopilot", None) is not None or runtimes.publisher is None:
+            return
+        try:
+            from .publishing.stream_autopilot import StreamAutopilot
+
+            self.autopilot = StreamAutopilot(runtimes.publisher)
+            self.autopilot.goodbye = self.say_goodbye
+            self.autopilot.shutdown = lambda: (getattr(self, "request_shutdown", None) or (lambda: None))()
+            self.autopilot.start()
+        except Exception as exc:
+            logger.warning(f"Stream autopilot unavailable: {exc}")
+
+    async def say_goodbye(self, reason: str = "stop") -> None:
+        """Mika and Luna say bye before the server stops (Ctrl+C or the 12 hour limit)."""
+        from .room.speech import INSIDE_INTERACTION
+
+        session = self.room_session
+        if not session.active or not session.speech_target():
+            return
+        engine = session.class_engine
+        if engine is not None and engine.task and not engine.task.done():
+            engine.task.cancel()  # stop teaching mid line; progress is kept
+        # Only the voice: a build may still hold the interaction lock.
+        INSIDE_INTERACTION.set(True)
+        cast = [c.id for c in session.room.characters]
+        teacher = (engine.teacher if engine else None) or (cast[0] if cast else "mika")
+        sidekick = next((c for c in cast if c != teacher), None)
+        if reason == "limit":
+            first = (
+                "Whoa, we've been live for almost twelve hours! That's all for today. "
+                "Goodbye for now, and see you in the next session!"
+            )
+        else:
+            first = "That's all for today, everyone! Goodbye for now, and see you in the next session!"
+        logger.info("Saying goodbye on stream")
+        await session.speech.say(teacher, first)
+        if sidekick:
+            await session.speech.say(
+                sidekick, "Bye bye! Keep practicing, and your projects are in the description!"
+            )
+        autopilot = getattr(self, "autopilot", None)
+        if autopilot is not None and reason != "limit":
+            await autopilot.post_chat("Stream is ending for now, thanks for hanging out! See you next session 👋")
 
     def class_active(self) -> bool:
         engine = getattr(self.room_session, "class_engine", None)
@@ -435,6 +484,7 @@ class WebSocketHandler:
             )
         except Exception as exc:
             logger.warning(f"Code in Public: publishing unavailable: {exc}")
+        self._start_autopilot(runtimes)
         if os.environ.get("VR_BROWSER_CHECK", "1").strip() in ("0", "false", "off"):
             logger.info("Code in Public: browser check off (VR_BROWSER_CHECK=0)")
             return
@@ -638,6 +688,12 @@ class WebSocketHandler:
             if self.room_session.active:
                 self.room_client_uids.add(client_uid)
                 await self.room_session.register(client_uid, websocket.send_text)
+                try:
+                    # Runtimes (and the YouTube autopilot) start with the Stage,
+                    # not with the first chat message.
+                    self._room_director_ready(client_uid, websocket)
+                except Exception as exc:
+                    logger.warning(f"VR Room: runtimes not ready yet: {exc}")
                 self._maybe_start_class(client_uid, websocket)
                 try:
                     # Which engine and voice each character really uses (no keys).

@@ -227,3 +227,60 @@ class YouTubeClient:
             params={"part": "snippet"},
             json={"id": video_id, "snippet": keep},
         )
+
+    # -- the stream itself (title, start time, ending it) ---------------------
+    def set_title_and_description(
+        self, video_id: str, snippet: dict[str, Any], title: str, description: str
+    ) -> dict[str, Any]:
+        """Send back the CURRENT snippet with the title and description changed."""
+        keep = {
+            k: snippet[k]
+            for k in ("categoryId", "tags", "defaultLanguage", "defaultAudioLanguage")
+            if k in snippet
+        }
+        keep["title"] = " ".join(str(title).split())[:100]
+        keep["description"] = str(description)[:4900]
+        return self._call(
+            "PUT", "/videos", params={"part": "snippet"}, json={"id": video_id, "snippet": keep}
+        )
+
+    def live_started_at(self, video_id: str) -> str:
+        """ISO time the broadcast went live, or "" (1 unit)."""
+        data = self._call(
+            "GET", "/videos", params={"part": "liveStreamingDetails", "id": video_id}
+        )
+        items = data.get("items") or []
+        if not items:
+            return ""
+        details = items[0].get("liveStreamingDetails") or {}
+        if details.get("actualEndTime"):
+            return ""
+        return str(details.get("actualStartTime") or "")
+
+    def end_broadcast(self, broadcast_id: str) -> dict[str, Any]:
+        """Move the broadcast to "complete": the live stream ends (50 units)."""
+        return self._call(
+            "POST",
+            "/liveBroadcasts/transition",
+            params={"broadcastStatus": "complete", "id": broadcast_id, "part": "status"},
+        )
+
+    # -- the channel page -------------------------------------------------------
+    def channel_branding(self) -> dict[str, Any]:
+        data = self._call("GET", "/channels", params={"part": "brandingSettings", "mine": "true"})
+        items = data.get("items") or []
+        if not items:
+            raise YouTubeError("no channel found for this sign-in")
+        return items[0]
+
+    def set_channel_description(self, channel: dict[str, Any], description: str) -> dict[str, Any]:
+        """Send back the channel's branding with only the description changed."""
+        current = dict((channel.get("brandingSettings") or {}).get("channel") or {})
+        current.pop("title", None)  # read only
+        current["description"] = str(description)[:1000]
+        return self._call(
+            "PUT",
+            "/channels",
+            params={"part": "brandingSettings"},
+            json={"id": channel["id"], "brandingSettings": {"channel": current}},
+        )

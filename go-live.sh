@@ -22,6 +22,15 @@ PY
 fi
 
 echo "Stage for OBS: http://127.0.0.1:12393/vr-agent/teaching-stage.html"
+
+# VR_START_OBS=1 in .env: OBS opens minimized and starts streaming by itself,
+# so you never have to touch it. The 11h55m limit stops it again.
+if grep -qE '^VR_START_OBS=(1|true)' .env 2>/dev/null && command -v obs >/dev/null; then
+    if ! pgrep -x obs >/dev/null; then
+        echo "Starting OBS (minimized, streaming)"
+        (sleep 20; obs --startstreaming --minimize-to-tray --disable-shutdown-check >/dev/null 2>&1) &
+    fi
+fi
 stop=0
 trap 'stop=1' INT TERM
 while [ "$stop" -eq 0 ]; do
