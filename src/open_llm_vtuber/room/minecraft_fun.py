@@ -56,6 +56,12 @@ FLY_SPEED = 18.0  # blocks a second at normal pace (the !flyTo patch)
 SPEED_STEP = 0.35  # each Speed level adds this much (the !flyTo patch)
 
 
+def CHOICE_HOLD() -> float:  # noqa: N802 (the engine's constant, read late: no import loop)
+    from .minecraft_mode import CHOICE_HOLD as hold
+
+    return hold
+
+
 def effect_name(text: str) -> str:
     name = re.sub(r"[^a-z_]", "", str(text).lower().replace(" ", "_").replace("minecraft:", ""))
     name = re.sub(r"^(potion_of_|splash_)", "", name)
@@ -142,9 +148,22 @@ class FunShow:
         if friend == cid:
             return
         who, target = self.e.names[cid], self.e.names[friend]
+        # A real throw: the potion in her hand, she turns to her friend, swings
+        # and throws it (it used to just happen, nothing flew).
+        seconds, level = EFFECTS[name]
+        await self.rcon(
+            f"item replace entity {who} weapon.mainhand with minecraft:splash_potion"
+            f'[minecraft:potion_contents={{custom_effects:[{{id:"minecraft:{name}",duration:{seconds * 20},'
+            f"amplifier:{level}}}]}}]")
+        to = self.e._pos.get(friend)
+        if to and cid in self.e._pos:
+            self.e._chose_at[cid] = time.time() + 6 - CHOICE_HOLD()
+            await asyncio.sleep(0.3)  # the potion reaches her hand
+            await self.e._command(cid, f"!gesture({to[0]:.1f}, {to[1] + 1.2:.1f}, {to[2]:.1f}, 1)")
+            await asyncio.sleep(1.4)  # it flies and breaks
         await self.rcon(f"execute at {target} run particle minecraft:splash ~ ~1 ~ 0.6 0.6 0.6 0.2 60")
         await self.rcon(f"execute at {target} run playsound minecraft:entity.splash_potion.break player @a ~ ~ ~ 1 1")
-        await self.apply(friend, name)
+        await self.apply(friend, name)  # also when the throw missed: chat asked for it
         self.remember(f"{who} splashed {target} with {name.replace('_', ' ')}")
         CLIPS.mark("potion", f"{who} splashed {target} with {name}", 1.5)
         await self.tell(friend, f"{who} just hit you with a splash potion of {name.replace('_', ' ')}! React!")

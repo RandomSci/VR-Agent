@@ -82,6 +82,7 @@ from .minecraft_asks import (digit_asked, friend_asked, further_asked, restyle_a
 from .minecraft_freebuild import wants_build
 from .minecraft_safety import MODERATOR, locally_bad
 from .minecraft_fun import potion_ask, wants_race, wants_tnt
+from .minecraft_spells import Spells, creature_asked, spells_asked, target_asked
 from .minecraft_projects import MATERIALS, center, hand_blocks, hand_item, lay, place_sound, write_atomic
 
 MC_DIR = Path("minecraft")
@@ -187,6 +188,8 @@ HINTS = (
     'Type "race" and Mika and Luna race through the sky hoops',
     'Type "Mika fly around" for a tour of everything they built',
     'Too plain? Type "make it more colorful" or "add gold on it"',
+    'Type "Mika cast lightning on Luna" or "make Luna giant" (spells: freeze, summon, fireworks, storm...)',
+    'Mix spells: "cast levitation and fireworks together"',
     'Say "Mika drink a potion of invisibility" (or levitation, glowing...)',
     "Ask Luna to splash Mika with a potion. She will.",
     "Say a name to talk to one of them: Mika or Luna",
@@ -224,7 +227,11 @@ CAN_DO = (
     "up TNT (only far away from your builds), drink potions or splash your friend (invisibility, levitation, "
     "speed, glowing, jump boost...), brew a mystery potion, get any item, race your friend through the sky "
     "hoops, fly to the castle, the farm, the garden, the base or high in the sky, fly in front of "
-    "the camera. You cannot fight, sleep, trade or play survival things "
+    "the camera, cast real spells with !castSpell (lightning, levitate, freeze, summon a creature, storm, rain, "
+    "night, fireworks, grow a tree, giant, tiny, heal, sparkle, or mix two like lightning+fireworks), and make "
+    "golems come alive (a snow golem: two snow blocks with a carved pumpkin on top; an iron golem: a T of four "
+    "iron blocks with a carved pumpkin; other golems are statues: in this Minecraft only those two come alive). "
+    "You cannot fight, sleep, trade or play survival things "
     "(it is creative mode). If something is truly impossible in the game, do the closest thing you can and say "
     "so in one cheerful line. "
 )
@@ -709,6 +716,7 @@ class MinecraftEngine:
         from .minecraft_fun import FunShow
 
         self.fun = FunShow(self)  # items, potions, the sky race, stand in front
+        self.spells = Spells(self)  # real magic: lightning, giant, summon, fireworks...
         from .minecraft_eyes import Eyes
 
         self.eyes = Eyes(self)  # what their characters really see (a picture of each view, in words)
@@ -798,6 +806,20 @@ class MinecraftEngine:
             # "make it more colorful", "add gold on it", "build me a golden tower" while
             # a tower is built: the build going on changes (it used to start another build)
             heard += f" ({self._restyle(main, trim, author)} Right now, no command needed.)"
+            acted = True
+        # Spells before builds: "make Luna giant" is magic, not a build called "Luna giant".
+        elif self.creative and spells_asked(text):
+            spells = spells_asked(text)
+            caster = targets[0]
+            target = target_asked(text, self.names, caster)
+            if target == caster and not re.search(r"\b(?:yourself|herself|on you)\b", text, re.I):
+                caster = self._friend(caster)  # "make Luna giant": Mika casts it on Luna
+            creature = creature_asked(text) if "summon" in spells else ""
+            _soon(self.spells.cast(caster, spells, target, author, creature))
+            mixed = " mixed together" if len(spells) > 1 else ""
+            heard += (f" ({self.names[caster]} is casting {' and '.join(spells)}{mixed} right now"
+                      f"{' (a ' + creature.replace('_', ' ') + ')' if creature else ''}: say a spell word, "
+                      "no command needed.)")
             acted = True
         # Builds first: "build a castle that won't blow up" is a build, not TNT.
         elif self.creative and wants_build(text):
@@ -2239,6 +2261,7 @@ class MinecraftEngine:
             "splashPotion": f"{name} threw a splash potion of {arg}",
             "brewPotion": f"{name} started a mystery brew",
             "race": f"{name} called a sky race",
+            "castSpell": f"{name} cast a spell: {arg[:40]}",
             "blowUp": f"{name} wanted to blow something up with TNT",
             "standInFront": f"{name} asked to stand in front of the camera",
         }.get(verb, f"{name} did {verb} {arg}"))
@@ -2364,6 +2387,22 @@ class MinecraftEngine:
         elif verb == "brewPotion":
             self._girl_potion_at = time.time()
             _soon(self.fun.brew(cid))
+        elif verb == "castSpell":
+            target, _, spell = arg.partition(" ")
+            if target not in ("friend", "me", "mob", "build"):
+                target, spell = "friend", arg
+            names = [n for part in re.split(r"[+&,]| and | with ", spell)
+                     for n in spells_asked(f"cast {part.strip()}")][:3]
+            if not names:
+                await self.link.emit("send-message", name, {"from": "system", "message": (
+                    f"No spell called {spell}. Real spells: {self.spells.list_for_girls()}")})
+                return
+            target = {"me": cid}.get(target, target)
+            result = await self.spells.cast(cid, names, target, "", creature_asked(spell) if "summon" in names else "",
+                                            girl=True)
+            if result:
+                await self.link.emit("send-message", name, {"from": "system", "message": (
+                    f"Your spell worked: {result}. React out loud in one line.")})
         elif verb == "race":
             asyncio.create_task(self.fun.race(cid))
         elif verb == "blowUp":
@@ -3944,7 +3983,7 @@ CAMERA_GLIDE = (
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v14)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v15)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -4382,6 +4421,58 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v14)
             out.y = Math.round(me.y);
             out.time = bot.time ? bot.time.timeOfDay : null;
             proxy.sendOutputToServer(agent.name, '[VR] sees ' + JSON.stringify(out));
+        }
+    },
+    { // VR Agent: a spell or a throw - she turns to it and moves her arm (the engine sends this)
+        name: '!gesture',
+        description: 'Engine only: turn to x, y, z, swing your arm (and throw what is in your hand when throw is 1).',
+        params: {
+            'x': {type: 'float', description: 'x', domain: [-Infinity, Infinity]},
+            'y': {type: 'float', description: 'y', domain: [-64, 320]},
+            'z': {type: 'float', description: 'z', domain: [-Infinity, Infinity]},
+            'throw': {type: 'int', description: '1: throw the held item', domain: [0, 2]}
+        },
+        perform: runAsAction(async (agent, x, y, z, throwIt) => {
+            const bot = agent.bot;
+            const Vec3 = bot.entity.position.constructor;
+            const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+            const look = new Vec3(x, y, z);
+            for (let k = 0; k < 20; k++) { // smooth, like building (her eyes are the stream)
+                if (bot.interrupt_code) return;
+                const eye = bot.entity.position.offset(0, bot.entity.height || 1.62, 0);
+                const d = look.minus(eye);
+                const yaw = Math.atan2(-d.x, -d.z);
+                const pitch = Math.atan2(d.y, Math.sqrt(d.x * d.x + d.z * d.z));
+                const dy = wrap(yaw - bot.entity.yaw);
+                const dp = pitch - bot.entity.pitch;
+                await bot.look(bot.entity.yaw + Math.max(-0.3, Math.min(0.3, dy)),
+                    bot.entity.pitch + Math.max(-0.3, Math.min(0.3, dp)), true);
+                if (Math.abs(dy) < 0.05 && Math.abs(dp) < 0.05) break;
+                await sleep(50);
+            }
+            bot.swingArm('right');
+            if (throwIt === 1) {
+                try { bot.activateItem(); } catch (e) { /* nothing in hand: the swing still shows */ }
+                await sleep(150);
+                try { bot.deactivateItem(); } catch (e) { /* fine */ }
+            } else {
+                await sleep(250);
+                bot.swingArm('right'); // a spell: two quick waves
+            }
+        })
+    },
+    {
+        name: '!castSpell',
+        description: 'Cast a real spell: lightning, levitate, freeze, summon <creature>, storm, rain, night, fireworks, '
+            + 'grow, giant, tiny, heal, sparkle. target: friend, me, mob or build. Mix two with "lightning+fireworks".',
+        params: {
+            'spell': {type: 'string', description: 'the spell, e.g. lightning, summon parrot, giant, lightning+fireworks'},
+            'target': {type: 'string', description: 'friend, me, mob or build'}
+        },
+        perform: async function (agent, spell, target) {
+            (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] castSpell ' + target + ' ' + spell);
+            return 'You raise your hand and cast ' + spell + '. Wait to see what happens.';
         }
     },
     { // VR Agent: back on the ground

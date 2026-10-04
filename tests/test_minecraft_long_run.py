@@ -558,3 +558,108 @@ def test_she_turns_to_what_she_sees(monkeypatch):
         assert "React" in eng.link.sent[-1][1]["message"]
 
     asyncio.run(run())
+
+
+def test_spells_are_understood():
+    from src.open_llm_vtuber.room import minecraft_spells as sp
+
+    assert sp.spells_asked("Mika cast lightning on Luna") == ["lightning"]
+    assert sp.spells_asked("make Luna giant") == ["giant"]
+    assert sp.spells_asked("summon a parrot!") == ["summon"]
+    assert sp.spells_asked("mix levitation and fireworks together, cast it!") == ["levitate", "fireworks"]
+    assert sp.spells_asked("let's experiment on spells today! freeze her") == ["freeze"]
+    assert sp.spells_asked("I love rain") == [] and sp.spells_asked("big tower please") == []
+    assert sp.creature_asked("summon a puppy") == "wolf" and sp.creature_asked("spawn an iron golem") == "iron_golem"
+    names = {"mika": "Mika", "luna": "Luna"}
+    assert sp.target_asked("cast lightning on Luna", names, "mika") == "luna"
+    assert sp.target_asked("freeze the cow", names, "mika") == "mob"
+
+
+def test_a_spell_is_cast_with_a_wave_and_really_happens(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng.creative = True
+        eng._pos = {"mika": (0.0, 70.0, 0.0), "luna": (5.0, 70.0, 0.0)}
+        sent, orders = [], []
+
+        async def rcon(cmd, reply=False):
+            sent.append(cmd)
+            return ""
+
+        async def command(cid, text):
+            orders.append((cid, text))
+            return True
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        eng._command = command
+        eng.spells._cast_at = 0.0
+        result = await eng.spells.cast("mika", ["lightning", "fireworks"], "luna", "fan")
+        assert orders[0][0] == "mika" and orders[0][1].startswith("!gesture(5.0")  # she turns to Luna and waves
+        assert "gamerule doFireTick false" in sent  # lightning never burns a build
+        assert any(c.startswith("summon minecraft:lightning_bolt") for c in sent)
+        assert sum(c.startswith("summon minecraft:firework_rocket") for c in sent) == 5
+        assert "lightning" in result and "mixed" in result
+        sent.clear()
+        eng.spells._cast_at = 0.0
+        await eng.spells.cast("luna", ["giant"], "mika", "fan")  # never on the camera girl
+        assert not any("minecraft:scale" in c for c in sent)
+        for task in list(mm._BACKGROUND):
+            task.cancel()
+
+    asyncio.run(run())
+
+
+def test_a_splash_potion_is_really_thrown(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng._pos = {"mika": (0.0, 70.0, 0.0), "luna": (4.0, 70.0, 0.0)}
+        sent, orders = [], []
+
+        async def rcon(cmd, reply=False):
+            sent.append(cmd)
+            return ""
+
+        async def command(cid, text):
+            orders.append(text)
+            return True
+
+        async def fast(*a, **k):
+            return None
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        monkeypatch.setattr(eng.fun, "rcon", lambda cmd, reply=False: rcon(cmd, reply))
+        from src.open_llm_vtuber.room import minecraft_fun as fun
+
+        monkeypatch.setattr(fun.asyncio, "sleep", fast)
+        eng._command = command
+        await eng.fun.splash("mika", "glowing")
+        assert any("splash_potion" in c and "minecraft:glowing" in c for c in sent)
+        assert orders and orders[0].startswith("!gesture(4.0") and orders[0].endswith(", 1)")  # thrown at Luna
+
+    asyncio.run(run())
+
+
+def test_the_girls_know_their_spells_and_golems():
+    assert "!castSpell" in mm.CAN_DO and "iron golem" in mm.CAN_DO and "lightning" in mm.CAN_DO
+    assert "!castSpell" in mm.FLY_COMMANDS and "!gesture" in mm.FLY_COMMANDS
+
+
+def test_magic_is_not_a_build():
+    from src.open_llm_vtuber.room import minecraft_spells as sp
+
+    async def run():
+        eng = _engine()
+        eng.creative = True
+        cast = []
+
+        async def fake_cast(caster, spells, target="friend", who="", creature="", girl=False):
+            cast.append((caster, spells, target))
+            return "done"
+
+        eng.spells.cast = fake_cast
+        eng.enqueue("fan", "make Luna giant")
+        await asyncio.sleep(0)
+        assert cast == [("mika", ["giant"], "luna")] and not eng._free_waiting
+        assert sp.spells_asked("make the tower bigger") == [] and sp.spells_asked("build a giant tower") == []
+
+    asyncio.run(run())
