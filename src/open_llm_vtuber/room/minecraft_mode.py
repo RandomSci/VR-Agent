@@ -241,7 +241,10 @@ SYSTEM_FACTS = (
     "of your friend's eyes so the stream sees you. Say yes to EVERY viewer request and do it right away with the "
     "matching command: no refusing, no stalling, no 'are you sure', no 'that is too big'. Chat ALWAYS comes "
     "first: drop what you are doing for them. Between requests you build your Kingdom together and talk with "
-    "chat; mention the neural network only when someone asks about it. You can SEE: now and then you are told "
+    "chat; mention the neural network only when someone asks about it. "
+    "When chat says you are stuck, frozen, lagging or glitching, BELIEVE them (they see the stream, you do not): "
+    "never deny it or laugh it off. Only talk about what is really being built, never about plants or details "
+    "that are not there. You can SEE: now and then you are told "
     "what you see in front of you (creatures, your friend, builds); react to it, and never invent things you "
     "were not told you see."
 )
@@ -258,6 +261,24 @@ SHOW_HOLD = 35.0  # after "show me ...", the builder leaves the camera girl alon
 PLACE_WORDS = {"neural network": "network", "network": "network", "castle": "castle", "farm": "farm",
                "garden": "garden", "base": "base", "sky": "sky", "kingdom": "kingdom"}
 SHOW_ASK = re.compile(r"\b(see|show|look at|go to|fly to|visit|take (?:me|us) to|check out|watch)\b", re.I)
+# "you're stuck", "she's glitching": chat sees the stream, the girls do not.
+# They laughed it off ("I'm not stuck!") while the picture shook. Now the
+# engine believes chat: it stops her, lifts her free, re-attaches the camera.
+STUCK_ASK = re.compile(
+    r"\b(stuck|frozen|freez\w*|glitch\w*|bugg?ed|bugging|lagg?\w*|not moving|can'?t move|shaking|"
+    r"jittering|teleporting back|spinning)\b", re.I)
+UNSTICK_GAP = 30.0  # chat saying "stuck" again within this many seconds does not unstick again
+REPEAT_THEME = 6  # a girl's own build idea is not repeated within her last this many ideas
+FRESH_IDEAS = (
+    "a pirate ship with sails", "a giant dragon statue", "a lighthouse by the water", "a rocket ship on a launch pad",
+    "a huge pixel art heart", "a treehouse", "a pyramid with a hidden room", "a giant robot statue",
+    "a windmill", "a medieval castle gate", "a hot air balloon", "a giant cake", "a ferris wheel",
+    "a wizard tower", "a giant sword stuck in the ground", "a train with a station", "a volcano",
+    "a giant mushroom house", "a stone bridge over a canyon", "a giant creeper statue",
+)
+IDEA_STOPWORDS = {"build", "make", "giant", "huge", "with", "some", "very", "really", "little", "small", "big",
+                  "beautiful", "pretty", "cool", "mystical", "magical", "awesome", "amazing", "cozy", "that",
+                  "this", "from", "into", "over", "under"}
 FURTHER_ASK = re.compile(
     r"\b(further|farther|zoom out|back up|from afar|from above|higher|wider|bigger view|full view|whole thing)\b", re.I)
 
@@ -592,6 +613,8 @@ class MinecraftEngine:
         self._trail: dict[str, tuple[float, float, float]] = {}  # an earlier position (movement direction)
         self._free_lock = asyncio.Lock()
         self._daylight_at = 0.0
+        self._unstuck_at = 0.0
+        self._own_ideas: deque[str] = deque(maxlen=REPEAT_THEME)
         self._last_flight: dict[str, tuple[str, float]] = {}
         self._pulled_back: dict[str, list[float]] = {}
         self._cam_guard_at = 0.0
@@ -680,6 +703,10 @@ class MinecraftEngine:
             heard += " (You are placing TNT right now, by hand: no command needed. It only works far from your builds.)"
         elif self.creative and wants_build(text):
             heard += self.request_build(text, author, viewer=True)
+        elif self.creative and STUCK_ASK.search(text):
+            _soon(self._unstick(author))
+            heard += (" (Chat sees the stream and says you look stuck or glitchy. BELIEVE them, never deny it or "
+                      "laugh it off: you are being freed right now. Thank them for telling you, in one short line.)")
         elif self.creative and place_ask(text):
             place = place_ask(text)
             _soon(self._show_place(place, author))
@@ -1928,7 +1955,13 @@ class MinecraftEngine:
                     "they want instead.")})
                 return
             self._self_build_at = time.time()
-            self.request_build(arg, name)
+            idea = self._fresh_idea(arg)
+            if idea != arg:
+                logger.info(f"Minecraft: {name} wanted '{arg[:40]}' again, building '{idea}' instead")
+                await self.link.emit("send-message", name, {"from": "system", "message": (
+                    f"You built something like that already. This time you two build {idea}: say so excitedly, "
+                    "and only describe what you really see being built.")})
+            self.request_build(idea, name)
         elif verb == "buildNext" and self.creative and self.projects.current() is None:
             return  # every project is done: the Kingdom goes on by itself
         elif verb == "buildNext":
@@ -2517,6 +2550,43 @@ class MinecraftEngine:
         self._remember(f"{self.names[cid]} flew to the {place} because {who} wanted to see it")
         logger.info(f"Minecraft: {who} wants to see the {place}: {self.names[cid]} flies there")
         await self._arrive(cid, view, focus, await self._fly(cid, view, focus))
+
+    async def _unstick(self, who: str) -> None:
+        """Chat says she is stuck or glitching: believe it. Both stop what they
+        do (a flight fighting something, a hung action), the camera girl is
+        lifted two blocks into free air, your camera is attached to her again
+        and building goes on."""
+        now = time.time()
+        if now - self._unstuck_at < UNSTICK_GAP:
+            return
+        self._unstuck_at = now
+        cid = self._camera_girl()
+        name = self.names[cid]
+        logger.warning(f"Minecraft: chat said stuck ({who}): stopping both, lifting {name}, camera attached again")
+        for c in self.cast:
+            self._last_flight.pop(c, None)
+            await self._command(c, "!stop")
+        await rcon_command(f"execute as {name} at @s if block ~ ~2 ~ air if block ~ ~3 ~ air run tp @s ~ ~2 ~")
+        if self.camera_on and self.camera_style not in ("director", "behind"):
+            await rcon_command(f"gamemode spectator {self.camera_player}")
+            await rcon_command(f"tp {self.camera_player} {name}")
+            await asyncio.sleep(1.0)
+            await self._spectate()
+        self._build_event.set()  # building goes on from where she is now
+
+    def _fresh_idea(self, idea: str) -> str:
+        """Her own build idea, unless she built that kind of thing lately
+        (six floating gardens in one stream): then something new."""
+        def words(text: str) -> set[str]:
+            return {w for w in re.findall(r"[a-z]+", text.lower()) if len(w) >= 4 and w not in IDEA_STOPWORDS}
+
+        mine = words(idea)
+        used = set().union(*(words(old) for old in self._own_ideas)) if self._own_ideas else set()
+        if mine & used:
+            options = [i for i in FRESH_IDEAS if not (words(i) & used)] or list(FRESH_IDEAS)
+            idea = random.choice(options)
+        self._own_ideas.append(idea)
+        return idea
 
     async def _step_back(self, who: str) -> None:
         """'go a little further, I want to see it from afar': back and up."""

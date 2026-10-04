@@ -960,3 +960,55 @@ def test_messages_wait_for_a_bot_that_is_still_joining(tmp_path, monkeypatch):
     text = proxy.read_text()
     assert "typeof this.agent.respondFunc !== 'function'" in text
     assert mm.patch_mindcraft() == []  # once only
+
+
+def test_chat_saying_stuck_frees_her(monkeypatch):
+    """'Mika you're stuck' was laughed off. Now she is stopped and lifted, the
+    camera is attached again, and she is told to believe chat."""
+    async def run():
+        commands = []
+
+        async def rcon(cmd, reply=False):
+            commands.append(cmd)
+            return ""
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        monkeypatch.setattr(mm.asyncio, "sleep", _no_sleep)
+        eng = _live_engine(monkeypatch)
+        eng.creative = True
+        eng.camera_on = True
+        eng.cam_focus = "mika"
+        eng._kick_answers = lambda: None  # the answer stays in the queue to be looked at
+        eng.enqueue("viewer1", "mika you're stuck lol")
+        await _no_sleep(0)
+        for _ in range(5):
+            await asyncio.sleep(0)
+        sent = [m for _n, m in eng.link.sent if isinstance(m, dict)]
+        assert sum(1 for m in sent if m.get("message") == "!stop") == 2
+        assert any(c.startswith("execute as Mika at @s") and c.endswith("tp @s ~ ~2 ~") for c in commands)
+        assert any(c.startswith("spectate Mika") for c in commands)
+        assert "BELIEVE" in eng.chat_queue[-1]["text"]
+        eng.link.sent.clear()
+        await eng._unstick("viewer2")  # again right away: not twice
+        assert not eng.link.sent
+
+    real_sleep = asyncio.sleep
+
+    async def _no_sleep(_s=0, *a, **k):
+        await real_sleep(0)
+
+    asyncio.run(run())
+
+
+def test_own_build_ideas_do_not_repeat():
+    eng = _engine()
+    assert eng._fresh_idea("a floating garden") == "a floating garden"
+    second = eng._fresh_idea("a mystical floating garden oasis")
+    assert "garden" not in second and "floating" not in second
+    assert eng._fresh_idea("a wizard tower") in ("a wizard tower",) or "tower" not in second
+
+
+def test_a_frozen_castle_is_a_build_not_a_glitch():
+    assert mm.STUCK_ASK.search("build a frozen castle")
+    assert mm.wants_build("build a frozen castle")  # the build is checked first in enqueue
+    assert not mm.STUCK_ASK.search("build a pirate ship")

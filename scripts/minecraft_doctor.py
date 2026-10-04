@@ -47,6 +47,7 @@ OURS_PATTERNS = [
     (r"overloaded|keeps up again", "SERVER SPEED"),
     (r"has not moved|still frozen", "FROZEN"),
     (r"pulled \w+ back", "PULLED BACK"),
+    (r"chat said stuck", "CHAT: STUCK"),
     (r"no contact with Mindcraft", "BOTS LINK"),
     (r"connected to Mindcraft|Mindcraft link", "BOTS LINK"),
     (r"building '|the Kingdom, lot", "BUILD"),
