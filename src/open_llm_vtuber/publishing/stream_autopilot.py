@@ -126,6 +126,13 @@ def stream_description(course: str, number: int, total: int, lesson: str, goals:
     return "\n".join(head) + STREAM_BODY
 
 
+def _goodbye_delay() -> float:
+    try:
+        return max(0.0, float(os.environ.get("VR_GOODBYE_DELAY", "10") or 10))
+    except ValueError:
+        return 10.0
+
+
 class StreamAutopilot:
     def __init__(self, publisher: Any) -> None:
         self.publisher = publisher
@@ -237,7 +244,7 @@ class StreamAutopilot:
         """Minecraft and other modes: their own title, their text above the
         channel text, their thumbnail and their playlist. True once the title
         is on the live video (the caller tries again until then)."""
-        self.goodbye_timeout = 50.0  # the goodbye (15 s at most) also stops the game processes (save the world)
+        self.goodbye_timeout = 85.0  # the goodbye (25 s at most) also stops the game processes (world saved first)
         renamed = await self._rename(title[:100], head + STREAM_BODY)
         if not renamed:
             return False
@@ -376,7 +383,9 @@ class StreamAutopilot:
             await asyncio.wait_for(chat, timeout=5)
         except Exception:
             pass
-        await asyncio.sleep(2)  # the last words reach viewers (stream delay)
+        # The last words reach viewers first: the stream runs a few seconds
+        # behind, and ending it 2 s after the goodbye cut the goodbye off.
+        await asyncio.sleep(_goodbye_delay())
         if not self.settings.dry_run and self.settings.youtube_ready:
             try:
                 client = self.publisher._youtube_factory()

@@ -12,6 +12,10 @@ from .test_minecraft_mode import _live_engine
 @pytest.fixture(autouse=True)
 def _own_viewer_file(tmp_path, monkeypatch):
     monkeypatch.setattr(mm, "VIEWERS_FILE", tmp_path / "viewers.json")
+    monkeypatch.setenv("VR_MODERATION", "0")  # no test calls the real moderation service
+    from src.open_llm_vtuber.room import minecraft_projects as _mp
+
+    monkeypatch.setattr(_mp, "STATE_FILE", tmp_path / "project.json")  # never the real saved world progress
 
 
 SEEN = {"looking": "stone_bricks 4 blocks away", "near": [{"name": "spider", "d": 6, "where": "to the left"}],

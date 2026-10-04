@@ -45,7 +45,7 @@ def init_logger(console_log_level: str = "INFO") -> None:
         level="DEBUG",
         format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message} | {extra}",
         backtrace=True,
-        diagnose=True,
+        diagnose=False,  # True printed variables (API keys too) into the log on errors
     )
 
 
@@ -118,7 +118,7 @@ def parse_args():
     return parser.parse_args()
 
 
-@logger.catch
+@logger.catch(reraise=True)  # a crash exits with an error, so go-live.sh starts it again
 def run(console_log_level: str):
     init_logger(console_log_level)
     logger.info(f"Open-LLM-VTuber, version v{get_version()}")
@@ -195,7 +195,7 @@ def run(console_log_level: str):
 
 # Ctrl+C: goodbye (at most ~15 s of speech), Minecraft saved and stopped,
 # the YouTube broadcast ended, then OBS stopped and closed (up to ~30 s).
-GOODBYE_LIMIT = 120  # normally done in about 30 s
+GOODBYE_LIMIT = 180  # normally done in about 45 s (goodbye, 10 s for viewers to hear it, YouTube, OBS)
 
 
 class GoodbyeServer(uvicorn.Server):

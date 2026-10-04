@@ -280,6 +280,10 @@ async def design(llm: Any, model: str, request: str, who: str) -> Optional[dict[
     if llm is None or not (os.environ.get("OPENAI_API_KEY") or "").strip():
         return None
     try:
+        # Its own time limit: the shared client allows chat answers 8 s, and a
+        # big custom design takes longer (they all failed after being promised).
+        if hasattr(llm, "with_options"):
+            llm = llm.with_options(timeout=DESIGN_TIMEOUT, max_retries=0)
         response = await llm.chat.completions.create(
             model=os.environ.get("VR_MINECRAFT_DESIGN_MODEL", "").strip() or DESIGN_MODEL,
             messages=[
@@ -296,11 +300,13 @@ async def design(llm: Any, model: str, request: str, who: str) -> Optional[dict[
         return None
 
 
+DESIGN_TIMEOUT = 60.0
 DESIGN_MODEL = "gpt-4o"  # one call per build (about 1 cent): much better designs than the mini model
 BUILD_ASK = re.compile(r"\b(build|place|put|construct|dig|make (?:me |us )?an?)\b", re.I)
 
 
 def wants_build(text: str) -> bool:
-    """'build a sky castle', 'place a block of stone on the sand' (not a question about building)."""
-    text = text or ""
-    return bool(BUILD_ASK.search(text)) and not re.search(r"\b(what|why|how|are you|did you)\b.*\?\s*$", text, re.I)
+    """'build a sky castle', 'Mika create a pumpkin' (a request, not 'first place!')."""
+    from .minecraft_asks import wants_build as asked
+
+    return asked(text)

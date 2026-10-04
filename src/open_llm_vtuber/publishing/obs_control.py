@@ -604,6 +604,7 @@ async def go_live(stage_loaded_since: Callable[[float], bool]) -> bool:
     STREAM_LIVE.set()
     _clips_live()
     _keep_task(asyncio.create_task(ensure_youtube_live(stream_key), name="youtube-go-live"))
+    _keep_task(asyncio.create_task(watch_stream(stream_key), name="obs-watch"))
     return True
 
 
@@ -618,6 +619,59 @@ async def _terminal_stream(stream_key: str) -> None:
     STREAM_LIVE.set()
     _clips_live()
     _keep_task(asyncio.create_task(ensure_youtube_live(stream_key), name="youtube-go-live"))
+    _keep_task(asyncio.create_task(watch_stream(stream_key), name="obs-watch"))
+
+
+WATCH_EVERY = 60.0  # seconds between checks that OBS is still streaming
+STALLED_RESTART = 180.0  # OBS "reconnecting" this long: the stream is stopped and started again
+
+
+async def watch_stream(stream_key: str) -> None:
+    """Nothing checked OBS after the start: a 2 minute internet drop at hour 7
+    could end the stream while the girls played on for 9 hours to nobody.
+    Every minute: is OBS still sending? Stopped twice in a row: started
+    again (and YouTube's Go live done again). Reconnecting for 3 minutes:
+    stopped and started. stop_and_close cancels this first (Ctrl+C)."""
+    down = 0
+    reconnecting_since = 0.0
+    await asyncio.sleep(120)  # the start settles first
+    while True:
+        await asyncio.sleep(WATCH_EVERY)
+        try:
+            obs = await _connect_when_ready(10)
+            if obs is None:
+                logger.warning("OBS watch: OBS does not answer (closed or frozen?)")
+                down += 1
+                continue
+            try:
+                status = await obs.call("GetStreamStatus")
+                if status.get("outputReconnecting"):
+                    reconnecting_since = reconnecting_since or time.time()
+                    if time.time() - reconnecting_since > STALLED_RESTART:
+                        logger.warning("OBS watch: reconnecting for 3 minutes, starting the stream again")
+                        await obs.call("StopStream")
+                        await asyncio.sleep(3)
+                        await obs.call("StartStream")
+                        reconnecting_since = 0.0
+                    continue
+                reconnecting_since = 0.0
+                if status.get("outputActive"):
+                    if down:
+                        logger.info("OBS watch: streaming again")
+                    down = 0
+                    continue
+                down += 1
+                if down >= 2:
+                    logger.warning("OBS watch: OBS stopped streaming, starting it again")
+                    await obs.call("StartStream")
+                    down = 0
+                    _keep_task(asyncio.create_task(ensure_youtube_live(stream_key), name="youtube-go-live"))
+            finally:
+                await obs.__aexit__()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug(f"OBS watch: check failed: {exc}")
 
 
 def _clips_live() -> None:

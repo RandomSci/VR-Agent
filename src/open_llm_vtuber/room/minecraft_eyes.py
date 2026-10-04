@@ -27,6 +27,7 @@ if TYPE_CHECKING:  # pragma: no cover
 EYES_SECONDS = 15.0  # each girl looks this often (free: no AI call)
 SIGHT_FRESH = 60.0  # a sight older than this is not used any more
 NOTABLE_GAP = 90.0  # at most one "react to what you see" per girl this often
+REACTIONS_PER_HOUR = 8  # both girls together (each reaction is an AI call and a spoken line)
 LOOK_WAIT = 3.0  # "what do you see?" waits this long for her answer from the game
 HOSTILE = {"spider", "cave spider", "zombie", "skeleton", "creeper", "enderman", "witch", "slime", "phantom",
            "drowned", "husk", "stray", "pillager", "zombie villager", "silverfish", "blaze", "ghast"}
@@ -74,6 +75,8 @@ class Eyes:
         self.nearby: dict[str, list[str]] = {}  # creature types from the bots' own state
         self._notable_at: dict[str, float] = {}
         self._waiting: dict[str, asyncio.Event] = {}
+        self._known: set[str] = set()  # creature kinds already reacted to this stream
+        self._reactions: list[float] = []
 
     @staticmethod
     def enabled() -> bool:
@@ -129,17 +132,30 @@ class Eyes:
             return
         if not isinstance(seen, dict):
             return
+        # Not news: her friend (always about 5 blocks away, she was "new"
+        # every time she came closer) and your camera (a spectator player
+        # the girls would call a stranger).
+        camera = str(getattr(self.e, "camera_player", "")).lower()
+        seen["players"] = [q for q in seen.get("players") or [] if str(q.get("name", "")).lower() != camera]
         text = sentence(seen)
+        friend = str(self.e.names.get(self.e._friend(cid), "")).lower()
         names = {str(n.get("name", "")).replace("_", " ") for n in seen.get("near") or []}
-        players = {str(p.get("name", "")) for p in seen.get("players") or [] if (p.get("d") or 99) <= 6}
+        players = {str(q.get("name", "")) for q in seen.get("players") or []
+                   if (q.get("d") if q.get("d") is not None else 99) <= 6 and str(q.get("name", "")).lower() != friend}
         old = self.things.get(cid, set())
         self.sight[cid] = (time.time(), text)
         self.things[cid] = names | players
         if cid in self._waiting:
             self._waiting[cid].set()
         new = (names | players) - old
-        worth = (new & HOSTILE) or (new & names) or (new & players)
-        if worth and time.time() - self._notable_at.get(cid, 0) > NOTABLE_GAP:
+        # worth a reaction: a monster, a creature kind not seen yet this stream, a real player close by
+        worth = (new & HOSTILE) or ((new & names) - self._known) or (new & players)
+        now = time.time()
+        self._reactions = [t for t in self._reactions if now - t < 3600]
+        if (worth and now - self._notable_at.get(cid, 0) > NOTABLE_GAP
+                and len(self._reactions) < REACTIONS_PER_HOUR):
+            self._known |= names
+            self._reactions.append(now)
             self._notable_at[cid] = time.time()
             name = self.e.names[cid]
             self.e._remember(f"{name} sees: {text[:120]}")

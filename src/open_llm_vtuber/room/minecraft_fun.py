@@ -49,6 +49,7 @@ COURSE_Y = 40
 COURSE_Z = 28
 COURSE_X = (-20, 46)
 HOOPS = ((-20, "lime_concrete"), (-4, "gold_block"), (12, "gold_block"), (28, "gold_block"), (46, "red_concrete"))
+TNT_RANGE = (-200, 320)  # base relative: the blast range, away from the Kingdom, the plots and the base
 TNT_SAFE = 40  # TNT only this far (blocks) from the base, never near the builds
 TNT_GAP = 30.0  # seconds between two TNT
 FLY_SPEED = 18.0  # blocks a second at normal pace (the !flyTo patch)
@@ -206,19 +207,32 @@ class FunShow:
         x0, y0, z0 = self.e._pos[who]
         fx, fz = self.e._facing(who)
         x, y, z = math.floor(x0 + fx * 8), math.floor(y0), math.floor(z0 + fz * 8)
-        if math.hypot(x - base[0], z - base[2]) < TNT_SAFE:
-            await self.tell(cid, (
-                f"NOT here: TNT this close to your builds would blow them up. Fly at least {TNT_SAFE} blocks away "
-                "from the base first (!flyToPlace sky is not far enough, fly away), then ask again."))
-            return
-        self._tnt_at = now
         bx, by, bz = base
+        self._tnt_at = now
+        if math.hypot(x - bx, z - bz) < TNT_SAFE or self.e.near_builds(x, z, 10):
+            # In front of her is something they built (the Kingdom is huge, and
+            # the TNT used to land in the lot being built): she flies to the
+            # blast range first, where nothing is built, and blows it up there.
+            self.e._chose_at[who] = time.time() + 40
+            rx, rz = TNT_RANGE
+            ground = await self.e_ground(bx + rx, bz + rz, by)
+            view, look = (rx, ground - by + 3, rz - 9), (rx, ground - by, rz)
+            await self.tell(cid, "Off to the blast range, far from your builds: the TNT goes off there!")
+            await self.e._arrive(who, view, look, await self.e._fly(who, view, look))
+            x, y, z = bx + rx, ground, bz + rz
+            cid = who
         await self.e._lay_by_hand(cid, f"setblock {{x{x - bx}}} {{y{y - by}}} {{z{z - bz}}} minecraft:tnt")
         await self.rcon(f"setblock {x} {y} {z} minecraft:air")
         await self.rcon(f"summon minecraft:tnt {x + 0.5} {y} {z + 0.5} {{fuse:60s}}")
         self.remember(f"{self.e.names[cid]} lit TNT")
         CLIPS.mark("tnt", f"{self.e.names[cid]} lit TNT", 2.5)
         await self.tell(cid, "The TNT is lit and blows up in 3 seconds! React out loud.")
+
+    async def e_ground(self, x: int, z: int, near: int) -> int:
+        from .minecraft_mode import ground_height
+
+        await self.e._hold_site("tnt", x - 8, z - 8, x + 8, z + 8)
+        return await ground_height(x, z, near)
 
     # ------------------------------------------------------------ the race
     async def build_course(self) -> bool:
@@ -315,11 +329,15 @@ TNT_ASK = re.compile(r"\b(tnt|blow (?:it |something |stuff )?up|explode|explosio
 
 
 def wants_tnt(text: str) -> bool:
-    return bool(TNT_ASK.search(text or ""))
+    from .minecraft_asks import wants_tnt as asked  # a request, not "this channel will blow up"
+
+    return asked(text)
 
 
 def wants_race(text: str) -> bool:
-    return bool(RACE_ASK.search(text or ""))
+    from .minecraft_asks import wants_race as asked
+
+    return asked(text)
 
 
 def potion_ask(text: str) -> Optional[str]:

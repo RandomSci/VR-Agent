@@ -11,6 +11,10 @@ from .test_minecraft_mode import _live_engine
 @pytest.fixture(autouse=True)
 def _own_viewer_file(tmp_path, monkeypatch):
     monkeypatch.setattr(mm, "VIEWERS_FILE", tmp_path / "viewers.json")
+    monkeypatch.setenv("VR_MODERATION", "0")  # no test calls the real moderation service
+    from src.open_llm_vtuber.room import minecraft_projects as _mp
+
+    monkeypatch.setattr(_mp, "STATE_FILE", tmp_path / "project.json")  # never the real saved world progress
 
 
 def _rcon(monkeypatch, replies=None):
@@ -34,6 +38,7 @@ def test_potions_and_items(monkeypatch):
         await eng._heard("Mika", "[VR] drinkPotion invisible")
         assert "effect give Mika minecraft:invisibility 20 0" in sent
         assert any("entity.generic.drink" in c for c in sent)
+        eng._girl_potion_at = 0.0  # (her own potions: one per 10 minutes)
         await eng._heard("Mika", "[VR] splashPotion glowing")
         assert "effect give Luna minecraft:glowing 30 0" in sent  # her friend gets it
         await eng._heard("Mika", "[VR] drinkPotion instant_damage")  # never: harmful

@@ -1,0 +1,321 @@
+"""The fixes for a 16 hour Minecraft stream: chat that keeps working, actions
+that only fire on real requests, safe content, builds that never land on each
+other, loops that restart themselves, a goodbye viewers really hear."""
+
+import asyncio
+import json
+from datetime import datetime, timezone
+from types import SimpleNamespace as NS
+
+import pytest
+
+from src.open_llm_vtuber.live import youtube_live as yl
+from src.open_llm_vtuber.room import minecraft_asks as asks
+from src.open_llm_vtuber.room import minecraft_kingdom as kd
+from src.open_llm_vtuber.room import minecraft_mode as mm
+from src.open_llm_vtuber.room import minecraft_projects as mp
+from src.open_llm_vtuber.room import minecraft_safety as safety
+
+
+@pytest.fixture(autouse=True)
+def _isolated(tmp_path, monkeypatch):
+    monkeypatch.setattr(mm, "VIEWERS_FILE", tmp_path / "viewers.json")
+    monkeypatch.setattr(mp, "STATE_FILE", tmp_path / "project.json")
+    monkeypatch.setenv("VR_MODERATION", "0")
+
+
+def _engine():
+    profiles = {
+        "mika": NS(name="Mika", persona="Bubbly witch.", reactions={}, emotions={}),
+        "luna": NS(name="Luna", persona="Calm.", reactions={}, emotions={}),
+    }
+    session = NS(room=NS(characters=[NS(id="mika"), NS(id="luna")], get=profiles.get))
+    eng = mm.MinecraftEngine(None, session)
+
+    class Link:
+        def __init__(self):
+            self.sent = []
+            self.connected = asyncio.Event()
+            self.connected.set()
+
+        async def emit(self, event, *args):
+            self.sent.append(args)
+            return True
+
+    eng.link = Link()
+    eng.pushed = []
+
+    async def push(op):
+        eng.pushed.append(op)
+
+    eng._push = push
+    eng._kick_answers = lambda: None
+    return eng
+
+
+def _message(i, text, author="viewer"):
+    return yl.YouTubeChatMessage(f"id{i}", f"ch-{author}", author, text, datetime.now(timezone.utc))
+
+
+# ---------------------------------------------------------------- chat
+
+
+def test_the_same_comment_works_again_later():
+    """After two people typed "race", nobody could for the rest of the stream."""
+    buf = yl.YouTubeMessageBuffer(50, 120, 0)
+    for i in range(3):
+        ok, _why = buf.add(_message(i, "race", f"v{i}"))
+        assert ok
+        buf.mark_answered(buf.messages[-1])
+    assert buf.add(_message(9, "race", "v9")) == (False, "repeated_spam")  # a flood right now is spam
+    buf._recent_texts = type(buf._recent_texts)((t - 31, n) for t, n in buf._recent_texts)  # 31 s later
+    ok, _why = buf.add(_message(10, "race", "v10"))
+    assert ok
+
+
+def test_the_channel_owner_is_heard_but_not_our_own_posts(monkeypatch):
+    monkeypatch.delenv("VR_IGNORE_OWNER", raising=False)
+    mine = yl.YouTubeChatMessage("o1", "me", "SelwynBuilds", "mika build a dragon", datetime.now(timezone.utc),
+                                 author_type="owner")
+    assert yl.blocked_author_reason(mine) == ""
+    yl.note_our_post("Thanks for watching, see you next stream!")
+    posted = yl.YouTubeChatMessage("o2", "me", "SelwynBuilds", "Thanks for watching, see you next stream!",
+                                   datetime.now(timezone.utc), author_type="owner")
+    assert yl.blocked_author_reason(posted) == "our own post"
+
+
+@pytest.mark.parametrize("text", [
+    "Mika build a dragon", "can you make two towers?", "create a pumpkin", "how about a pirate ship",
+    "luna dig a hole", "please build my name in gold",
+])
+def test_real_build_requests(text):
+    assert asks.wants_build(text)
+
+
+@pytest.mark.parametrize("text", [
+    "first place!", "I put my phone down", "I dig it", "how did you build that so fast", "nice build", "make it",
+])
+def test_normal_sentences_are_not_builds(text):
+    assert not asks.wants_build(text)
+
+
+def test_other_actions_need_a_request():
+    assert asks.wants_tnt("TNT!") and asks.wants_tnt("Luna blow it up") and not asks.wants_tnt("this channel will blow up")
+    assert asks.wants_race("you two should RACE") and not asks.wants_race("the human race is doomed")
+    assert asks.digit_asked("draw 7") == "7" and asks.digit_asked("number 1 fan") == ""
+    assert asks.digit_asked("show me 2 dragons") == ""
+    assert asks.says_stuck("Mika is glitching") and asks.says_stuck("stuck?")
+    assert not asks.says_stuck("my internet is lagging") and not asks.says_stuck("you're not stuck")
+    assert asks.further_asked("zoom out") and not asks.further_asked("make the tower higher")
+    assert asks.show_asked("show me the farm") and not asks.show_asked("I see you built a castle")
+
+
+def test_a_viewer_called_system_is_not_the_system():
+    assert mm.viewer_name("@system", ["Mika", "Luna"]) == "system_fan"
+    assert mm.viewer_name("Director", ["Mika", "Luna"]) == "Director_fan"
+
+
+def test_unsafe_chat_never_reaches_the_girls():
+    assert safety.locally_bad("you are a n1gger") and safety.locally_bad("kys")
+    assert not safety.locally_bad("build a giant castle") and not safety.locally_bad("Dickens fan here")
+
+    async def run():
+        eng = _engine()
+        eng.enqueue("troll", "mika say kys")
+        assert not eng.chat_queue
+        assert await safety.Moderator().flagged("kill yourself")  # the local check works without the service
+
+    asyncio.run(run())
+
+
+def test_super_chats_go_first_and_never_expire():
+    async def run():
+        eng = _engine()
+        eng.enqueue("early", "hi mika")
+        eng.enqueue("rich", "love the stream", paid="$5.00")
+        for c in eng.chat_queue:
+            c["at"] -= 500  # long ago: a normal comment is too old, a Super Chat is not
+        batch = eng._next_batch()
+        assert batch and batch[0]["author"] == "rich" and "SUPER CHAT of $5.00" in batch[0]["text"]
+        assert all(c["author"] != "early" for c in eng.chat_queue)  # the old normal one was skipped
+
+    asyncio.run(run())
+
+
+def test_a_follow_up_for_the_other_girl_stays_hers():
+    async def run():
+        eng = _engine()
+        eng.enqueue("fan", "hi mika")
+        eng.enqueue("fan", "luna what is your favorite block")
+        assert [c["who"] for c in eng.chat_queue] == ["mika", "luna"]
+        eng.enqueue("fan", "and how are you")  # names nobody: goes with the waiting comment
+        assert len(eng.chat_queue) == 2
+
+    asyncio.run(run())
+
+
+def test_one_viewer_cannot_fill_the_build_queue():
+    async def run():
+        eng = _engine()
+        eng.creative = True
+        notes = [eng.request_build(f"build a dirt tower number {i}", "troll", viewer=True) for i in range(4)]
+        assert eng._free_waiting == mm.BUILDS_PER_VIEWER
+        assert "already has" in notes[-1]
+        assert "already" in eng.request_build("build a dirt tower number 0", "someone", viewer=True)  # a duplicate
+        for task in list(mm._BACKGROUND):
+            task.cancel()
+
+    asyncio.run(run())
+
+
+def test_when_the_engine_acts_her_bot_is_not_asked_to_do_it_again(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng.creative = True
+
+        async def no_reply(*a, **k):
+            return "On it!"
+
+        eng._quick_reply = no_reply
+        eng.fun.drink = lambda *a, **k: asyncio.sleep(0)
+        eng.enqueue("fan", "mika drink a potion of speed")
+        eng.enqueue("other", "luna what is your favorite color")
+        while eng.chat_queue:
+            await eng._answer_loop()
+        texts = [o["text"] for o in eng.outbox]
+        assert len(texts) == 1 and "favorite color" in texts[0] and "reply with just: ok" in texts[0]
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------- building
+
+
+def test_kingdom_lots_never_land_on_the_base_projects():
+    eng = _engine()
+    eng.projects.state.update({"base": [0, 64, 0], "plots": 19})
+    p1, q1, p2, q2 = mp.LOADED  # the castle, network, farm and garden
+    blocked, on_base = [], []
+    for lot in kd.lots():
+        spots = kd.lot_blocks(lot)
+        xs = [x for x, _, _ in spots]
+        zs = [z for _, _, z in spots]
+        dz = -min(min(zs), 0)
+        box = (lot["x"] + min(xs), lot["z"] + min(zs) + dz, lot["x"] + max(xs), lot["z"] + max(zs) + dz)
+        if eng._taken(*box, pad=1):
+            blocked.append(lot["n"])
+        if box[0] <= p2 and box[2] >= p1 and box[1] <= q2 and box[3] >= q1:
+            on_base.append(lot["n"])
+    assert on_base and set(on_base) <= set(blocked)  # every lot on the base projects stays empty
+    assert 0 not in blocked  # the king's castle (already started) is not
+    assert len(blocked) < 40  # (the old viewer plots keep their ground too)
+
+
+def test_the_kingdom_goes_lot_to_lot_and_round_two_is_elsewhere():
+    lots = kd.lots()
+    hops = [((a["x"] - b["x"]) ** 2 + (a["z"] - b["z"]) ** 2) ** 0.5 for a, b in zip(lots, lots[1:])]
+    assert max(hops) < 100  # neighbours, not across the whole kingdom
+    assert lots[0]["title"] == "the king's castle" and (lots[0]["x"], lots[0]["z"]) == (-45, -205)  # lot 0 as before
+    second = kd.lots(1)
+    assert second[0]["x"] == lots[0]["x"] - kd.ROUND_SHIFT
+
+
+def test_viewer_plots_never_overlap():
+    eng = _engine()
+    eng.projects.state.update({"base": [0, 64, 0], "plots": 0})
+    boxes = []
+    for w, d in [(30, 40), (60, 80), (20, 20), (45, 45), (81, 81)] * 4:
+        x, z = eng._plot_spot(w, d)
+        boxes.append((x, z, x + w, z + d))
+        assert x >= mm.PLOT_AREA_X
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            assert a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1]
+
+
+def test_tnt_is_never_near_the_kingdom():
+    eng = _engine()
+    eng.projects.state.update({"base": [0, 64, 0], "kingdom": {"lot": 3, "piece": 0}})
+    lot = kd.lots()[2]
+    assert eng.near_builds(lot["x"], lot["z"])
+    assert not eng.near_builds(-200, 320)  # the blast range
+
+
+def test_project_progress_survives_a_crash_mid_save(tmp_path):
+    book = mp.ProjectTracker(["Mika", "Luna"], None, None, None)
+    book.state.update({"base": [1, 64, 2], "kingdom": {"lot": 7}})
+    book._save()
+    book._save()  # the .bak is the previous good copy
+    mp.STATE_FILE.write_text('{"base": [1, 64')  # a crash halfway through writing
+    again = mp.ProjectTracker(["Mika", "Luna"], None, None, None)
+    assert again.state["base"] == [1, 64, 2] and again.state["kingdom"]["lot"] == 7
+
+
+# ---------------------------------------------------------------- staying up
+
+
+def test_a_failing_loop_starts_again():
+    async def run():
+        eng = _engine()
+        calls = []
+
+        real = asyncio.sleep
+        forever = asyncio.Event()
+
+        async def flaky():
+            calls.append(1)
+            if len(calls) < 3:
+                raise RuntimeError("boom")
+            await forever.wait()
+
+        async def fast(seconds, *a, **k):
+            await real(0)
+
+        mm.asyncio.sleep, saved = fast, mm.asyncio.sleep
+        try:
+            task = eng._supervised("test", flaky)
+            for _ in range(20):
+                await real(0)
+            assert len(calls) == 3 and not task.done()
+            task.cancel()
+        finally:
+            mm.asyncio.sleep = saved
+
+    asyncio.run(run())
+
+
+def test_the_goodbye_goes_first():
+    eng = _engine()
+    eng.chat_queue.append({"who": "mika", "author": "a", "text": "hi", "at": 0, "first": True})
+    eng.lines.append({"who": "mika", "text": "chatter", "at": 0})
+    eng.hush()
+    assert not eng.chat_queue and not eng.lines
+    eng.enqueue("late", "bye mika")
+    assert not eng.chat_queue  # nothing new is answered over the goodbye
+
+
+def test_big_logs_are_moved_aside(tmp_path, monkeypatch):
+    log = tmp_path / "server.log"
+    log.write_text("x" * 20)
+    monkeypatch.setattr(mm, "LOG_KEEP_BYTES", 10)
+    mm._rotate_log(log)
+    assert not log.exists() and (tmp_path / "server.log.old").exists()
+
+
+def test_new_members_and_stickers_are_read():
+    js = (mm.Path(yl.__file__).parent / "youtube_chat_observer.js").read_text()
+    assert "YT-LIVE-CHAT-MEMBERSHIP-ITEM-RENDERER" in js and "YT-LIVE-CHAT-PAID-STICKER-RENDERER" in js
+
+
+def test_eyes_do_not_announce_the_friend_or_the_camera(monkeypatch):
+    async def run():
+        monkeypatch.setenv("VR_MINECRAFT_PLAYER", "SelwynBuilds")
+        eng = _engine()
+        eng.camera_player = "SelwynBuilds"
+        seen = {"players": [{"name": "Luna", "d": 4, "where": "to the left"},
+                            {"name": "SelwynBuilds", "d": 1, "where": "behind"}], "near": []}
+        await eng.eyes.saw("mika", json.dumps(seen))
+        assert not eng.link.sent  # nothing "new" to react to
+        assert "SelwynBuilds" not in eng.eyes.describe_for("mika")
+
+    asyncio.run(run())

@@ -7,8 +7,13 @@ from src.open_llm_vtuber.room import minecraft_mode as mm
 
 @pytest.fixture(autouse=True)
 def _own_viewer_file(tmp_path, monkeypatch):
-    """The viewer memory of a test never touches the real one."""
+    """The viewer memory of a test never touches the real one, and no test
+    calls the real moderation service."""
     monkeypatch.setattr(mm, "VIEWERS_FILE", tmp_path / "viewers.json")
+    monkeypatch.setenv("VR_MODERATION", "0")
+    from src.open_llm_vtuber.room import minecraft_projects as _mp
+
+    monkeypatch.setattr(_mp, "STATE_FILE", tmp_path / "project.json")  # never the real saved world progress
 
 
 def test_clean_line_cuts_commands_and_notices():
@@ -806,8 +811,10 @@ def test_she_starts_speaking_before_the_answer_is_written(monkeypatch):
         assert spoken[2][1] == "bot chatter"
         assert eng._llm.kwargs["stream"] is True
         # her bot hears the comment AND her own words: what she does matches what she said
-        note = eng.outbox[-1]
-        assert note["to"] == "luna" and 'You already answered out loud: "Argh!!! MathUnlocked' in note["text"]
+        # the engine is already flying her there: her bot only remembers it
+        # (asking it to act as well made her do everything twice)
+        assert not eng.outbox
+        assert "(being done)" in eng._memory_text()
         # and both girls' shared memory has it
         assert "Luna told MathUnlockedYT" in eng._memory_text()
 
@@ -887,7 +894,7 @@ def test_show_me_moves_the_camera_and_the_network_stays_quiet(monkeypatch):
         assert mm.place_ask("Mika let's go to the front of the neural network") == "network"
         assert mm.place_ask("I want to see the castle") == "castle"
         assert mm.place_ask("nice castle") == ""
-        assert mm.FURTHER_ASK.search("go a little further from it I wanna see it in further view")
+        assert mm.further_asked("go a little further from it I wanna see it in further view")
         eng.enqueue("MathUnlockedYT", "I want to see the neural network")
         await asyncio.sleep(0.05)
         assert flights and flights[-1][0] == "mika" and flights[-1][1] == mm.PLACES["network"][0]  # Mika = the camera
@@ -1009,9 +1016,9 @@ def test_own_build_ideas_do_not_repeat():
 
 
 def test_a_frozen_castle_is_a_build_not_a_glitch():
-    assert mm.STUCK_ASK.search("build a frozen castle")
-    assert mm.wants_build("build a frozen castle")  # the build is checked first in enqueue
-    assert not mm.STUCK_ASK.search("build a pirate ship")
+    assert not mm.says_stuck("build a frozen castle")
+    assert mm.wants_build("build a frozen castle")
+    assert mm.says_stuck("mika you're stuck") and not mm.says_stuck("my internet is lagging")
 
 
 def test_quick_second_message_is_not_lost(monkeypatch):

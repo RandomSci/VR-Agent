@@ -537,6 +537,20 @@ def center(command: str) -> tuple[float, float, float]:
     )
 
 
+def write_atomic(path: Path, text: str, backup: bool = False) -> None:
+    """Never a half written file: write a temporary file, then swap it in
+    (the old one kept as .bak when asked)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    if backup and path.exists():
+        try:
+            os.replace(path, path.with_suffix(path.suffix + ".bak"))
+        except OSError:
+            pass
+    os.replace(tmp, path)
+
+
 class ProjectTracker:
     """Progress toward the next milestone, the build when it is reached."""
 
@@ -563,18 +577,22 @@ class ProjectTracker:
 
     # ------------------------------------------------------------ state
     def _load(self) -> dict[str, Any]:
-        try:
-            data = json.loads(STATE_FILE.read_text())
-            if isinstance(data, dict):
-                return data
-        except Exception:
-            pass
+        # The backup too: a half written file (a crash mid save) used to reset
+        # the base, and everything was built again on top of the old world.
+        for path in (STATE_FILE, STATE_FILE.with_suffix(".json.bak")):
+            try:
+                data = json.loads(path.read_text())
+                if isinstance(data, dict):
+                    if path != STATE_FILE:
+                        logger.warning("Minecraft: the project file was damaged, its backup is used")
+                    return data
+            except Exception:
+                continue
         return {"project": 0, "milestone": 0, "progress": 0.0, "base": None}
 
     def _save(self) -> None:
         try:
-            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            STATE_FILE.write_text(json.dumps(self.state, indent=2))
+            write_atomic(STATE_FILE, json.dumps(self.state, indent=2), backup=True)
         except Exception as exc:
             logger.debug(f"Minecraft project not saved: {exc}")
 

@@ -315,9 +315,20 @@ class _BoundedSet:
 
 
 # Our own channel posts "your game is up" links into chat. Reading those back
-# made Mika build games for herself. Owner messages are ignored unless
-# VR_IGNORE_OWNER=0, and VR_BANNED_AUTHORS (comma separated names) are never
-# read at all.
+# made Mika build games for herself. Those posts are recognised (and every
+# text the system posted itself), so the channel owner can now chat with the
+# girls like anyone else (VR_IGNORE_OWNER=1 ignores the owner again).
+# VR_BANNED_AUTHORS (comma separated names) are never read at all.
+_OUR_POSTS: "deque[str]" = deque(maxlen=50)
+
+
+REPEAT_WINDOW = 30.0  # the same text more than REPEAT_LIMIT times within this many seconds is spam
+REPEAT_LIMIT = 3
+
+
+def note_our_post(text: str) -> None:
+    _OUR_POSTS.append(_normalize_message(text))
+
 OWN_ANNOUNCEMENT_RE = re.compile(
     r"your (game|update) is (up|live|pushed)|every game mika and luna built", re.IGNORECASE
 )
@@ -335,13 +346,12 @@ def banned_authors() -> set[str]:
 def blocked_author_reason(message: "YouTubeChatMessage") -> str:
     if _author_key(message.author_display_name) in banned_authors():
         return "banned"
-    ignore_owner = os.environ.get("VR_IGNORE_OWNER", "1").strip().lower() not in (
-        "0",
-        "false",
-        "no",
-    )
-    if ignore_owner and str(getattr(message, "author_type", "") or "") == "owner":
-        return "channel owner"
+    ignore_owner = os.environ.get("VR_IGNORE_OWNER", "0").strip().lower() in ("1", "true", "yes", "on")
+    if str(getattr(message, "author_type", "") or "") == "owner":
+        if ignore_owner:
+            return "channel owner"
+        if _normalize_message(message.text or "") in _OUR_POSTS:
+            return "our own post"
     if OWN_ANNOUNCEMENT_RE.search(message.text or "") and "github.io" in (
         message.text or ""
     ):
@@ -376,7 +386,11 @@ class YouTubeMessageBuffer:
         self.buffered_message_ids: set[str] = set()
         self.answered_message_ids = _BoundedSet(5000)
         self.last_answered_by_author: dict[str, float] = {}
+        # The same text from anyone, in the last REPEAT_WINDOW seconds. It used
+        # to be counted forever (answered messages never counted down): after
+        # two people typed "race" or "draw 7", nobody could for the whole stream.
         self.recent_normalized: Counter[str] = Counter()
+        self._recent_texts: deque[tuple[float, str]] = deque()
         self.startup_cutoff = datetime.now(timezone.utc).timestamp() - STARTUP_BACKLOG_GRACE_SECONDS
 
     def add(self, message: YouTubeChatMessage) -> tuple[bool, str]:
@@ -403,13 +417,15 @@ class YouTubeMessageBuffer:
             return False, "noise"
         if self.UNSAFE_RE.search(normalized):
             return False, "unsafe"
-        if self.recent_normalized[normalized] >= 2 and not quiz_answer:
+        self._forget_old_texts()
+        if self.recent_normalized[normalized] >= REPEAT_LIMIT and not quiz_answer:
             return False, "repeated_spam"
 
         self.messages.append(message)
         self.seen_message_ids.add(message.message_id)
         self.buffered_message_ids.add(message.message_id)
         self.recent_normalized[normalized] += 1
+        self._recent_texts.append((time.time(), normalized))
         while len(self.messages) > self.max_messages:
             removed = self.messages.popleft()
             self.buffered_message_ids.discard(removed.message_id)
@@ -420,9 +436,15 @@ class YouTubeMessageBuffer:
         while self.messages and self.messages[0].timestamp.timestamp() < cutoff:
             stale = self.messages.popleft()
             self.buffered_message_ids.discard(stale.message_id)
-            normalized = _normalize_message(stale.text)
-            if self.recent_normalized[normalized] > 0:
-                self.recent_normalized[normalized] -= 1
+        self._forget_old_texts()
+
+    def _forget_old_texts(self) -> None:
+        cutoff = time.time() - REPEAT_WINDOW
+        while self._recent_texts and self._recent_texts[0][0] < cutoff:
+            _at, normalized = self._recent_texts.popleft()
+            self.recent_normalized[normalized] -= 1
+            if self.recent_normalized[normalized] <= 0:
+                del self.recent_normalized[normalized]
 
     def mark_answered(self, message: YouTubeChatMessage) -> None:
         self.answered_message_ids.add(message.message_id)

@@ -188,6 +188,9 @@ class YouTubeClient:
 
     def post_chat_message(self, live_chat_id: str, text: str) -> dict[str, Any]:
         text = " ".join(str(text or "").split())[:CHAT_LIMIT]
+        from ..live.youtube_live import note_our_post
+
+        note_our_post(text)  # read back from chat, it is ours: not a viewer comment
         return self._call(
             "POST",
             "/liveChat/messages",

@@ -327,6 +327,9 @@ INSIDE_INTERACTION: contextvars.ContextVar[bool] = contextvars.ContextVar(
 )
 
 
+TTS_TIMEOUT = 30.0  # one line's audio must be ready within this (a hung voice service)
+
+
 class SpeakingCoordinator:
     """One voice at a time. Every line goes through ``say``."""
 
@@ -418,16 +421,28 @@ class SpeakingCoordinator:
             manager = TTSTaskManager()
             ok = False
             try:
-                await manager.speak(
-                    tts_text=text,
-                    display_text=DisplayText(text=text, name=profile.name, avatar=None),
-                    actions=None,
-                    live2d_model=None,
-                    tts_engine=engine,
-                    websocket_send=tagged_send,
-                )
-                if manager.task_list:
-                    await asyncio.gather(*manager.task_list)
+                # A voice service that hangs held both speech locks forever:
+                # the girls went silent for the rest of the stream.
+                try:
+                    await asyncio.wait_for(
+                        manager.speak(
+                            tts_text=text,
+                            display_text=DisplayText(text=text, name=profile.name, avatar=None),
+                            actions=None,
+                            live2d_model=None,
+                            tts_engine=engine,
+                            websocket_send=tagged_send,
+                        ),
+                        timeout=TTS_TIMEOUT,
+                    )
+                    if manager.task_list:
+                        await asyncio.wait_for(asyncio.gather(*manager.task_list), timeout=TTS_TIMEOUT)
+                except asyncio.TimeoutError:
+                    for task in manager.task_list:
+                        task.cancel()
+                    logger.warning(f"VR Room: {character_id}'s voice took over {TTS_TIMEOUT:.0f} s, line skipped")
+                    self.session.record_failure(character_id, "tts timeout")
+                    return False
                 # Let the ordered sender flush before announcing completion.
                 for _ in range(50):
                     if manager._payload_queue.empty():

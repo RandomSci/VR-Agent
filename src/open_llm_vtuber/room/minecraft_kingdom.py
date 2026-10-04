@@ -44,12 +44,28 @@ PALETTES = {
 TITLES = {"house": "a house", "garden": "a garden", "tower": "a tower", "castle": "a castle", "dragon": "a dragon statue"}
 
 
-def lots() -> list[dict[str, Any]]:
-    """Every lot of the kingdom, in building order (the middle first)."""
-    rng = random.Random(SEED)
+ROUND_SHIFT = 800  # each next kingdom is built this far west of the last (viewer builds are east)
+
+
+def _ring_order(cells: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Middle first, ring by ring, and around each ring in order: the girls
+    fly to the neighbouring lot, not across the whole kingdom (it jumped from
+    one side of a ring to the other: a 900 block flight every lot)."""
+    import math
+
+    def ring(c: tuple[int, int]) -> int:
+        return int(max(abs(c[0] + 0.5), abs(c[1] + 0.5)))
+
+    return sorted(cells, key=lambda c: (ring(c), math.atan2(c[1] + 0.5, c[0] + 0.5)))
+
+
+def lots(round_no: int = 0) -> list[dict[str, Any]]:
+    """Every lot of the kingdom, in building order (the middle first).
+    round_no > 0: the next kingdom, once one is complete."""
+    rng = random.Random(SEED + round_no * 7919)
     half = GRID // 2
-    cells = [(i, j) for i in range(-half, half) for j in range(-half, half)]
-    cells.sort(key=lambda c: ((c[0] + 0.5) ** 2 + (c[1] + 0.5) ** 2, c))
+    cells = _ring_order([(i, j) for i in range(-half, half) for j in range(-half, half)])
+    cx, cz = CENTER[0] - round_no * ROUND_SHIFT, CENTER[1]
     names, weights = zip(*((k[0], k[2]) for k in KINDS))
     sizes = {k[0]: k[1] for k in KINDS}
     out = []
@@ -59,9 +75,9 @@ def lots() -> list[dict[str, Any]]:
         main, accent = rng.choice(PALETTES[kind])
         out.append({
             "n": n, "template": kind, "size": size, "main": main, "accent": accent,
-            "x": CENTER[0] + i * LOT, "z": CENTER[1] + j * LOT,
-            "title": "the king's castle" if n == 0 else TITLES[kind],
-            "seed": SEED + n,
+            "x": cx + i * LOT, "z": cz + j * LOT,
+            "title": ("the king's castle" if n == 0 else TITLES[kind]),
+            "seed": SEED + round_no * 7919 + n,
         })
     return out
 

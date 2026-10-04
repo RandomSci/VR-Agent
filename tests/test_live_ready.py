@@ -193,12 +193,13 @@ def test_our_own_channel_and_banned_names_are_never_read(monkeypatch):
     monkeypatch.setenv("VR_BANNED_AUTHORS", "@SelwynBuilds-j1s, spam bot")
     assert blocked_author_reason(msg("@SelwynBuilds-j1s", "make a game")) == "banned"
     assert blocked_author_reason(msg("@spambot", "hi")) == "banned"
-    assert blocked_author_reason(msg("@owner", "hi", "owner")) == "channel owner"
+    # the channel owner can talk to the girls too (only what the system posted itself is skipped)
+    assert blocked_author_reason(msg("@owner", "hi", "owner")) == ""
     echo = "@ana your game is up 🎮 https://x.github.io/g/ (give it about 5 minutes)"
     assert blocked_author_reason(msg("@someone", echo)) == "our own announcement"
     assert blocked_author_reason(msg("@MathUnlockedYT", "build a snake game")) == ""
-    monkeypatch.setenv("VR_IGNORE_OWNER", "0")
-    assert blocked_author_reason(msg("@owner", "hi", "owner")) == ""
+    monkeypatch.setenv("VR_IGNORE_OWNER", "1")
+    assert blocked_author_reason(msg("@owner", "hi", "owner")) == "channel owner"
 
 
 def test_gallery_promo_waits_for_a_crowd_and_never_spams(monkeypatch):

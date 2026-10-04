@@ -25,6 +25,9 @@
   const SUPPORTED = {
     "YT-LIVE-CHAT-TEXT-MESSAGE-RENDERER": "text",
     "YT-LIVE-CHAT-PAID-MESSAGE-RENDERER": "paid",
+    // Super Stickers and new members were never seen: they are thanked too.
+    "YT-LIVE-CHAT-PAID-STICKER-RENDERER": "paid",
+    "YT-LIVE-CHAT-MEMBERSHIP-ITEM-RENDERER": "paid",
   };
   const LIST_SELECTORS = [
     "yt-live-chat-item-list-renderer #items",
@@ -107,9 +110,17 @@
     const id = el.id || el.getAttribute("id") || "";
     if (!id) return null;
     if (isDeleted(el)) return { skip: true, id };
-    const text = collapse(textOf(el.querySelector("#message"))).slice(0, MAX_TEXT);
+    let text = collapse(textOf(el.querySelector("#message"))).slice(0, MAX_TEXT);
     const author = authorName(el);
-    const amountEl = el.querySelector("#purchase-amount, #purchase-amount-chip");
+    let amountEl = el.querySelector("#purchase-amount, #purchase-amount-chip");
+    if (el.tagName === "YT-LIVE-CHAT-PAID-STICKER-RENDERER" && !text) {
+      text = "sent you a Super Sticker!";
+    }
+    if (el.tagName === "YT-LIVE-CHAT-MEMBERSHIP-ITEM-RENDERER") {
+      const header = collapse(textOf(el.querySelector("#header-subtext")));
+      text = (text ? text + " " : "") + (header || "just became a member!");
+      amountEl = null;
+    }
     return {
       id,
       kind,

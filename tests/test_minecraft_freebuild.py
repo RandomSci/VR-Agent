@@ -14,6 +14,10 @@ from .test_minecraft_mode import _live_engine
 @pytest.fixture(autouse=True)
 def _own_viewer_file(tmp_path, monkeypatch):
     monkeypatch.setattr(mm, "VIEWERS_FILE", tmp_path / "viewers.json")
+    monkeypatch.setenv("VR_MODERATION", "0")  # no test calls the real moderation service
+    from src.open_llm_vtuber.room import minecraft_projects as _mp
+
+    monkeypatch.setattr(_mp, "STATE_FILE", tmp_path / "project.json")  # never the real saved world progress
 
 
 SKY_CASTLE = {
@@ -131,12 +135,15 @@ def test_a_viewer_build_is_laid_by_hand_in_front_of_the_camera(monkeypatch):
         assert not placed  # nothing just appeared
         assert len(sets) == len(set(sets)) == expected  # every block once, each on a swing
         assert {c for c, _t in lays} == {"mika", "luna"}  # both build
-        # on its own plot, south of the big projects, on the ground (y 64 up)
-        zs = [int(c.split()[3]) for c in sets]
+        # on its own plot in the viewer build area (east of the Kingdom), on the ground (y 64 up)
+        base = eng.projects.state["base"]
+        xs = [int(c.split()[1]) for c in sets]
         ys = [int(c.split()[2]) for c in sets]
-        assert min(zs) >= mm.PLOTS_Z - 1 and min(ys) >= 64
+        assert min(xs) >= base[0] + mm.PLOT_AREA_X and min(ys) >= 64
         assert any(c.startswith("fill ") and c.endswith("minecraft:air") for c in rcon)  # the plot was cleared first
-        assert eng.projects.state["plots"] == 1
+        assert any(c.startswith("forceload add") for c in rcon)  # its ground was loaded before it was measured
+        assert any(c.startswith("forceload remove") for c in rcon)  # and let go when it was done
+        assert len(eng.projects.state["areas"]) == 2  # the projects area and this plot are taken
         assert "MathUnlockedYT" in eng._memory_text() and "finished" in eng._memory_text()
         assert any(op.get("kind") == "project_done" for op in eng.pushed)
 
@@ -209,18 +216,38 @@ def test_tnt_never_near_the_builds(monkeypatch):
         eng._lay_by_hand = lay
         eng._pos = {"mika": (10.0, 64.0, 10.0), "luna": (12.0, 64.0, 10.0)}
         eng._looking["mika"] = (10.0, 30.0, mm.time.time())
+        flights = []
+
+        async def fly(cid, view, focus):
+            flights.append((cid, view))
+            return 0.0
+
+        async def arrive(cid, view, focus, t):
+            return None
+
+        async def no_wait(_s):
+            return None
+
+        real_sleep = asyncio.sleep
+        monkeypatch.setattr(mm.asyncio, "sleep", no_wait)
+        eng._fly, eng._arrive = fly, arrive
         await eng._heard("Mika", "[VR] blowUp")
-        await asyncio.sleep(0.02)  # it runs in the background
-        assert not hand and not any("summon minecraft:tnt" in c for c in rcon)
-        assert "NOT here" in eng.link.sent[-1][1]["message"]
+        await real_sleep(0.02)  # it runs in the background
+        # next to the base: she flies to the blast range first, and it goes off there
+        assert flights and flights[0][1][0] == fun.TNT_RANGE[0] and flights[0][1][2] == fun.TNT_RANGE[1] - 9
+        assert any(c.startswith(f"summon minecraft:tnt {fun.TNT_RANGE[0] + 0.5}") for c in rcon)
+        hand.clear()
+        rcon.clear()
+        fun_show = eng.fun
+        fun_show._tnt_at = 0.0
         eng._pos["mika"] = (100.0, 70.0, 100.0)  # far away from the base
         eng._looking["mika"] = (100.0, 130.0, mm.time.time())
         await eng._heard("Mika", "[VR] blowUp")
-        await asyncio.sleep(0.02)  # it runs in the background
+        await real_sleep(0.02)  # it runs in the background
         assert hand and hand[0][1].endswith("minecraft:tnt")  # placed by her hand
         assert any(c.startswith("summon minecraft:tnt 100.5 70 108.5") for c in rcon)  # 8 ahead of her, lit
         await eng._heard("Mika", "[VR] blowUp")  # not again right away
-        await asyncio.sleep(0.02)
+        await real_sleep(0.02)
         assert sum(1 for c in rcon if c.startswith("summon minecraft:tnt")) == 1
         assert fun.wants_tnt("Mika use TNT!") and fun.wants_tnt("blow it up luna")
 
@@ -281,6 +308,9 @@ def test_a_giant_dragon_is_a_dragon():
 def test_they_roast_chat_unless_told_not_to(monkeypatch):
     eng = _live_engine(monkeypatch)
     monkeypatch.delenv("VR_ROAST", raising=False)
+    system, _u = eng._reply_prompt("mika", "MathUnlockedYT", "where is my castle", [])
+    assert "ROAST" not in system and "NEW here" in system  # a newcomer is welcomed, not roasted
+    eng._answered_before.add("MathUnlockedYT")
     system, _u = eng._reply_prompt("mika", "MathUnlockedYT", "where is my castle", [])
     assert "ROAST the viewers" in system and "never cruel" in system
     assert "ROAST the viewers" in eng.profile("mika")["conversing"]

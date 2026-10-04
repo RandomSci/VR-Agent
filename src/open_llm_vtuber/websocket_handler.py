@@ -453,8 +453,16 @@ class WebSocketHandler:
 
         session = self.room_session
         INSIDE_INTERACTION.set(True)
+        hush = getattr(mode, "hush", None)
+        if hush:
+            hush()  # no new chat answers: the goodbye is next, not stuck behind them
+
         async def speak() -> None:
             cast = [c.id for c in session.room.characters] or ["mika"]
+            for _ in range(16):  # the line being spoken right now finishes first (up to 8 s)
+                if not session.speech.talking:
+                    break
+                await asyncio.sleep(0.5)
             logger.info("Saying goodbye on stream")
             for i, line in enumerate(mode.goodbye_lines(reason)):
                 await session.speech.say(cast[i % len(cast)], line)
@@ -462,14 +470,16 @@ class WebSocketHandler:
         try:
             if session.active and session.speech_target():
                 # A stage that never confirms playback made this take 30 s,
-                # and the stream was never ended: speech gets 15 s at most.
+                # and the stream was never ended: speech gets 25 s at most.
                 try:
-                    await asyncio.wait_for(speak(), timeout=15)
+                    await asyncio.wait_for(speak(), timeout=25)
                 except asyncio.TimeoutError:
                     logger.warning("Goodbye speech took too long, moving on")
+            else:
+                logger.warning("Goodbye not spoken: the stage page is not connected")
         finally:
             try:
-                await asyncio.wait_for(mode.stop(), timeout=30)
+                await asyncio.wait_for(mode.stop(), timeout=50)  # world saved, then the server stops
             except Exception as exc:
                 logger.warning(f"Mode stop failed: {exc}")
 
@@ -491,6 +501,13 @@ class WebSocketHandler:
             return
         self.room_session.note_viewer_activity()
         usage.record_viewer_interaction()
+        if getattr(engine, "accepts_paid", False):  # Super Chats first, members known
+            paid = str(getattr(message, "amount", "") or "") if getattr(message, "kind", "") == "paid" else ""
+            if getattr(message, "kind", "") == "paid" and not paid:
+                paid = "a new membership" if "member" in (message.text or "").lower() else "a Super Chat"
+            member = str(getattr(message, "author_type", "") or "") in ("member", "moderator", "owner")
+            engine.enqueue(message.author_display_name, message.text or "", paid=paid, member=member)
+            return
         engine.enqueue(message.author_display_name, message.text)
 
     def _room_is_primary(self) -> bool:
