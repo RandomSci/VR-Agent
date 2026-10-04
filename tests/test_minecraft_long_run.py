@@ -506,3 +506,28 @@ def test_viewer_builds_go_on_kingdom_lots_close_by():
     assert len(claimed) == 1 + 4  # one lot, then a 2 x 2 block
     # the Kingdom skips them
     assert any(eng._lot_cell(lot) in claimed for lot in lots[1:30])
+
+
+def test_snowmen_stay_snowmen():
+    """A carved pumpkin on two snow blocks is a snow golem: ten snowmen walked away."""
+    from src.open_llm_vtuber.room import minecraft_freebuild as fb
+
+    assert fb.block_id("carved_pumpkin") == "pumpkin" and fb.block_id("jack_o_lantern") == "pumpkin"
+    assert fb.block_id("wither_skeleton_skull") == "skeleton_skull"
+
+
+def test_build_it_where_you_stand_and_another_one():
+    async def run():
+        eng = _engine()
+        eng.creative = True
+        eng.projects.state.update({"base": [0, 64, 0], "kingdom": {"lot": 0, "piece": 0}})
+        eng._pos["mika"] = (300.0, 70.0, 300.0)
+        x, z = eng._spot_here(20, 20)
+        assert abs(x + 10 - 300) < 3 and 300 < z < 320  # just ahead of her
+        asked = []
+        eng.request_build = lambda request, who, viewer=False, here=False: asked.append((request, here)) or ""
+        eng.enqueue("FRCFinance", "Let's build many 10 snowmen!")
+        eng.enqueue("FRCFinance", "Build another 10 where you stand right now")
+        assert asked[-1][1] is True and "10 snowmen" in asked[-1][0]
+
+    asyncio.run(run())

@@ -230,3 +230,12 @@ _THERE = re.compile(r"\b(?:visit|see|show|look at|go|fly|take (?:me|us)|check)\b
 def there_asked(text: str) -> bool:
     """'Mika let's visit it now!', 'go there', 'show it to us' (what "it" is comes from the chat before)."""
     return bool(_THERE.search(text or ""))
+
+
+_HERE = re.compile(r"\b(?:where (?:you|u|yo\w*|ya) (?:stand|are|r|standing|at)|right here|over here|here|right now "
+                   r"where|next to you|in front of you|on this spot|on the spot|this spot|right there)\b", re.I)
+
+
+def here_asked(text: str) -> bool:
+    """'build another 10 where you stand right now', 'build it right here'."""
+    return bool(_HERE.search(text or ""))

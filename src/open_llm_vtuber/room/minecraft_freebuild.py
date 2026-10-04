@@ -24,6 +24,14 @@ from .minecraft_templates import build as make_template
 # Only what would wreck the stream: fire and lava spread and burn the builds,
 # command and structure blocks control the server. Everything else is fine.
 DESIGN_BANNED = re.compile(r"(command_block|structure_block|structure_void|jigsaw|lava|fire|barrier|spawner)")
+# Blocks that bring a build to life: a carved pumpkin on snow blocks is a
+# snow golem (ten snowmen walked away as golems), on iron blocks an iron
+# golem, wither skulls on soul sand the Wither. The plain pumpkin and skull
+# look the same and stay blocks.
+COMES_ALIVE = {
+    "carved_pumpkin": "pumpkin", "jack_o_lantern": "pumpkin",
+    "wither_skeleton_skull": "skeleton_skull", "wither_skeleton_wall_skull": "skeleton_wall_skull",
+}
 # Big on purpose: chat may ask for anything, and it is built (by hand).
 SIZE_X = 40  # x from -40 to 40
 SIZE_Y = 80
@@ -38,6 +46,7 @@ FALLBACK_BLOCK = "stone_bricks"
 
 DESIGN_SYSTEM = (
     "You plan ONE Minecraft build that two players lay block by block, live on stream. "
+    "Snowmen, golems and statues are made of blocks (snow blocks and a plain pumpkin head), never mobs. "
     "FIRST choose a template when it fits: garden (any garden, park, flower field), house (house, cottage, hut, "
     "home, shop), tower (tower, lighthouse, watchtower), castle (castle, fort, palace), dragon (any dragon, "
     "wyvern, giant dragon statue: large when they say giant or huge). Then answer ONLY JSON: "
@@ -102,7 +111,7 @@ def block_id(name: Any) -> str:
         return "air"  # digging
     if not BLOCK_ID.match(text) or DESIGN_BANNED.search(text):
         return FALLBACK_BLOCK
-    return text
+    return COMES_ALIVE.get(text, text)
 
 
 def parse_design(raw: str) -> Optional[dict[str, Any]]:

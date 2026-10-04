@@ -78,7 +78,7 @@ from ..vr_agent.text_safety import strip_emoji
 from ..live.clip_marks import CLIPS
 from .minecraft_eyes import wants_look
 from .minecraft_asks import (digit_asked, friend_asked, further_asked, restyle_asked, says_stuck, show_asked,
-                             there_asked, tour_asked, which_build)
+                             here_asked, there_asked, tour_asked, which_build)
 from .minecraft_freebuild import wants_build
 from .minecraft_safety import MODERATOR, locally_bad
 from .minecraft_fun import potion_ask, wants_race, wants_tnt
@@ -668,7 +668,8 @@ class MinecraftEngine:
         self._girl_potion_at = 0.0
         self._net_shown: Any = None
         self._topic: dict[str, tuple] = {}
-        self._kingdom_panel: dict[str, Any] = {}  # what each viewer last talked about ("let's visit it")
+        self._kingdom_panel: dict[str, Any] = {}
+        self._last_request: dict[str, tuple[str, float]] = {}  # each viewer's last build request ("another one")  # what each viewer last talked about ("let's visit it")
         self._building: Optional[dict[str, Any]] = None  # the free build going on: its pieces and the next one
         self._bots_started = False  # the first Mindcraft start greets; a restart does not
         self._now_building = ""  # what they really build right now (the prompts used to say "free building")
@@ -799,7 +800,13 @@ class MinecraftEngine:
             acted = True
         # Builds first: "build a castle that won't blow up" is a build, not TNT.
         elif self.creative and wants_build(text):
-            heard += self.request_build(text, author, viewer=True)
+            request = text
+            before = self._last_request.get(author)
+            if before and now - before[1] < 900 and re.search(r"\b(?:another|more|again|one more|same)\b", text, re.I):
+                # "build another 10 where you stand": another of what they asked before (10 snowmen)
+                request = f"{before[0]} (again, as asked now: {text})"
+            self._last_request[author] = (request, now)
+            heard += self.request_build(request, author, viewer=True, here=here_asked(text))
             acted = True
         elif self.creative and says_stuck(text):
             _soon(self._unstick(author))
@@ -2694,7 +2701,7 @@ class MinecraftEngine:
         now = time.time()
         return " | ".join(t for at, t in list(self.memory)[-MEMORY_LINES:] if now - at < MEMORY_SECONDS)
 
-    def request_build(self, request: str, who: str, viewer: bool = False) -> str:
+    def request_build(self, request: str, who: str, viewer: bool = False, here: bool = False) -> str:
         """A free build, one at a time (viewers' before the girls' own).
         Returns what to tell the girls."""
         now = time.time()
@@ -2718,13 +2725,13 @@ class MinecraftEngine:
             self._build_keys[key] = now
         if viewer:
             self._viewer_builds += 1
-        _soon(self._free_build(request, who, viewer, key))
+        _soon(self._free_build(request, who, viewer, key, here))
         if place:
             return (f" (It is number {place + 1} in line: you build it by hand right after "
                     f"{'the current build' if place == 1 else str(place) + ' other builds'}. No command needed.)")
         return " (You two are building it right now, by hand, block by block: no command needed. Never say it is done before it is.)"
 
-    async def _free_build(self, request: str, who: str, viewer: bool = False, key: str = "") -> None:
+    async def _free_build(self, request: str, who: str, viewer: bool = False, key: str = "", here: bool = False) -> None:
         from . import minecraft_freebuild as fb
 
         started = False
@@ -2733,7 +2740,7 @@ class MinecraftEngine:
                 self._free_waiting -= 1
                 self._waiting_by[who] = max(0, self._waiting_by.get(who, 1) - 1)
                 self._free_busy = True
-                started = await self._free_build_now(fb, request, who, viewer)
+                started = await self._free_build_now(fb, request, who, viewer, here)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -2745,7 +2752,7 @@ class MinecraftEngine:
             if viewer:
                 self._viewer_builds = max(0, self._viewer_builds - 1)
 
-    async def _free_build_now(self, fb: Any, request: str, who: str, viewer: bool = False) -> bool:
+    async def _free_build_now(self, fb: Any, request: str, who: str, viewer: bool = False, here: bool = False) -> bool:
         base = self.projects.state.get("base")
         for _ in range(90):  # a girl rejoining (a Mindcraft restart): the build waits for her, it is not dropped
             here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 15 and c in self._pos]
@@ -2778,7 +2785,8 @@ class MinecraftEngine:
         forward = (0, 1)
         spots = dict(fb.blocks_of(plan))
         x1, x2, z1, z2, top = fb.footprint_of(spots)
-        left, front_z = self._claim_lots(x2 - x1 + 2, z2 - z1 + 2)
+        spot = self._spot_here(x2 - x1 + 2, z2 - z1 + 2) if here else None  # "where you stand right now"
+        left, front_z = spot or self._claim_lots(x2 - x1 + 2, z2 - z1 + 2)
         # Built facing south, a design's x is mirrored in the world (world x =
         # origin - x): the plot, its loading and its clearing use that range.
         px, pz = left + x2 + 1, front_z + 1  # the build's own x=0 / front line on this plot
@@ -3070,6 +3078,37 @@ class MinecraftEngine:
         lots = self._kingdom or [lot]
         cx, cz = min(x["x"] for x in lots), min(x["z"] for x in lots)  # the grid's corner
         return round((lot["x"] - cx) / kd.LOT), round((lot["z"] - cz) / kd.LOT)
+
+    def _spot_here(self, width: int, depth: int) -> Optional[tuple[int, int]]:
+        """'Build it where you stand': right in front of the camera girl (a
+        few tries to the sides when that ground is built on). None: no room."""
+        base = self.projects.state.get("base")
+        at = self._pos.get(self._camera_girl())
+        if not base or not at:
+            return None
+        rx, rz = int(at[0] - base[0]), int(at[2] - base[2])
+        for dx, dz in ((0, 0), (-1, 0), (1, 0), (0, 1), (-2, 0), (2, 0), (0, 2)):
+            x1 = rx - width // 2 + dx * (width + 6)
+            z1 = rz + 5 + dz * (depth + 6)  # builds face south: just ahead of her
+            if self._taken(x1, z1, x1 + width, z1 + depth, pad=2) or self.near_builds(
+                    base[0] + x1 + width / 2, base[2] + z1 + depth / 2, max(width, depth) / 2):
+                continue
+            self._take(x1, z1, x1 + width, z1 + depth)
+            self._claim_cells(x1, z1, x1 + width, z1 + depth)
+            return x1, z1
+        return None
+
+    def _claim_cells(self, x1: int, z1: int, x2: int, z2: int) -> None:
+        """Kingdom lots this ground lies on are skipped by the Kingdom."""
+        from . import minecraft_kingdom as kd
+
+        state = self.projects.state.setdefault("kingdom", {"lot": 0, "piece": 0})
+        if self._kingdom is None:
+            self._kingdom = self._kingdom_lots(state)
+        half = kd.LOT // 2
+        hit = {self._lot_cell(lot) for lot in self._kingdom
+               if lot["x"] - half <= x2 and lot["x"] + half >= x1 and lot["z"] - half <= z2 and lot["z"] + half >= z1}
+        state["claimed"] = sorted({tuple(c) for c in state.get("claimed", [])} | hit)
 
     def _claim_lots(self, width: int, depth: int) -> tuple[int, int]:
         """Where a viewer build goes: on Kingdom lots not built yet, right
