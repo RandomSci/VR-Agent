@@ -79,7 +79,10 @@ def wants_race(text: str) -> bool:
 
 
 SHOW_VERB = (r"see|show (?:me |us )?|look at|go to|go see|fly to|visit|take (?:me|us) to|check out|"
-             r"i want to see|i wanna see|let me see|let us see|can we see|show")
+             r"i want to see|i wanna see|let me see|let us see|can we see|show|"
+             r"(?:can|could|may) (?:i|we|u|you) (?:please )?(?:see|visit|look at|go to|check out)|"
+             r"(?:let'?s|lets|we should|i'?d like to) (?:go |fly )?(?:see|visit|look at|to|check out)|"
+             r"where(?:'?s| is) the")
 
 
 def show_asked(text: str) -> bool:
@@ -218,3 +221,12 @@ def which_build(text: str, builds: list[dict], author: str = "") -> int:
             pool = mine or pool
         return pool[0] if kind == "first" else pool[-1]
     return best
+
+
+_THERE = re.compile(r"\b(?:visit|see|show|look at|go|fly|take (?:me|us)|check)\b.{0,20}\b(?:it|there|that|that place|"
+                    r"this one)\b", re.I)
+
+
+def there_asked(text: str) -> bool:
+    """'Mika let's visit it now!', 'go there', 'show it to us' (what "it" is comes from the chat before)."""
+    return bool(_THERE.search(text or ""))

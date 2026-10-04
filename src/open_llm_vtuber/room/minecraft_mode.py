@@ -78,7 +78,7 @@ from ..vr_agent.text_safety import strip_emoji
 from ..live.clip_marks import CLIPS
 from .minecraft_eyes import wants_look
 from .minecraft_asks import (digit_asked, friend_asked, further_asked, restyle_asked, says_stuck, show_asked,
-                             tour_asked, which_build)
+                             there_asked, tour_asked, which_build)
 from .minecraft_freebuild import wants_build
 from .minecraft_safety import MODERATOR, locally_bad
 from .minecraft_fun import potion_ask, wants_race, wants_tnt
@@ -295,6 +295,7 @@ CAM_TAG = "vr_cam"
 CAMERA_GUARD_EVERY = 10.0  # seconds between checks that the camera is really with her
 CAMERA_APART = 6.0  # farther than this from her: the camera lost her
 LOOK_AT = re.compile(r"!flyTo\([^,]+,[^,]+,[^,]+,\s*(-?[\d.]+),\s*-?[\d.]+,\s*(-?[\d.]+)")
+TOPIC_SECONDS = 180.0  # "it" / "there" means what the viewer talked about this recently
 CAMERA_HOVER_BACK = 6.0  # the camera girl builds this far back (the others 3)
 CAMERA_HOVER_UP = 3.0
 PEEK_EVERY = 6  # every this many pieces she backs off and shows the whole build
@@ -666,6 +667,7 @@ class MinecraftEngine:
         self._answered_before: set[str] = set()
         self._girl_potion_at = 0.0
         self._net_shown: Any = None
+        self._topic: dict[str, tuple] = {}  # what each viewer last talked about ("let's visit it")
         self._building: Optional[dict[str, Any]] = None  # the free build going on: its pieces and the next one
         self._bots_started = False  # the first Mindcraft start greets; a restart does not
         self._now_building = ""  # what they really build right now (the prompts used to say "free building")
@@ -826,6 +828,7 @@ class MinecraftEngine:
             elif self.creative and self._finished_builds() and which_build(
                     text, self._finished_builds(), author) >= 0:
                 b = self._finished_builds()[which_build(text, self._finished_builds(), author)]
+                self._topic[author] = ("build", b, now)
                 if now - self._camera_moved_at > CAMERA_MOVE_GAP:
                     self._camera_moved_at = now
                     _soon(self._show_build(b, author))
@@ -845,8 +848,18 @@ class MinecraftEngine:
                     _soon(self._to_friend(author))
                 heard += f" (You are flying over to {self.names[self._friend(self._camera_girl())]} right now: no command needed.)"
                 acted = True
+            elif self.creative and self._topic_of(author, now) and there_asked(text):
+                # "Mika let's visit it now!": "it" is what they just talked about
+                kind, what, _at = self._topic_of(author, now)
+                if now - self._camera_moved_at > CAMERA_MOVE_GAP:
+                    self._camera_moved_at = now
+                    _soon(self._show_build(what, author) if kind == "build" else self._show_place(what, author))
+                name_of = what["title"] if kind == "build" else f"the {what}"
+                heard += f" (You are flying to {name_of} right now so everyone sees it: no command needed.)"
+                acted = True
             elif self.creative and place_ask(text):
                 place = place_ask(text)
+                self._topic[author] = ("place", place, now)
                 if now - self._camera_moved_at > CAMERA_MOVE_GAP:
                     self._camera_moved_at = now
                     _soon(self._show_place(place, author))
@@ -868,6 +881,9 @@ class MinecraftEngine:
             _soon(self._push({"kind": "hello", "author": author, "streams": streams}))
         self._remember(f"viewer {author} wrote: {text[:90]}")
         named = any(re.search(rf"\b{re.escape(n)}\b", text, re.I) for n in names)
+        mentioned = next((place for words, place in PLACE_WORDS.items() if re.search(rf"\b{words}\b", text, re.I)), "")
+        if mentioned and author not in self._topic_fresh(now):
+            self._topic[author] = ("place", mentioned, now)
         item = {"who": answer, "author": author, "text": heard, "at": now, "first": first_time,
                 "paid": paid, "member": member, "acted": acted, "raw": text, "named": named}
         check = _soon(MODERATOR.flagged(text))  # started now: done before her turn to answer
@@ -2217,6 +2233,18 @@ class MinecraftEngine:
             "blowUp": f"{name} wanted to blow something up with TNT",
             "standInFront": f"{name} asked to stand in front of the camera",
         }.get(verb, f"{name} did {verb} {arg}"))
+        # the places that exist once: "the castle" is ours, "a sky castle" is a new idea
+        existing = next((place for words, place in PLACE_WORDS.items()
+                         if re.search(rf"\b(?:the|our|your) {words}\b", arg)
+                         or (place in ("network", "kingdom") and re.search(rf"\b{words}\b", arg))), "")
+        if verb == "buildThis" and existing and (existing in PLACES or existing == "kingdom"):
+            # "build the neural network" when chat wants to SEE it: it exists, so
+            # she flies there (a second network was being built for the viewer)
+            self._chose_at[cid] = time.time()
+            _soon(self._show_place(existing, name))
+            await self.link.emit("send-message", name, {"from": "system", "message": (
+                f"The {existing} is already built: you are flying there now to show it. No new build.")})
+            return
         if verb == "buildThis" and arg:
             if self._viewer_builds:
                 await self.link.emit("send-message", name, {"from": "system", "message": (
@@ -3148,6 +3176,14 @@ class MinecraftEngine:
         self._remember(f"{who} asked for {what} on {title}: the rest of it is built that way")
         logger.info(f"Minecraft: {who} restyled '{title}': {what}")
         return f"The rest of {title} is now built with {what}, as {who} asked: point it out as it goes up."
+
+    def _topic_of(self, author: str, now: float) -> Optional[tuple]:
+        topic = self._topic.get(author)
+        return topic if topic and now - topic[2] < TOPIC_SECONDS else None
+
+    def _topic_fresh(self, now: float) -> set[str]:
+        """Viewers whose topic was set by this very comment's action (not overwritten by a mention)."""
+        return {a for a, t in self._topic.items() if now - t[2] < 0.001}
 
     def _finished_builds(self) -> list[dict]:
         return [b for b in self.projects.state.get("builds", []) if b.get("done") and b.get("frame")]

@@ -456,3 +456,34 @@ def test_the_camera_girl_builds_from_further_back():
         assert flights["mika"][2] < flights["luna"][2]  # Mika (the stream) further back
 
     asyncio.run(run())
+
+
+def test_can_i_see_the_network_and_visit_it():
+    """'Can I see the neural network?' then 'Mika let's visit it now!': Luna
+    started building a second network, and nobody flew anywhere."""
+    async def run():
+        eng = _engine()
+        eng.creative = True
+        eng.projects.state.update({"base": [0, 64, 0]})
+        shown = []
+
+        async def show(place, who):
+            shown.append(place)
+
+        eng._show_place = show
+        eng.enqueue("FRCFinance", "Can I see the neural network?")
+        await asyncio.sleep(0)
+        assert shown == ["network"]
+        eng._camera_moved_at = 0.0
+        eng.enqueue("FRCFinance", "Mika let's visit it now!")
+        await asyncio.sleep(0)
+        assert shown == ["network", "network"] and "flying to the network" in eng.chat_queue[-1]["text"]
+        await eng._heard("Luna", "[VR] buildThis neural network")  # her bot wanted to build it
+        await asyncio.sleep(0)
+        assert not eng._free_waiting and shown[-1] == "network"
+        await eng._heard("Luna", "[VR] buildThis a sky castle")  # a new idea is still built
+        assert eng._free_waiting == 1
+        for task in list(mm._BACKGROUND):
+            task.cancel()
+
+    asyncio.run(run())
