@@ -112,6 +112,10 @@ VIEWERS_FILE = Path("data/minecraft_viewers.json")
 # "Argh!" is not followed by a pause), cut where the sentence ends.
 FIRST_SENTENCE = re.compile(r"^.{18,}?[.!?]+[\"')\]]*\s")
 SELF_BUILD_GAP = 1200.0  # a build of their own idea at most every 20 minutes (chat and the Kingdom first)
+# VR_MINECRAFT_NETWORK_TALK=1 brings back the network as a project they build
+# and talk about. Off: it stands there, viewers can "draw 7", and the girls
+# only talk about it when asked.
+NETWORK_TALK = os.environ.get("VR_MINECRAFT_NETWORK_TALK", "0").strip().lower() in ("1", "true", "on", "yes")
 GIRL_TEST_GAP = 600.0  # the girls test the network themselves at most every 10 minutes (viewers any time)
 EYES_WAIT = 10.0  # "what do you see?" waits at most this long for her to look
 LINK_LOST_RESTART = 120.0  # no contact with Mindcraft this long: it is started again
@@ -185,8 +189,8 @@ CAN_DO = (
     "block by block (towers, castles, a viewer's name in blocks), dig holes and tunnels by hand, place and blow "
     "up TNT (only far away from your builds), drink potions or splash your friend (invisibility, levitation, "
     "speed, glowing, jump boost...), brew a mystery potion, get any item, race your friend through the sky "
-    "hoops, fly to the castle, the network, the farm, the garden, the base or high in the sky, fly in front of "
-    "the camera, test your neural network on a digit. You cannot fight, sleep, trade or play survival things "
+    "hoops, fly to the castle, the farm, the garden, the base or high in the sky, fly in front of "
+    "the camera. You cannot fight, sleep, trade or play survival things "
     "(it is creative mode). If something is truly impossible in the game, do the closest thing you can and say "
     "so in one cheerful line. "
 )
@@ -227,12 +231,11 @@ SYSTEM_FACTS = (
     "of the YouTube channel Selwyn Builds, running in his VR Agent system. Your brain is GPT-4o-mini, your voice "
     "is text to speech, your Live2D bodies stand at the bottom of the screen while the real Minecraft world shows "
     "behind you. New in this system: you play creative and fly; you build every project piece by piece; an "
-    "invisible camera man follows you both; viewer comments are answered within seconds; the neural network you "
-    "build is REAL, written from scratch with backpropagation (35 input pixels, two hidden layers of 8 neurons, "
-    "10 outputs) and it learns live, and viewers can type draw 7 to make it read a digit. "
+    "invisible camera man follows you both; viewer comments are answered within seconds. (Only if a viewer "
+    "asks: there is a real neural network on the map that reads digits when viewers type draw 7.) "
     "You are in charge of what happens: !buildNext builds the next piece now, !flyToPlace(place) flies you to "
-    "castle, network, farm, garden, base, sky or friend, !changeMaterial(block) changes what the rest of this part "
-    "is made of; viewers type draw 7 to make your network read a digit. It is creative mode, so you have EVERY "
+    "castle, farm, garden, base, sky or friend, !changeMaterial(block) changes what the rest of this part "
+    "is made of. It is creative mode, so you have EVERY "
     "block and item: "
     "!getItem(item, count) gives you anything, !drinkPotion(effect) and !splashPotion(effect) (on your friend) for "
     "speed, levitation, glowing, invisibility, jump_boost and more, !brewPotion for a mystery experiment, "
@@ -1021,14 +1024,14 @@ class MinecraftEngine:
         if self.creative:
             style = (
                 f"{persona} Right now you are LIVE on YouTube in CREATIVE Minecraft with {friend}: you can fly and have "
-                f"every block. Together you build big projects from scratch, piece by piece: a castle, then a REAL neural "
-                f"network that learns to read handwritten digits, a farm, a garden. {role}"
+                f"every block. Together you build whatever chat asks for, piece by piece, and between requests your "
+                f"own Kingdom. {role}"
                 "You fly to each spot and place the blocks yourselves. You have EVERY block already: never gather, "
                 "never look for seeds, food or materials. Places like the farm and the garden only exist once you "
                 "build them. Your job is the talking: say what you are building right now, argue "
                 f"with {friend} about how it should look, complain when it is tedious, be proud when a part is done. "
-                "About the neural network you really know your stuff: inputs, hidden layers, weights, backpropagation, "
-                "loss, accuracy, and you get nervous when it guesses wrong. "
+                "Talk about chat, your builds and each other. Never bring up the neural network yourself: only when "
+                "a viewer asks about it. "
                 "Everything you write in chat is spoken out loud by your voice on stream, so write like you talk: "
                 "one or two short, lively sentences with real personality and emotion, never lists, never robot talk, "
                 "never call yourself a bot or an AI assistant. "
@@ -1669,6 +1672,13 @@ class MinecraftEngine:
                     await asyncio.sleep(10)  # no server console yet
                     continue
                 await self._keep_daylight()
+                current = self.projects.current()
+                if current is not None and current[0]["id"] == "neural_net" and not NETWORK_TALK:
+                    # Building it piece by piece (and its Training part) had them
+                    # talk about the network for hours: it goes up at once, and
+                    # "draw 7" still works for viewers.
+                    await self.projects.skip_quietly("neural_net")
+                    continue
                 if self.projects.current() is None:
                     if not (self.creative and await self._kingdom_step()):
                         await asyncio.sleep(2.0)
@@ -2016,7 +2026,7 @@ class MinecraftEngine:
             elif not building:
                 # The loop on stream: every pick refused, they kept trying others.
                 note = ("Nothing is being built right now (this part is finished or it is training time), so there is "
-                        "no material to change. Do not try other materials now: talk, test the network, or say "
+                        "no material to change. Do not try other materials now: talk with chat, or say "
                         "!buildNext; pick a material when the next part starts.")
             else:
                 note = f"This part is already built from {block}. Keep going!"
@@ -2061,7 +2071,7 @@ class MinecraftEngine:
             await self.link.emit("send-message", self.names[cid], {"from": "system", "message": (
                 f"Status: {strip_emoji(view.get('title', ''))}, {view.get('step', '')}. "
                 f"Say one short line to {friend} or to chat about what you are building right now, or ask chat what "
-                "they want you to build. Do not test the network or change materials unless chat asks."
+                "they want you to build. Do not change materials unless chat asks."
             )})
 
     async def _arrive(self, cid: str, view: tuple, focus: tuple, flight: float) -> None:

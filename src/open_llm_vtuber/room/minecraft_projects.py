@@ -777,6 +777,23 @@ class ProjectTracker:
         logger.info(f"Minecraft: {project['title']}: {name} built ({built} commands)")
         return True
 
+    async def skip_quietly(self, project_id: str) -> bool:
+        """Put up every remaining part of this project at once and move on,
+        without a word to the girls (no "celebrate the network!")."""
+        skipped = False
+        while (current := self.current()) is not None and current[0]["id"] == project_id:
+            if not await self._build_all():
+                return skipped
+            p, m = int(self.state["project"]), int(self.state["milestone"]) + 1
+            if m >= len(current[0]["milestones"]):
+                p, m = p + 1, 0
+            self.state.update({"project": p, "milestone": m, "progress": 0.0, "built": 0})
+            self._save()
+            skipped = True
+        if skipped:
+            logger.info(f"Minecraft: {project_id} put up at once (no talk about it on stream)")
+        return skipped
+
     async def advance(self) -> None:
         """This part is done: celebrate, and the next part starts."""
         current = self.current()

@@ -1031,3 +1031,45 @@ def test_quick_second_message_is_not_lost(monkeypatch):
         await asyncio.sleep(0)
 
     asyncio.run(run())
+
+
+def test_network_is_put_up_quietly(tmp_path, monkeypatch):
+    """They talked about the network for hours: its project now goes up at
+    once, with no word to the girls, and the farm comes next."""
+    from src.open_llm_vtuber.room import minecraft_projects as mp
+
+    async def run():
+        monkeypatch.setattr(mp, "STATE_FILE", tmp_path / "state.json")
+        told = []
+
+        async def tell(text):
+            told.append(text)
+
+        async def push(op):
+            told.append(op)
+
+        async def rcon(cmd, reply=False):
+            return ""
+
+        book = mp.ProjectTracker(["Mika", "Luna"], rcon, push, tell)
+        book.state.update({"project": 1, "milestone": 2, "base": [0, 64, 0]})
+        built = []
+
+        async def build_all():
+            built.append(book.current()[1][0])
+            return True
+
+        book._build_all = build_all
+        assert await book.skip_quietly("neural_net")
+        assert book.current()[0]["id"] == "farm" and built[-1] == "Training"
+        assert told == []  # not a word about it
+
+    asyncio.run(run())
+
+
+def test_the_girls_are_not_pushed_to_talk_about_the_network():
+    assert not mm.NETWORK_TALK
+    assert "backpropagation" not in mm.SYSTEM_FACTS and "neural network" not in mm.CAN_DO
+    eng = _engine()
+    eng.creative = True
+    assert "backpropagation" not in str(eng.profile("mika"))
