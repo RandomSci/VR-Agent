@@ -128,6 +128,8 @@ CHAT_BURST = 6  # this many comments in 30 s: chat went wild (a clip)
 BIG_REACTION = re.compile(r"\b(argh+|no{3,}|wait,? what|oh my god|omg|we did it)\b", re.I)  # at most one engine exclamation this often
 ARRIVE_TELEPORT = 12.0  # farther than this from her spot after the flight: teleported there
 HAND_WAIT = 8.0  # seconds (plus 0.9 per block) for a run laid by hand before the rest just appears
+REPEAT_FLIGHT = 3.0  # the very same flight ordered again this soon: dropped (it only restarted her)
+PULLED_BACK_LOG = 60.0  # "the server pulled her back" is logged at most this often per girl
 PART_DISTANCE = 4.5  # overlapping anyway: the other girl flies this far aside
 CHOICE_HOLD = 25.0  # after a girl flies somewhere herself, the builder leaves her alone this long
 NUDGE_SECONDS = 120.0  # creative: one girl is asked what she wants to do next this often
@@ -590,6 +592,8 @@ class MinecraftEngine:
         self._trail: dict[str, tuple[float, float, float]] = {}  # an earlier position (movement direction)
         self._free_lock = asyncio.Lock()
         self._daylight_at = 0.0
+        self._last_flight: dict[str, tuple[str, float]] = {}
+        self._pulled_back: dict[str, list[float]] = {}
         self._cam_guard_at = 0.0
         self._cam_apart_since = 0.0
         self._still: dict[str, tuple[float, float, float, float]] = {}  # x, y, z, since (while building)
@@ -1091,6 +1095,9 @@ class MinecraftEngine:
         if str(message).startswith("[VR] put ") or str(message).startswith("[VR] laid "):
             await self._hand_event(str(message)[5:].split())
             return
+        if str(message).startswith("[VR] pulledBack"):
+            self._note_pulled_back(cid)
+            return
         if str(message).startswith("[VR] "):
             await self.choice(cid, str(message)[5:].strip())
             return
@@ -1187,12 +1194,29 @@ class MinecraftEngine:
     # ------------------------------------------------------------ director
     async def _command(self, cid: str, command: str) -> bool:
         """A Mindcraft command that runs right away, without an AI call."""
+        if command.startswith("!flyTo"):
+            # Two loops ordering the same flight restarted it each time (a
+            # stop, a turn, off again): the camera (her eyes) shook.
+            last = self._last_flight.get(cid)
+            if last and last[0] == command and time.time() - last[1] < REPEAT_FLIGHT:
+                return True
+            self._last_flight[cid] = (command, time.time())
         if command.startswith(("!flyTo", "!layBlocks")):
             self._ordered_at[cid] = time.time()  # she is being given work (the frozen check uses it)
         look = LOOK_AT.match(command)
         if look:  # where she will be looking: the camera stays behind that
             self._looking[cid] = (float(look.group(1)), float(look.group(2)), time.time())
         return await self.link.emit("send-message", self.names[cid], {"from": DIRECTOR, "message": command})
+
+    def _note_pulled_back(self, cid: str) -> None:
+        """Her flight gave up because the server kept pulling her back (lag):
+        logged, so the doctor script shows when the picture jumped."""
+        now = time.time()
+        times = [t for t in self._pulled_back.get(cid, []) if now - t < PULLED_BACK_LOG] + [now]
+        self._pulled_back[cid] = times
+        if len(times) == 1:
+            logger.warning(f"Minecraft: the server pulled {self.names[cid]} back during a flight "
+                           "(lag?): she stopped instead of fighting it")
 
     def _friend(self, cid: str) -> str:
         return next((c for c in self.cast if c != cid), cid)
@@ -1648,8 +1672,15 @@ class MinecraftEngine:
                 await asyncio.sleep(5)
 
     def _hop_spot(self, cid: str, x: float, y: float, z: float, lx: float, lz: float) -> tuple[float, float, float]:
-        """While building: her hover point, unless her friend is (or is going) right there."""
+        """While building: her hover point, unless her friend is (or is going) right there.
+
+        Only the girl who is NOT the camera ever steps aside. When both did,
+        each moved because of the other, then back: Mika's eyes (the stream)
+        went left, right, left."""
         friend = self._friend(cid)
+        if cid == self._camera_girl():
+            self._target[cid] = (x, y, z)
+            return x, y, z
         for other in (self._target.get(friend), self._pos.get(friend)) if friend != cid else ():
             if other is None:
                 continue
@@ -1845,7 +1876,7 @@ class MinecraftEngine:
         sign = 1.0 if self.cast.index(cid) % 2 == 0 else -1.0
         x, z = x + side[0] * SIDE_GAP * sign, z + side[1] * SIDE_GAP * sign
         friend = self._friend(cid)
-        if friend != cid:
+        if friend != cid and cid != self._camera_girl():  # the camera girl keeps her side, never dodges
             for other in (self._target.get(friend), self._pos.get(friend)):
                 if other is None:
                     continue
@@ -2364,12 +2395,19 @@ class MinecraftEngine:
     async def _keep_daylight(self) -> None:
         """Always day and clear (a dark night stream is hard to watch), set
         again every 10 minutes in case the server restarted.
-        VR_MINECRAFT_DAYLIGHT=0 turns it off."""
-        if os.environ.get("VR_MINECRAFT_DAYLIGHT", "1").strip().lower() in ("0", "false", "off", "no"):
-            return
+        VR_MINECRAFT_DAYLIGHT=0 turns it off.
+
+        Also every 10 minutes: the server's player movement check off. Under
+        lag it decided Mika "moved too quickly" and pulled her back, she flew
+        on, it pulled her back again: the stream (her eyes) jumped left and
+        right for hours."""
         if time.time() - self._daylight_at < 600:
             return
         self._daylight_at = time.time()
+        for command in ("gamerule disablePlayerMovementCheck true", "gamerule disableElytraMovementCheck true"):
+            await rcon_command(command)
+        if os.environ.get("VR_MINECRAFT_DAYLIGHT", "1").strip().lower() in ("0", "false", "off", "no"):
+            return
         for command in ("time set day", "gamerule doDaylightCycle false", "weather clear",
                         "gamerule doWeatherCycle false"):
             await rcon_command(command)
@@ -2910,7 +2948,7 @@ CAMERA_GLIDE = (
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v13)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v14)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -3095,6 +3133,15 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v13)
                 }
                 return legs;
             };
+            // The server can pull her back (lag, "moved too quickly"). Flying
+            // on at once made it pull her back again and again: her eyes (the
+            // stream) jumped back and forth. Now she waits for it, flies on
+            // from where the server put her, and after a few pulls she stays.
+            let pulls = 0;
+            let pulledAt = 0;
+            const onPull = () => { pulls++; pulledAt = Date.now(); };
+            bot.on('forcedMove', onPull);
+            try {
             const target = new Vec3(x, y, z);
             for (let attempt = 0; attempt < 3; attempt++) {
                 const here = bot.entity.position.clone();
@@ -3117,14 +3164,23 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v13)
                         const next = bot.entity.position.plus(delta.scaled(Math.min(FLY_STEP, dist) / dist));
                         // never into a block (one just placed, a door shut); stuck inside one: out is fine
                         if (!fits(next) && fits(bot.entity.position)) { blocked = true; break; }
+                        if (pulls >= 3) break;
+                        if (Date.now() - pulledAt < 700) { await sleep(50); continue; }
                         bot.entity.velocity = new Vec3(0, 0, 0);
                         bot.entity.position = next;
                         await turn();
                         await sleep(50);
                     }
-                    if (blocked) break;
+                    if (blocked || pulls >= 3) break;
                 }
+                if (pulls >= 3) break; // the server keeps her here: stay, do not fight it
                 if (!blocked) break; // there
+            }
+            } finally {
+                bot.removeListener('forcedMove', onPull);
+            }
+            if (pulls >= 3) {
+                (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] pulledBack ' + pulls);
             }
             bot.entity.velocity = new Vec3(0, 0, 0);
             for (let i = 0; i < 40; i++) {

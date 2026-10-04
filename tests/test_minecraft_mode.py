@@ -577,7 +577,7 @@ def test_hand_blocks_and_sounds():
 
 def test_lay_blocks_command_is_patched_in():
     assert "name: '!layBlocks'" in mm.FLY_COMMANDS and "[VR] put " in mm.FLY_COMMANDS
-    assert "(v13)" in mm.FLY_COMMANDS
+    assert "(v14)" in mm.FLY_COMMANDS
 
 
 def test_both_girls_never_get_the_same_spot(monkeypatch):
@@ -598,13 +598,17 @@ def test_both_girls_never_get_the_same_spot(monkeypatch):
         await eng._fly("luna", view, focus)
         (mx, _my, mz), (lx, _ly, lz) = eng._target["mika"], eng._target["luna"]
         assert ((mx - lx) ** 2 + (mz - lz) ** 2) ** 0.5 >= 2 * mm.SIDE_GAP - 0.01
-        # Luna already hovers where Mika's spot would be: Mika moves further aside
+        mika_spot = eng._target["mika"]
+        # Luna hovers right where Mika's spot is: Mika (the camera) keeps her
+        # spot (both dodging each other made the picture jump left and right);
+        # Luna is the one who moves aside
         eng._target.clear()
-        eng._pos["luna"] = (8 + view[0], 62 + view[1], -81 + view[2])
+        eng._pos["luna"] = mika_spot
         await eng._fly("mika", view, focus)
-        mx, _my, mz = eng._target["mika"]
-        lx, _ly, lz = eng._pos["luna"]
-        assert ((mx - lx) ** 2 + (mz - lz) ** 2) ** 0.5 >= mm.PERSONAL_SPACE
+        assert eng._target["mika"] == mika_spot
+        await eng._fly("luna", view, focus)
+        lx, _ly, lz = eng._target["luna"]
+        assert ((mika_spot[0] - lx) ** 2 + (mika_spot[2] - lz) ** 2) ** 0.5 >= mm.PERSONAL_SPACE
 
     asyncio.run(run())
 
@@ -894,3 +898,52 @@ def test_show_me_moves_the_camera_and_the_network_stays_quiet(monkeypatch):
         assert eng.link.sent[-1][1]["message"].startswith("Not now: the network was just tested")
 
     asyncio.run(run())
+
+
+def test_camera_girl_never_dodges_while_building():
+    """Mika's eyes are the stream: she never sidesteps for Luna, Luna does."""
+    eng = _engine()
+    eng._pos["luna"] = (10.0, 70.0, 10.0)
+    assert eng._hop_spot("mika", 10.0, 70.0, 10.0, 20.0, 10.0) == (10.0, 70.0, 10.0)
+    eng._pos["mika"] = (10.0, 70.0, 10.0)
+    x, _y, z = eng._hop_spot("luna", 10.0, 70.0, 10.0, 20.0, 10.0)
+    assert ((x - 10) ** 2 + (z - 10) ** 2) ** 0.5 >= mm.PERSONAL_SPACE
+
+
+def test_same_flight_twice_is_sent_once(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        fly = "!flyTo(1.0, 70.0, 2.0, 5.0, 70.0, 5.0, -60)"
+        await eng._command("mika", fly)
+        await eng._command("mika", fly)
+        assert len(eng.link.sent) == 1
+        await eng._command("mika", "!flyTo(9.0, 70.0, 2.0, 5.0, 70.0, 5.0, -60)")
+        assert len(eng.link.sent) == 2
+        eng._last_flight["mika"] = (fly, mm.time.time() - mm.REPEAT_FLIGHT - 1)
+        await eng._command("mika", fly)  # long after: sent again
+        assert len(eng.link.sent) == 3
+
+    asyncio.run(run())
+
+
+def test_movement_check_is_switched_off(monkeypatch):
+    async def run():
+        commands = []
+
+        async def rcon(cmd, reply=False):
+            commands.append(cmd)
+            return ""
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        monkeypatch.setenv("VR_MINECRAFT_DAYLIGHT", "0")
+        eng = _live_engine(monkeypatch)
+        await eng._keep_daylight()
+        assert "gamerule disablePlayerMovementCheck true" in commands
+        assert "time set day" not in commands
+
+    asyncio.run(run())
+
+
+def test_flight_stops_fighting_the_server():
+    js = mm.FLY_COMMANDS
+    assert "forcedMove" in js and "[VR] pulledBack" in js and "removeListener('forcedMove'" in js

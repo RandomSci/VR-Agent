@@ -8,6 +8,9 @@ It looks at:
   logs/minecraft-server.log     the Minecraft server (lag, kicks, crashes)
   minecraft/server/logs/        the server's own logs (latest.log)
   logs/mindcraft.log            the bots (errors, disconnects)
+  ~/.minecraft/logs, crash-reports   YOUR game (the camera): did it crash or
+                                run out of memory? (the launcher's terminal
+                                only shows the launcher, not the game)
 
 and prints, in time order: server lag ("Can't keep up"), players joining,
 leaving, timing out or being kicked, bots restarting, the camera losing
@@ -43,11 +46,20 @@ OURS_PATTERNS = [
     (r"Minecraft camera:|is the camera now|left, back to the web views", "CAMERA"),
     (r"overloaded|keeps up again", "SERVER SPEED"),
     (r"has not moved|still frozen", "FROZEN"),
+    (r"pulled \w+ back", "PULLED BACK"),
     (r"no contact with Mindcraft", "BOTS LINK"),
     (r"connected to Mindcraft|Mindcraft link", "BOTS LINK"),
     (r"building '|the Kingdom, lot", "BUILD"),
     (r"free build failed|building failed|could not be designed", "BUILD ERROR"),
     (r"ERROR|Traceback", "ERROR"),
+]
+CLIENT_DIR = Path.home() / ".minecraft"
+CLIENT_PATTERNS = [
+    (r"OutOfMemory|Out of memory", "GAME MEMORY"),
+    (r"Stopping!|Game crashed|crash report|---- Minecraft Crash Report", "GAME CRASH"),
+    (r"Disconnected|Lost connection|Connection reset|Timed out", "GAME DISCONNECT"),
+    (r"Can't keep up|took too long|Exception", "GAME ERROR"),
+    (r"Setting user:|Connecting to", "GAME START"),
 ]
 RECEIVED = re.compile(r"YouTube message from @?([^:]+): (.*)")
 ANSWERED = re.compile(r"Minecraft: \w+ answers ([^(]+) \(")
@@ -112,7 +124,25 @@ def main() -> None:
                     events.append((m.group(1), label, line.strip()[:180]))
                     break
 
-    # 3) the bots (Mindcraft has no times in its log: the last errors)
+    # 3) your own game (the camera): its log of today, and crash reports
+    client_logs = sorted((CLIENT_DIR / "logs").glob(f"{day}-*.log.gz")) + [CLIENT_DIR / "logs" / "latest.log"]
+    for path in client_logs:
+        if not path.exists():
+            continue
+        for line in _open(path):
+            m = re.match(r"\[(\d\d:\d\d:\d\d)\]", line)
+            if not m or not _in_window(m.group(1), start, end):
+                continue
+            for pattern, label in CLIENT_PATTERNS:
+                if re.search(pattern, line):
+                    events.append((m.group(1), label, line.strip()[:180]))
+                    break
+    for path in sorted((CLIENT_DIR / "crash-reports").glob(f"crash-{day}_*.txt")):
+        clock = path.name[len(f"crash-{day}_"):][:8].replace(".", ":")
+        reason = next((ln.strip() for ln in _open(path) if ln.startswith("Description:")), "")
+        events.append((clock, "GAME CRASH", f"{path.name} {reason}"))
+
+    # 4) the bots (Mindcraft has no times in its log: the last errors)
     mind = LOGS / "mindcraft.log"
     mind_errors = []
     if mind.exists():
