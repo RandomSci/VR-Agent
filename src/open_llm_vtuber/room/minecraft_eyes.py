@@ -75,7 +75,8 @@ class Eyes:
         self.nearby: dict[str, list[str]] = {}  # creature types from the bots' own state
         self._notable_at: dict[str, float] = {}
         self._waiting: dict[str, asyncio.Event] = {}
-        self._known: set[str] = set()  # creature kinds already reacted to this stream
+        self._known: set[str] = set()
+        self.nearest: dict[str, Any] = {}  # (name, is a player) of the closest thing she saw  # creature kinds already reacted to this stream
         self._reactions: list[float] = []
 
     @staticmethod
@@ -122,6 +123,9 @@ class Eyes:
             await asyncio.wait_for(event.wait(), timeout=LOOK_WAIT)
         except asyncio.TimeoutError:
             pass
+        if self.nearest.get(cid):  # "what do you see?": she looks at it while she answers
+            what, player = self.nearest[cid]
+            await self.e.look_toward(cid, what, player=player)
         return self.describe_for(cid)
 
     async def saw(self, cid: str, raw: str) -> None:
@@ -145,6 +149,9 @@ class Eyes:
         old = self.things.get(cid, set())
         self.sight[cid] = (time.time(), text)
         self.things[cid] = names | players
+        nearest = (seen.get("near") or [None])[0] or next(
+            (q for q in seen.get("players") or [] if str(q.get("name", "")).lower() != friend), None)
+        self.nearest[cid] = (str(nearest.get("name", "")), nearest in (seen.get("players") or [])) if nearest else None
         if cid in self._waiting:
             self._waiting[cid].set()
         new = (names | players) - old
@@ -160,6 +167,9 @@ class Eyes:
             name = self.e.names[cid]
             self.e._remember(f"{name} sees: {text[:120]}")
             logger.info(f"Minecraft eyes: {name} sees {', '.join(sorted(worth))}")
+            # she turns to it first: what she talks about is what the stream shows
+            target = sorted(worth & HOSTILE) or sorted(worth & names) or sorted(worth)
+            await self.e.look_toward(cid, target[0], player=target[0] in players)
             await self.e.link.emit("send-message", name, {"from": "system", "message": (
                 f"You see right now: {text} React to what is new out loud in one short line.")})
 

@@ -295,6 +295,7 @@ CAM_TAG = "vr_cam"
 CAMERA_GUARD_EVERY = 10.0  # seconds between checks that the camera is really with her
 CAMERA_APART = 6.0  # farther than this from her: the camera lost her
 LOOK_AT = re.compile(r"!flyTo\([^,]+,[^,]+,[^,]+,\s*(-?[\d.]+),\s*-?[\d.]+,\s*(-?[\d.]+)")
+LOOK_HOLD = 6.0  # she looks at what she saw this long before building on
 TOPIC_SECONDS = 180.0  # "it" / "there" means what the viewer talked about this recently
 CAMERA_HOVER_BACK = 6.0  # the camera girl builds this far back (the others 3)
 CAMERA_HOVER_UP = 3.0
@@ -3275,6 +3276,26 @@ class MinecraftEngine:
         if self.projects.current() is None and self._kingdom_panel and self._building is None:
             return dict(self._kingdom_panel)
         return {"kind": "project", **self.projects.view()}
+
+    async def look_toward(self, cid: str, what: str, player: bool = False) -> bool:
+        """She turns her head to something she sees (a creature kind or a
+        player) and keeps looking a few seconds: her eyes are the stream, so
+        what she talks about is on screen. False when it is not found."""
+        name, here = self.names[cid], self._pos.get(cid)
+        if not what or not here or not re.fullmatch(r"[A-Za-z0-9_ ]{1,40}", what):
+            return False
+        selector = (f"@a[name={what},limit=1]" if player else
+                    f"@e[type=minecraft:{what.strip().replace(' ', '_').lower()},sort=nearest,limit=1,distance=..40]")
+        target = _numbers(await rcon_command(f"execute at {name} run data get entity {selector} Pos", reply=True))
+        if len(target) < 3:
+            return False
+        held_until = self._chose_at.get(cid, 0) + CHOICE_HOLD
+        if held_until < time.time() + LOOK_HOLD:  # the build waits while she looks (unless held longer already)
+            self._chose_at[cid] = time.time() + LOOK_HOLD - CHOICE_HOLD
+        x, y, z = here
+        await self._command(cid, f"!flyTo({x:.1f}, {y:.1f}, {z:.1f}, {target[0]:.1f}, {target[1] + 1:.1f}, "
+                                 f"{target[2]:.1f}, 0)")  # same spot: only her head turns, smoothly
+        return True
 
     def _finished_builds(self) -> list[dict]:
         return [b for b in self.projects.state.get("builds", []) if b.get("done") and b.get("frame")]

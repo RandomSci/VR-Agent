@@ -508,11 +508,11 @@ def test_viewer_builds_go_on_kingdom_lots_close_by():
     assert any(eng._lot_cell(lot) in claimed for lot in lots[1:30])
 
 
-def test_snowmen_stay_snowmen():
-    """A carved pumpkin on two snow blocks is a snow golem: ten snowmen walked away."""
+def test_golems_come_alive_but_never_the_wither():
+    """Chat wanted golems (a carved pumpkin on snow blocks); a Wither would wreck the builds."""
     from src.open_llm_vtuber.room import minecraft_freebuild as fb
 
-    assert fb.block_id("carved_pumpkin") == "pumpkin" and fb.block_id("jack_o_lantern") == "pumpkin"
+    assert fb.block_id("carved_pumpkin") == "carved_pumpkin"
     assert fb.block_id("wither_skeleton_skull") == "skeleton_skull"
 
 
@@ -529,5 +529,32 @@ def test_build_it_where_you_stand_and_another_one():
         eng.enqueue("FRCFinance", "Let's build many 10 snowmen!")
         eng.enqueue("FRCFinance", "Build another 10 where you stand right now")
         assert asked[-1][1] is True and "10 snowmen" in asked[-1][0]
+
+    asyncio.run(run())
+
+
+def test_she_turns_to_what_she_sees(monkeypatch):
+    """'Look, snow golems!' - and the stream (her eyes) shows them."""
+    async def run():
+        eng = _engine()
+        eng._pos["mika"] = (10.0, 70.0, 10.0)
+        asked, orders = [], []
+
+        async def rcon(cmd, reply=False):
+            asked.append(cmd)
+            return "Snow Golem has the following entity data: [20.5d, 69.0d, 15.5d]"
+
+        async def command(cid, text):
+            orders.append((cid, text))
+            return True
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        eng._command = command
+        seen = {"near": [{"name": "snow_golem", "d": 9, "where": "to the left"}], "players": []}
+        await eng.eyes.saw("mika", json.dumps(seen))
+        assert "@e[type=minecraft:snow_golem" in asked[-1]
+        assert orders[-1] == ("mika", "!flyTo(10.0, 70.0, 10.0, 20.5, 70.0, 15.5, 0)")  # only her head turns
+        assert eng._chose_at["mika"] + mm.CHOICE_HOLD > mm.time.time() + 5  # the build waits while she looks
+        assert "React" in eng.link.sent[-1][1]["message"]
 
     asyncio.run(run())
