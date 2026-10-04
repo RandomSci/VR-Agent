@@ -702,3 +702,29 @@ def test_splash_that_chicken_and_place_gold_there():
         assert not eng._free_waiting  # not a build, not a restyle
 
     asyncio.run(run())
+
+
+def test_a_slow_safety_check_does_not_hold_the_answer(monkeypatch):
+    async def run():
+        eng = _engine()
+
+        async def slow(text):
+            await asyncio.sleep(5)
+            return False
+
+        monkeypatch.setattr(mm.MODERATOR, "flagged", slow)
+        answered = []
+
+        async def reply(cid, author, text, more=None):
+            answered.append(author)
+            return "hi!"
+
+        eng._quick_reply = reply
+        eng.enqueue("fan", "hi mika")
+        started = mm.time.time()
+        await eng._answer_loop()
+        assert answered == ["fan"] and mm.time.time() - started < 2  # not the 5 s of the check
+        for task in list(mm._BACKGROUND):
+            task.cancel()
+
+    asyncio.run(run())

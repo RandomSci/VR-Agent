@@ -33,8 +33,9 @@
   // stream, and a ✓ when it was answered). ?chatbox=0 brings back the old
   // two second popup in the middle.
   const CHATBOX = new URLSearchParams(location.search).get("chatbox") !== "0";
-  const CHATBOX_ROWS = 5;
-  const CHATBOX_MS = 90000;
+  const CHATBOX_ROWS = 4;
+  const CHATBOX_MS = 20000; // gone after this at most
+  const CHATBOX_ANSWERED_MS = 6000; // and this long after it was answered
   // "client": the owner's real Minecraft is the camera (OBS window capture
   // under this page), so the page is see-through and the web views stay off.
   let camera = "web";
@@ -278,13 +279,17 @@
     list.append(row);
     while (list.children.length > CHATBOX_ROWS) list.firstChild.remove();
     box.classList.add("show");
+    row._gone = setTimeout(() => fadeRow(row), CHATBOX_MS);
+  }
+
+  function fadeRow(row) {
+    clearTimeout(row._gone);
+    row.classList.add("old");
     setTimeout(() => {
-      row.classList.add("old");
-      setTimeout(() => {
-        row.remove();
-        if (!list.children.length) box.classList.remove("show");
-      }, 400);
-    }, CHATBOX_MS);
+      const list = row.parentNode;
+      row.remove();
+      if (list && !list.children.length) $("mc-chatbox").classList.remove("show");
+    }, 400);
   }
 
   function answered(op) {
@@ -294,6 +299,8 @@
       if ((op.authors || []).includes(row.dataset.author) && !row.classList.contains("done")) {
         row.classList.add("done");
         row.querySelector(".mc-tick").textContent = `✓ ${names[op.who] || op.who || ""}`;
+        clearTimeout(row._gone);
+        row._gone = setTimeout(() => fadeRow(row), CHATBOX_ANSWERED_MS);
       }
     }
   }

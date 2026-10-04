@@ -312,6 +312,7 @@ ADMIRE_SECONDS = 7.0  # a finished build: she looks at all of it this long
 SHOW_HOLD = 35.0  # after "show me ...", the builder leaves the camera girl alone this much longer
 PLACE_WORDS = {"neural network": "network", "network": "network", "castle": "castle", "farm": "farm",
                "garden": "garden", "base": "base", "sky": "sky", "kingdom": "kingdom"}
+MODERATION_WAIT = 0.8  # an answer waits at most this long for the moderation check
 SAID_IT_ALREADY = 25.0  # after an answer out loud, her bot's chat lines to viewers are shown, not spoken again
 CAMERA_MOVE_GAP = 20.0  # "show me X" / "zoom out" move the camera at most this often (chat kept the build paused)
 # "you're stuck", "she's glitching": chat sees the stream, the girls do not.
@@ -3605,12 +3606,13 @@ class MinecraftEngine:
                 return
             async def unsafe(c: dict[str, Any]) -> bool:
                 checks = c.get("checks") or []
-                if checks:  # started when the comment came in
-                    try:
-                        return any(await asyncio.gather(*checks))
-                    except Exception:
-                        return False
-                return await MODERATOR.flagged(c.get("raw") or c["text"])
+                if not checks:
+                    checks = [asyncio.ensure_future(MODERATOR.flagged(c.get("raw") or c["text"]))]
+                # Started when the comment came in; the answer waits for it a
+                # moment at most (a slow moderation service made every answer
+                # late). The local filter already ran on every comment.
+                done, _pending = await asyncio.wait(checks, timeout=MODERATION_WAIT)
+                return any(t.result() for t in done if not t.cancelled() and t.exception() is None)
 
             flags = await asyncio.gather(*(unsafe(c) for c in batch))
             for c, bad in zip(batch, flags):
