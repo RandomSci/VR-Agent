@@ -1012,3 +1012,22 @@ def test_a_frozen_castle_is_a_build_not_a_glitch():
     assert mm.STUCK_ASK.search("build a frozen castle")
     assert mm.wants_build("build a frozen castle")  # the build is checked first in enqueue
     assert not mm.STUCK_ASK.search("build a pirate ship")
+
+
+def test_quick_second_message_is_not_lost(monkeypatch):
+    """'mika' then 'build a dragon' a few seconds later: the second message
+    used to be thrown away. Now both are answered together."""
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng._kick_answers = lambda: None
+        eng.enqueue("regular", "hi mika")
+        eng.enqueue("regular", "how are you today")
+        assert len(eng.chat_queue) == 1
+        assert "hi mika" in eng.chat_queue[0]["text"] and "how are you today" in eng.chat_queue[0]["text"]
+        for n in range(10):  # a flood: only the first few count
+            eng.enqueue("spammer", f"spam {n}")
+        spam = next(c for c in eng.chat_queue if c["author"] == "spammer")
+        assert "spam 3" in spam["text"] and "spam 4" not in spam["text"]
+        await asyncio.sleep(0)
+
+    asyncio.run(run())

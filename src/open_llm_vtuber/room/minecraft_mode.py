@@ -80,7 +80,8 @@ LOG_DIR = Path("logs")
 THUMBNAIL = Path("assets/thumbnails/minecraft.jpg")  # uploaded to each Minecraft stream
 MAX_SAY = 240
 LINE_MAX_AGE = 25.0  # a bot line older than this is shown, not spoken
-VIEWER_GAP = 8.0  # one message per viewer per this many seconds
+VIEWER_GAP = 8.0  # messages from one viewer this close together are answered together
+VIEWER_FLOOD = 4  # more than this many in VIEWER_GAP seconds from one viewer: the rest is spam, ignored
 BOT_GAP = 6.0  # one viewer message per bot per this many seconds
 STUCK_SECONDS = 60  # within STILL_BLOCKS this long: she is teleported out and given her goal again
 STILL_BLOCKS = 3.0
@@ -613,6 +614,7 @@ class MinecraftEngine:
         self._trail: dict[str, tuple[float, float, float]] = {}  # an earlier position (movement direction)
         self._free_lock = asyncio.Lock()
         self._daylight_at = 0.0
+        self._viewer_recent: dict[str, list[float]] = {}
         self._unstuck_at = 0.0
         self._own_ideas: deque[str] = deque(maxlen=REPEAT_THEME)
         self._last_flight: dict[str, tuple[str, float]] = {}
@@ -675,8 +677,13 @@ class MinecraftEngine:
         if not text:
             return
         now = time.time()
-        if now - self.last_viewer.get(author, 0) < VIEWER_GAP:
+        # A regular typing "mika" then "build a dragon" lost the second
+        # message (one per 8 s). Now quick messages are answered together;
+        # only a real flood is ignored.
+        recent = [t for t in self._viewer_recent.get(author, []) if now - t < VIEWER_GAP]
+        if len(recent) >= VIEWER_FLOOD:
             return
+        self._viewer_recent[author] = recent + [now]
         self.last_viewer[author] = now
         self._chat_times.append(now)
         burst = sum(1 for t in self._chat_times if now - t <= 30)
@@ -726,7 +733,13 @@ class MinecraftEngine:
         item = {"who": answer, "author": author, "text": heard, "at": now, "first": first_time}
         if wants_look(text):
             item["eyes"] = asyncio.ensure_future(self.eyes.look(answer, reason=text))
-        self.chat_queue.append(item)
+        waiting = next((c for c in self.chat_queue if c["author"] == author), None)
+        if waiting is not None:  # their earlier message is still waiting: one answer for both
+            waiting["text"] = (waiting["text"] + " / " + heard)[-600:]
+            if "eyes" in item and "eyes" not in waiting:
+                waiting["eyes"] = item["eyes"]
+        else:
+            self.chat_queue.append(item)
         self._kick_answers()
         for cid in targets:
             if cid == answer:
