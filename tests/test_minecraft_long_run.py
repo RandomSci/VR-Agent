@@ -728,3 +728,38 @@ def test_a_slow_safety_check_does_not_hold_the_answer(monkeypatch):
             task.cancel()
 
     asyncio.run(run())
+
+
+def test_effect_spells_and_a_beam_from_her_hand(monkeypatch):
+    from src.open_llm_vtuber.room import minecraft_spells as sp
+
+    assert sp.spells_asked("Mika throw an invisible spell on luna!") == ["effect:invisibility"]
+    assert sp.spells_asked("make Luna invisible") == ["effect:invisibility"]
+    assert sp.spells_asked("drink a potion of invisibility") == []  # a potion, not a spell
+
+    async def run():
+        eng = _engine()
+        eng._pos = {"mika": (0.0, 70.0, 0.0), "luna": (6.0, 70.0, 0.0)}
+        sent, applied = [], []
+
+        async def rcon(cmd, reply=False):
+            sent.append(cmd)
+            return ""
+
+        async def command(cid, text):
+            return True
+
+        async def apply(cid, name):
+            applied.append((cid, name))
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        eng._command, eng.fun.apply = command, apply
+        eng.spells._cast_at = 0.0
+        await eng.spells.cast("mika", ["effect:invisibility"], "luna", "fan")
+        assert applied == [("luna", "invisibility")]
+        beam = [c for c in sent if c.startswith("particle minecraft:end_rod")]
+        assert len(beam) >= 5  # a line of sparkles from her hand to Luna
+        first, last = (float(beam[0].split()[2]), float(beam[-1].split()[2]))
+        assert first < 2 and last > 5
+
+    asyncio.run(run())

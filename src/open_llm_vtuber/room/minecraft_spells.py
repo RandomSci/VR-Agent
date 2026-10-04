@@ -72,13 +72,20 @@ def spells_asked(text: str) -> list[str]:
             if m:
                 found.append((m.start(), name))
                 break
+    from .minecraft_fun import EFFECTS, effect_name
+
+    for m in re.finditer(r"[a-z_]+", low):  # "an invisible spell", "a speed spell", "glow spell"
+        name = effect_name(m.group(0))
+        covered = {"levitation": "levitate", "regeneration": "heal", "slowness": "freeze"}  # a real spell does it
+        if name in EFFECTS and not any(n in (f"effect:{name}", covered.get(name)) for _i, n in found):
+            found.append((m.start(), f"effect:{name}"))
     if not found:
         return []
     names = [n for _i, n in sorted(found)]
     magic = bool(SPELL_ASK.search(low)) or bool(re.search(r"\b(?:summon|conjure|spawn)\b", low)) or bool(
         re.search(r"\bmake (?:her|him|luna|mika|them|me|yourself|the (?:cow|pig|sheep|chicken|golem|horse|camel|rabbit|"
                   r"fox|wolf|cat|parrot|llama|goat|villager|mob|animal)) (?:giant|huge|tiny|small|big|bigger|smaller|"
-                  r"float|levitate)\b", low))
+                  r"float|levitate|invisible|glow|glowing|fast|faster|jump|slow|dizzy|strong)\b", low))
     if not magic:
         return []
     if not MIX_ASK.search(low):
@@ -183,8 +190,8 @@ class Spells:
             e._chose_at[caster] = time.time() + 8 - CHOICE_HOLD  # the build waits 8 s while she casts
             await e._command(caster, f"!gesture({x:.1f}, {y + 1:.1f}, {z:.1f}, 0)")
             await self.rcon(f"execute at {name} run playsound minecraft:entity.evoker.cast_spell player @a ~ ~ ~ 1 1")
-            await self.rcon(f"execute at {name} run particle minecraft:enchant ~ ~1.6 ~ 0.4 0.4 0.4 1 80 force")
-            await asyncio.sleep(0.6)
+            await self._beam(caster, (x, y + 1.0, z))
+            await asyncio.sleep(0.4)
             done = []
             for spell in spells[:3]:
                 try:
@@ -206,11 +213,45 @@ class Spells:
             logger.info(f"Minecraft: {name} cast {'+'.join(spells)} ({what})")
             return f"{what}{mixed}"
 
+    async def _beam(self, caster: str, to: tuple[float, float, float]) -> None:
+        """Sparkles from where her hand is (low right of her view) to the
+        target: in first person nobody sees her arm, so the magic itself
+        has to come out of the bottom right of the screen."""
+        import math
+
+        here = self.e._pos.get(caster)
+        if not here:
+            return
+        dx, dz = to[0] - here[0], to[2] - here[2]
+        length = math.hypot(dx, dz) or 1.0
+        fx, fz = dx / length, dz / length
+        rx, rz = -fz, fx  # her right hand
+        hand = (here[0] + fx * 0.9 + rx * 0.45, here[1] + 1.25, here[2] + fz * 0.9 + rz * 0.45)
+        steps = max(4, min(24, int(math.dist(hand, to) * 1.5)))
+        for i in range(steps + 1):
+            t = i / steps
+            px, py, pz = (hand[k] + (to[k] - hand[k]) * t for k in range(3))
+            await self.rcon(f"particle minecraft:end_rod {px:.2f} {py:.2f} {pz:.2f} 0.03 0.03 0.03 0.01 2 force")
+            if i % 3 == 0:
+                await self.rcon(f"particle minecraft:enchanted_hit {px:.2f} {py:.2f} {pz:.2f} 0.1 0.1 0.1 0.1 3 force")
+
     async def _one(self, spell: str, caster: str, sel: Optional[str], pos: tuple[float, float, float],
                    creature: str) -> str:
         e = self.e
         x, y, z = pos
         target_name = sel if sel and not sel.startswith("@") else ("the creature" if sel else "there")
+        if spell.startswith("effect:") and sel:
+            from .minecraft_fun import EFFECTS
+
+            name = spell.split(":", 1)[1]
+            seconds, level = EFFECTS.get(name, (15, 0))
+            girl = next((c for c, n in e.names.items() if n == sel), None)
+            if girl:  # a girl: like a potion (the effect timer shows on screen)
+                await e.fun.apply(girl, name)
+            else:
+                await self.rcon(f"effect give {sel} minecraft:{name} {seconds} {level}")
+            await self.rcon(f"particle minecraft:effect {x:.1f} {y + 1:.1f} {z:.1f} 0.5 1 0.5 0.1 80 force")
+            return f"{target_name} got {name.replace('_', ' ')} for {seconds} seconds"
         if spell == "lightning":
             await self.rcon(f"summon minecraft:lightning_bolt {x + 2:.1f} {y:.1f} {z + 1:.1f}")
             return f"lightning struck right next to {target_name}"
