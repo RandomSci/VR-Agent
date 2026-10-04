@@ -36,7 +36,7 @@ LAYER_Z = (-15, -6, 3)  # hidden 1, hidden 2, outputs (each neuron 2 x 2)
 CENTER_Y = 17
 SITE = (-33, 21)  # z range of the lab
 TRAIN_BATCHES = 3  # mini-batches per tick while training
-DEMO_EVERY = 900.0  # seconds between automatic demos once trained (viewers' "draw 7" any time)
+DEMO_EVERY = 0.0  # no automatic demos: only when a viewer types "draw 7" (it was too much talk)
 GOOD_ENOUGH = 0.95  # stop training after this test accuracy
 
 _net: Optional[DigitNet] = None
@@ -259,7 +259,7 @@ class NetShow:
                 )
         now = time.time()
         # during Training the girls draw digits themselves (minecraft_mode._teach_round)
-        if self.requests or (now - self._demo_at >= DEMO_EVERY and not self.training):
+        if self.requests or (DEMO_EVERY and now - self._demo_at >= DEMO_EVERY and not self.training):
             await self.demo()
         await self.push(self.stats())
 

@@ -288,11 +288,12 @@ def test_real_game_camera_follows_the_speaker(monkeypatch):
         assert {"kind": "camera", "mode": "client"} in eng.pushed
         eng._seen_at["luna"] = clock[0]
         await eng._camera_to("luna")
-        assert commands[-1] == "spectate Mika Selwyn"  # held, Mika only just got it
+        assert [c for c in commands if c.startswith("spectate")][-1] == "spectate Mika Selwyn"  # held
         clock[0] += mm.CAMERA_HOLD + 1
         eng._seen_at["luna"] = clock[0]
         await eng._camera_to("luna")
-        assert commands[-1] == "spectate Luna Selwyn" and {"kind": "focus", "who": "luna"} in eng.pushed
+        assert [c for c in commands if c.startswith("spectate")][-1] == "spectate Luna Selwyn"
+        assert {"kind": "focus", "who": "luna"} in eng.pushed
         online.discard("selwyn")
         await eng._camera_tick()
         assert not eng.camera_on and {"kind": "camera", "mode": "web"} in eng.pushed
@@ -576,7 +577,7 @@ def test_hand_blocks_and_sounds():
 
 def test_lay_blocks_command_is_patched_in():
     assert "name: '!layBlocks'" in mm.FLY_COMMANDS and "[VR] put " in mm.FLY_COMMANDS
-    assert "(v12)" in mm.FLY_COMMANDS
+    assert "(v13)" in mm.FLY_COMMANDS
 
 
 def test_both_girls_never_get_the_same_spot(monkeypatch):

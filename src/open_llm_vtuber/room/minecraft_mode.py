@@ -67,6 +67,7 @@ from loguru import logger
 
 from ..vr_agent.text_safety import strip_emoji
 from ..live.clip_marks import CLIPS
+from .minecraft_eyes import wants_look
 from .minecraft_freebuild import wants_build
 from .minecraft_fun import potion_ask, wants_race, wants_tnt
 from .minecraft_projects import MATERIALS, center, hand_blocks, hand_item, lay, place_sound
@@ -98,6 +99,7 @@ CREATIVE_BLOCKED = [
     "!smeltItem", "!clearFurnace", "!placeHere", "!attack", "!goToBed", "!stay", "!goToSurface",
     "!putInChest", "!takeFromChest", "!viewChest", "!discard", "!consume", "!equip", "!useOn",
     "!startConversation", "!endConversation",
+    "!testNetwork",  # only viewers ("draw 7"): the girls kept testing it and talking about it
 ]
 PIECE_SECONDS = (4.0, 20.0)  # creative: at least / at most this long per piece
 SIDE_GAP = 2.5  # each girl hovers this far to her own side of a shared spot (they are 5 apart)
@@ -110,6 +112,9 @@ VIEWERS_FILE = Path("data/minecraft_viewers.json")
 FIRST_SENTENCE = re.compile(r"^.{18,}?[.!?]+[\"')\]]*\s")
 SELF_BUILD_GAP = 1200.0  # a build of their own idea at most every 20 minutes (chat and the Kingdom first)
 GIRL_TEST_GAP = 600.0  # the girls test the network themselves at most every 10 minutes (viewers any time)
+EYES_WAIT = 10.0  # "what do you see?" waits at most this long for her to look
+LINK_LOST_RESTART = 120.0  # no contact with Mindcraft this long: it is started again
+FROZEN_SECONDS = 240.0  # a girl who should build has not moved this long: unstuck (twice as long: restart)
 ANSWER_HOLD = 5.0  # bot chatter waits at most this long for an answer being written
 CHAT_MAX_AGE = 120.0  # a comment not answered by then is skipped (busy chat moves on)
 NEW_VIEWER_HEAD_START = 15.0  # first-time viewers count as waiting this much longer (they used to always go first)
@@ -224,7 +229,8 @@ SYSTEM_FACTS = (
     "10 outputs) and it learns live, and viewers can type draw 7 to make it read a digit. "
     "You are in charge of what happens: !buildNext builds the next piece now, !flyToPlace(place) flies you to "
     "castle, network, farm, garden, base, sky or friend, !changeMaterial(block) changes what the rest of this part "
-    "is made of, !testNetwork(digit) tests your network. It is creative mode, so you have EVERY block and item: "
+    "is made of; viewers type draw 7 to make your network read a digit. It is creative mode, so you have EVERY "
+    "block and item: "
     "!getItem(item, count) gives you anything, !drinkPotion(effect) and !splashPotion(effect) (on your friend) for "
     "speed, levitation, glowing, invisibility, jump_boost and more, !brewPotion for a mystery experiment, "
     "!buildThis(what) to build OR DIG anything chat asks for (a tower, a hole, a tunnel, a name), by hand, right "
@@ -233,7 +239,9 @@ SYSTEM_FACTS = (
     "of your friend's eyes so the stream sees you. Say yes to EVERY viewer request and do it right away with the "
     "matching command: no refusing, no stalling, no 'are you sure', no 'that is too big'. Chat ALWAYS comes "
     "first: drop what you are doing for them. Between requests you build your Kingdom together and talk with "
-    "chat; mention the neural network only when someone asks about it."
+    "chat; mention the neural network only when someone asks about it. You can SEE: now and then you are told "
+    "what you see in front of you (creatures, your friend, builds); react to it, and never invent things you "
+    "were not told you see."
 )
 CAMERA_HOLD = 15.0  # "eyes": the camera stays on one girl at least this long
 # "director": your camera floats behind both girls, aimed at them and what they
@@ -241,6 +249,8 @@ CAMERA_HOLD = 15.0  # "eyes": the camera stays on one girl at least this long
 CAMERA_HZ = 20  # the camera stand moves this often; the game smooths moving entities
 CAMERA_EASE = 0.05  # share of the way to the new angle per step (about a second and a half)
 CAM_TAG = "vr_cam"
+CAMERA_GUARD_EVERY = 10.0  # seconds between checks that the camera is really with her
+CAMERA_APART = 6.0  # farther than this from her: the camera lost her
 LOOK_AT = re.compile(r"!flyTo\([^,]+,[^,]+,[^,]+,\s*(-?[\d.]+),\s*-?[\d.]+,\s*(-?[\d.]+)")
 SHOW_HOLD = 35.0  # after "show me ...", the builder leaves the camera girl alone this much longer
 PLACE_WORDS = {"neural network": "network", "network": "network", "castle": "castle", "farm": "farm",
@@ -580,6 +590,13 @@ class MinecraftEngine:
         self._trail: dict[str, tuple[float, float, float]] = {}  # an earlier position (movement direction)
         self._free_lock = asyncio.Lock()
         self._daylight_at = 0.0
+        self._cam_guard_at = 0.0
+        self._cam_apart_since = 0.0
+        self._still: dict[str, tuple[float, float, float, float]] = {}  # x, y, z, since (while building)
+        self._ordered_at: dict[str, float] = {}  # last flight/building order to each girl
+        self._link_lost_at = 0.0
+        self._lag_at = 0.0
+        self._slow = False
         self._self_build_at = 0.0
         self._viewer_builds = 0  # viewer builds waiting or running (they come before the girls' own ideas)
         self._girl_test_at = 0.0
@@ -597,6 +614,9 @@ class MinecraftEngine:
         from .minecraft_fun import FunShow
 
         self.fun = FunShow(self)  # items, potions, the sky race, stand in front
+        from .minecraft_eyes import Eyes
+
+        self.eyes = Eyes(self)  # what their characters really see (a picture of each view, in words)
 
     # ------------------------------------------------------------ public
     @property
@@ -672,7 +692,10 @@ class MinecraftEngine:
             streams = int((self.viewers.data.get(author) or {}).get("streams", 1))
             asyncio.create_task(self._push({"kind": "hello", "author": author, "streams": streams}))
         self._remember(f"viewer {author} wrote: {text[:90]}")
-        self.chat_queue.append({"who": answer, "author": author, "text": heard, "at": now, "first": first_time})
+        item = {"who": answer, "author": author, "text": heard, "at": now, "first": first_time}
+        if wants_look(text):
+            item["eyes"] = asyncio.ensure_future(self.eyes.look(answer, reason=text))
+        self.chat_queue.append(item)
         self._kick_answers()
         for cid in targets:
             if cid == answer:
@@ -689,6 +712,7 @@ class MinecraftEngine:
             task.cancel()
         # wait until they are really stopped, so nothing starts the game again
         await asyncio.gather(*tasks, return_exceptions=True)
+        await self.eyes.close()
         self.viewers.save()
         await asyncio.to_thread(stop_processes)
         self.view = {"active": False}
@@ -772,6 +796,7 @@ class MinecraftEngine:
                 asyncio.create_task(self._net_loop(), name="mc-net"),
                 asyncio.create_task(self._build_loop(), name="mc-build"),
                 asyncio.create_task(self._nudge_loop(), name="mc-nudge"),
+                asyncio.create_task(self.eyes.run(), name="mc-eyes"),
             ]
             self._tasks.append(asyncio.create_task(self._title_loop(), name="mc-title"))
             await self._wait_live()
@@ -1017,9 +1042,20 @@ class MinecraftEngine:
         since = time.time()
         while True:
             await asyncio.sleep(20)
-            if not self.link.connected.is_set() or not await port_open(self.port):
+            await self._server_health()
+            if not self.link.connected.is_set() and await port_open(self.port):
+                self._link_lost_at = self._link_lost_at or time.time()
+                if time.time() - self._link_lost_at > LINK_LOST_RESTART and "mindcraft" in self.procs:
+                    logger.warning("Minecraft: no contact with Mindcraft for 2 minutes, restarting it")
+                    await asyncio.to_thread(stop_one, "mindcraft", 10.0)
+                    self._link_lost_at = 0.0
                 since = time.time()
                 continue
+            self._link_lost_at = 0.0
+            if not await port_open(self.port):
+                since = time.time()
+                continue
+            await self._unfreeze()
             now = time.time()
             missing = [c for c in self.cast if now - max(self._seen_at.get(c, 0), since) > 120]
             if missing:
@@ -1048,6 +1084,9 @@ class MinecraftEngine:
     async def _heard(self, agent: str, message: str) -> None:
         cid = self.ids.get(agent.lower())
         if not cid:
+            return
+        if str(message).startswith("[VR] sees "):
+            await self.eyes.saw(cid, str(message)[len("[VR] sees "):])
             return
         if str(message).startswith("[VR] put ") or str(message).startswith("[VR] laid "):
             await self._hand_event(str(message)[5:].split())
@@ -1091,6 +1130,7 @@ class MinecraftEngine:
                 # operators are never kicked for spamming (fast building sends a lot)
                 asyncio.create_task(rcon_command(f"op {self.names[cid]}"))
             self._seen_at[cid] = time.time()
+            self.eyes.note_state(cid, state)
             if cid in self._pos:
                 old = self._trail.get(cid)
                 if old is None or ((old[0] - self._pos[cid][0]) ** 2 + (old[2] - self._pos[cid][2]) ** 2) ** 0.5 > 3:
@@ -1147,6 +1187,8 @@ class MinecraftEngine:
     # ------------------------------------------------------------ director
     async def _command(self, cid: str, command: str) -> bool:
         """A Mindcraft command that runs right away, without an AI call."""
+        if command.startswith(("!flyTo", "!layBlocks")):
+            self._ordered_at[cid] = time.time()  # she is being given work (the frozen check uses it)
         look = LOOK_AT.match(command)
         if look:  # where she will be looking: the camera stays behind that
             self._looking[cid] = (float(look.group(1)), float(look.group(2)), time.time())
@@ -1206,6 +1248,53 @@ class MinecraftEngine:
             for item, count in KIT:
                 await rcon_command(f"give {self.names[cid]} minecraft:{item} {count}")
         logger.info("Minecraft: both got a kit of materials for the new project part")
+
+    async def _unfreeze(self) -> None:
+        """A girl who should be building but has not moved for 4 minutes is
+        stuck (a hung action): stopped and given her work again; still stuck
+        after 4 more minutes, Mindcraft starts again."""
+        if not self.creative:
+            return
+        now = time.time()
+        for cid in self.cast:
+            pos = self._pos.get(cid)
+            busy = now - self._ordered_at.get(cid, 0) < 60  # the engine keeps giving her work
+            if not pos or now - self._seen_at.get(cid, 0) > 30 or not busy:
+                self._still.pop(cid, None)
+                continue
+            old = self._still.get(cid)
+            if old is None or ((pos[0] - old[0]) ** 2 + (pos[1] - old[1]) ** 2 + (pos[2] - old[2]) ** 2) ** 0.5 > 1.0:
+                self._still[cid] = (*pos, now)
+                continue
+            frozen = now - old[3]
+            if frozen > 2 * FROZEN_SECONDS:
+                logger.warning(f"Minecraft: {self.names[cid]} is still frozen after {frozen / 60:.0f} min, restarting Mindcraft")
+                self._still.clear()
+                await asyncio.to_thread(stop_one, "mindcraft", 10.0)
+                return
+            if frozen > FROZEN_SECONDS and int(frozen) // 20 == int(FROZEN_SECONDS) // 20:
+                logger.warning(f"Minecraft: {self.names[cid]} has not moved for {frozen / 60:.0f} min while building, unsticking her")
+                await self._command(cid, "!stop")
+
+    async def _server_health(self) -> None:
+        """Every minute: how fast the Minecraft server runs. Over 50 ms a tick
+        it cannot keep up (everything stutters, players rubber-band): it is
+        logged loudly and the building slows down until it recovers."""
+        if time.time() - self._lag_at < 60:
+            return
+        self._lag_at = time.time()
+        reply = await rcon_command("tick query", reply=True)
+        match = re.search(r"Average time per tick:\s*([\d.]+)", reply or "") if isinstance(reply, str) else None
+        if not match:
+            return
+        mspt = float(match.group(1))
+        slow = mspt > 50.0
+        if slow:
+            logger.warning(f"Minecraft server is overloaded: {mspt:.0f} ms per tick (should be under 50). "
+                           "Building slows down; give it more memory with VR_MINECRAFT_RAM=4G in .env")
+        elif self._slow:
+            logger.info(f"Minecraft server keeps up again ({mspt:.0f} ms per tick)")
+        self._slow = slow
 
     async def _escape(self, cid: str) -> None:
         """Same few blocks for a minute (a hole, a wall, a loop): out to the open, next to her friend."""
@@ -1315,7 +1404,35 @@ class MinecraftEngine:
             self._cam_sent_at = 0.0
         if time.time() - self._cam_sent_at >= CAMERA_REFRESH:
             await self._spectate()
+        await self._camera_guard()
 
+    async def _camera_guard(self) -> None:
+        """The stream sat on one frozen picture for 1.5 hours: the camera was no
+        longer with Mika. Every 10 s: is your player really where she is? If
+        not for 10 s, it is brought to her and attached again."""
+        now = time.time()
+        if now - self._cam_guard_at < CAMERA_GUARD_EVERY or self.cam_focus not in self.cast:
+            return
+        self._cam_guard_at = now
+        cam = _numbers(await rcon_command(f"data get entity {self.camera_player} Pos", reply=True))
+        her = _numbers(await rcon_command(f"data get entity {self.names[self.cam_focus]} Pos", reply=True))
+        if len(cam) < 3 or len(her) < 3:
+            return
+        apart = ((cam[0] - her[0]) ** 2 + (cam[1] - her[1]) ** 2 + (cam[2] - her[2]) ** 2) ** 0.5
+        if apart <= CAMERA_APART:
+            self._cam_apart_since = 0.0
+            return
+        self._cam_apart_since = self._cam_apart_since or now
+        if now - self._cam_apart_since < CAMERA_GUARD_EVERY:
+            return
+        self._cam_apart_since = 0.0
+        name = self.names[self.cam_focus]
+        logger.warning(f"Minecraft camera: {self.camera_player} was {apart:.0f} blocks away from {name}, "
+                       "bringing the camera back to her")
+        await rcon_command(f"gamemode spectator {self.camera_player}")
+        await rcon_command(f"tp {self.camera_player} {name}")
+        await asyncio.sleep(1.0)
+        await self._spectate()
     async def _spectate(self) -> None:
         self._cam_sent_at = time.time()
         await rcon_command(f"spectate {self.names[self.cam_focus]} {self.camera_player}")
@@ -2133,6 +2250,14 @@ class MinecraftEngine:
         if not said_any:
             yield self._fallback_reply("", author, more)
 
+    def _sight_line(self, cid: str) -> str:
+        mine = self.eyes.describe_for(cid)
+        theirs = self.eyes.describe_for(self._friend(cid))
+        out = f"What YOU see in the game right now: {mine} " if mine else ""
+        if theirs and self._friend(cid) != cid:
+            out += f"What {self.names[self._friend(cid)]} sees: {theirs} "
+        return out
+
     def _remember(self, text: str) -> None:
         """What just happened, shared by both girls (answers read it)."""
         text = " ".join(str(text).split())[:160]
@@ -2259,6 +2384,8 @@ class MinecraftEngine:
         half = (len(runs) + 1) // 2
         shares = [runs[:half], runs[half:]] if len(builders) > 1 and len(runs) > 1 else [runs]
         await asyncio.gather(*(self._lay_runs(c, share, step) for c, share in zip(builders, shares)))
+        if self._slow:
+            await asyncio.sleep(3.0)  # the server cannot keep up: give it a breath
         return len(runs)
 
     async def _kingdom_step(self) -> bool:
@@ -2442,6 +2569,12 @@ class MinecraftEngine:
                 return
             for c in batch:
                 self._answered.add(c["author"])
+            for c in batch:  # "what do you see?": the fresh picture first (a few seconds at most)
+                if c.get("eyes") is not None:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(c["eyes"]), timeout=EYES_WAIT)
+                    except Exception:
+                        pass
             first, rest = batch[0], batch[1:]
             line = ""
             try:
@@ -2482,6 +2615,7 @@ class MinecraftEngine:
         system = (
             f"You are {name}. {persona} You are live on YouTube playing {'creative' if self.creative else 'survival'} Minecraft with {friend}. "
             f"Right now you are: {doing}. Team project: {strip_emoji(view.get('title', ''))}, working on {view.get('step', '')}. "
+            f"{self._sight_line(cid)}"
             f"What just happened on stream (you and {friend} share this, never contradict it): "
             f"{self._memory_text() or 'the stream just started'}. {self.net_show.describe()} "
             f"{regulars} "
@@ -2776,7 +2910,7 @@ CAMERA_GLIDE = (
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v12)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v13)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -3160,6 +3294,42 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v12)
         perform: async function (agent) {
             (await import('../mindserver_proxy.js')).sendOutputToServer(agent.name, '[VR] blowUp');
             return 'You place the TNT. Wait for the boom.';
+        }
+    },
+    { // VR Agent: her eyes, from the game itself (the engine asks, no AI call)
+        name: '!senses',
+        description: 'Engine only: what is around you.',
+        perform: async function (agent) {
+            const bot = agent.bot;
+            const proxy = await import('../mindserver_proxy.js');
+            const me = bot.entity.position;
+            const out = {looking: '', near: [], players: []};
+            try {
+                const b = bot.blockAtCursor(48);
+                if (b) out.looking = b.name + ' ' + Math.round(b.position.distanceTo(me)) + ' blocks away';
+            } catch (e) { /* nothing in reach */ }
+            const skip = new Set(['item', 'experience_orb', 'armor_stand', 'marker', 'arrow', 'firework_rocket']);
+            for (const e of Object.values(bot.entities)) {
+                if (!e || e === bot.entity || !e.position) continue;
+                const d = e.position.distanceTo(me);
+                if (d > 32) continue;
+                const name = e.type === 'player' ? (e.username || 'a player') : (e.name || e.displayName || '');
+                if (!name || skip.has(name)) continue;
+                const dx = e.position.x - me.x;
+                const dz = e.position.z - me.z;
+                let a = Math.atan2(-dx, -dz) - bot.entity.yaw;
+                a = Math.atan2(Math.sin(a), Math.cos(a));
+                const where = Math.abs(a) < 0.6 ? 'in front' : (Math.abs(a) > 2.4 ? 'behind' : (a > 0 ? 'to the left' : 'to the right'));
+                (e.type === 'player' ? out.players : out.near).push({name: name, d: Math.round(d), where: where});
+            }
+            out.near.sort((p, q) => p.d - q.d);
+            out.near = out.near.slice(0, 8);
+            out.players.sort((p, q) => p.d - q.d);
+            const below = bot.blockAt(me.offset(0, -1, 0));
+            out.on = below ? below.name : 'air';
+            out.y = Math.round(me.y);
+            out.time = bot.time ? bot.time.timeOfDay : null;
+            proxy.sendOutputToServer(agent.name, '[VR] sees ' + JSON.stringify(out));
         }
     },
     { // VR Agent: back on the ground
