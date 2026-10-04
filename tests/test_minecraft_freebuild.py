@@ -365,7 +365,7 @@ def test_the_kingdom_is_built_lot_by_lot_and_chat_comes_first(monkeypatch):
         eng._free_waiting = 0
         assert await eng._kingdom_step()  # the whole first lot: the king's castle
         first = kd.lots()[0]
-        assert eng.projects.state["kingdom"] == {"lot": 1, "piece": 0}
+        assert {k: eng.projects.state["kingdom"][k] for k in ("lot", "piece")} == {"lot": 1, "piece": 0}
         assert len(sets) == len(set(sets)) == len(kd.lot_blocks(first)) and not placed  # all by hand
         assert first["title"] == "the king's castle" and "Kingdom" in eng._memory_text()
         assert any(op.get("title") == "🏰 The Kingdom" for op in eng.pushed)

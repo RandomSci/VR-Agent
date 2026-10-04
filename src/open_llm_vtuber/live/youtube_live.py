@@ -418,7 +418,8 @@ class YouTubeMessageBuffer:
         if self.UNSAFE_RE.search(normalized):
             return False, "unsafe"
         self._forget_old_texts()
-        if self.recent_normalized[normalized] >= REPEAT_LIMIT and not quiz_answer:
+        paid = getattr(message, "kind", "text") in ("paid", "member")  # "Welcome to X!" for each new member is not spam
+        if self.recent_normalized[normalized] >= REPEAT_LIMIT and not quiz_answer and not paid:
             return False, "repeated_spam"
 
         self.messages.append(message)

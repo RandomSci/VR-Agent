@@ -27,7 +27,7 @@
     "YT-LIVE-CHAT-PAID-MESSAGE-RENDERER": "paid",
     // Super Stickers and new members were never seen: they are thanked too.
     "YT-LIVE-CHAT-PAID-STICKER-RENDERER": "paid",
-    "YT-LIVE-CHAT-MEMBERSHIP-ITEM-RENDERER": "paid",
+    "YT-LIVE-CHAT-MEMBERSHIP-ITEM-RENDERER": "member",
   };
   const LIST_SELECTORS = [
     "yt-live-chat-item-list-renderer #items",

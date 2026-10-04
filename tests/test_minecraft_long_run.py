@@ -319,3 +319,34 @@ def test_eyes_do_not_announce_the_friend_or_the_camera(monkeypatch):
         assert "SelwynBuilds" not in eng.eyes.describe_for("mika")
 
     asyncio.run(run())
+
+
+def test_review_fixes():
+    # everyday chat is not a build
+    for text in ("make sure to subscribe", "put your hands up", "add me on discord", "make a wish", "place your bets"):
+        assert not asks.wants_build(text), text
+    # the stuck check needs whole words and the girls or the picture
+    assert not asks.says_stuck("the submit button is broken") and not asks.says_stuck("my game keeps lagging")
+    # an old kingdom keeps its lot order, a new one goes ring by ring
+    assert mm.MinecraftEngine._kingdom_lots({"order": "old"}) != mm.MinecraftEngine._kingdom_lots({})
+    assert mm.MinecraftEngine._kingdom_lots({"order": "old"})[0]["title"] == "the king's castle"
+
+
+def test_a_lopsided_viewer_build_stays_on_its_plot():
+    """Facing south a design's x is mirrored: the plot, its loading and its
+    clearing used the unmirrored range, so lopsided builds landed beside it."""
+    from src.open_llm_vtuber.room import minecraft_freebuild as fb
+
+    left, x1, x2 = 500, 0, 20
+    gx = left + x2 + 1  # as in _free_build_now
+    xs = [gx + fb.to_world((x, 0, 0), (0, 1))[0] for x in range(x1, x2 + 1)]
+    assert min(xs) == left + 1 and max(xs) == left + 1 + (x2 - x1)
+
+
+def test_a_member_is_welcomed_not_thanked_for_money():
+    async def run():
+        eng = _engine()
+        eng.enqueue("newfan", "Welcome to Selwyn Builds!", paid="a new membership")
+        assert "MEMBER" in eng.chat_queue[-1]["text"] and "SUPER CHAT" not in eng.chat_queue[-1]["text"]
+
+    asyncio.run(run())

@@ -59,12 +59,17 @@ def _ring_order(cells: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return sorted(cells, key=lambda c: (ring(c), math.atan2(c[1] + 0.5, c[0] + 0.5)))
 
 
-def lots(round_no: int = 0) -> list[dict[str, Any]]:
+def lots(round_no: int = 0, ring: bool = True) -> list[dict[str, Any]]:
     """Every lot of the kingdom, in building order (the middle first).
-    round_no > 0: the next kingdom, once one is complete."""
+    round_no > 0: the next kingdom, once one is complete. ring=False: the old
+    order, for a kingdom started before (its saved lot number means that order)."""
     rng = random.Random(SEED + round_no * 7919)
     half = GRID // 2
-    cells = _ring_order([(i, j) for i in range(-half, half) for j in range(-half, half)])
+    cells = [(i, j) for i in range(-half, half) for j in range(-half, half)]
+    if ring:
+        cells = _ring_order(cells)
+    else:
+        cells.sort(key=lambda c: ((c[0] + 0.5) ** 2 + (c[1] + 0.5) ** 2, c))
     cx, cz = CENTER[0] - round_no * ROUND_SHIFT, CENTER[1]
     names, weights = zip(*((k[0], k[2]) for k in KINDS))
     sizes = {k[0]: k[1] for k in KINDS}

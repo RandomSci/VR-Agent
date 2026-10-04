@@ -502,9 +502,12 @@ class WebSocketHandler:
         self.room_session.note_viewer_activity()
         usage.record_viewer_interaction()
         if getattr(engine, "accepts_paid", False):  # Super Chats first, members known
-            paid = str(getattr(message, "amount", "") or "") if getattr(message, "kind", "") == "paid" else ""
-            if getattr(message, "kind", "") == "paid" and not paid:
-                paid = "a new membership" if "member" in (message.text or "").lower() else "a Super Chat"
+            kind = getattr(message, "kind", "")
+            paid = str(getattr(message, "amount", "") or "") if kind == "paid" else ""
+            if kind == "paid" and not paid:
+                paid = "a Super Sticker"
+            if kind == "member":
+                paid = "a new membership"
             member = str(getattr(message, "author_type", "") or "") in ("member", "moderator", "owner")
             engine.enqueue(message.author_display_name, message.text or "", paid=paid, member=member)
             return

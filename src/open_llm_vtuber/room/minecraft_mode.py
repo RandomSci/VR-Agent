@@ -653,6 +653,7 @@ class MinecraftEngine:
         self._viewer_recent: dict[str, list[float]] = {}
         self._camera_moved_at = 0.0
         self._hung_since = 0.0
+        self._answered_since_start = False
         self._saved_at = time.time()
         self._ending = False
         self._answered_before: set[str] = set()
@@ -663,7 +664,8 @@ class MinecraftEngine:
         self._skipped_comments = 0
         self._build_keys: dict[str, float] = {}
         self._builder = asyncio.Lock()  # one piece (or one flight to a new site) at a time
-        self._sites_held: dict[str, str] = {}  # what is forceloaded for building: kingdom / free -> area
+        self._sites_held: dict[str, str] = {}
+        self._site_seq = 0  # each free build its own site name (two "Dragon" builds shared one)  # what is forceloaded for building: kingdom / free -> area
         self._waiting_by: dict[str, int] = {}
         self._unstuck_at = 0.0
         self._own_ideas: deque[str] = deque(maxlen=REPEAT_THEME)
@@ -767,8 +769,13 @@ class MinecraftEngine:
         heard = text  # what the girls get; the screen shows the comment as typed
         if paid:
             CLIPS.mark("superchat", f"Super Chat {paid} from {author}", 3.0)
-            heard = (f"(SUPER CHAT of {paid}! Thank {author} by name, loudly and warmly, say the amount, then "
-                     f"answer.) {text}")
+            if paid.startswith("a new membership"):
+                heard = f"({author} just became a MEMBER of the channel! Welcome them loudly and warmly by name.) {text}"
+            elif paid.startswith("a "):
+                heard = f"({author} sent a {paid[2:]}! Thank them by name, loudly and warmly, then answer.) {text}"
+            else:
+                heard = (f"(SUPER CHAT of {paid}! Thank {author} by name, loudly and warmly, say the amount, then "
+                         f"answer.) {text}")
         if digit and self.net_show.request(int(digit), author):
             heard += f" (The neural network will read a {digit} on the board in a moment.)"
         acted = False  # the engine already does what was asked: her bot must not do it a second time
@@ -826,6 +833,8 @@ class MinecraftEngine:
         named = any(re.search(rf"\b{re.escape(n)}\b", text, re.I) for n in names)
         item = {"who": answer, "author": author, "text": heard, "at": now, "first": first_time,
                 "paid": paid, "member": member, "acted": acted, "raw": text, "named": named}
+        check = _soon(MODERATOR.flagged(text))  # started now: done before her turn to answer
+        item["checks"] = [check] if check is not None else []
         if wants_look(text):
             item["eyes"] = asyncio.ensure_future(self.eyes.look(answer, reason=text))
         # a follow-up that names nobody goes with their waiting comment; one
@@ -837,6 +846,7 @@ class MinecraftEngine:
             waiting["raw"] = (waiting.get("raw", "") + " / " + text)[-600:]
             waiting["acted"] = waiting.get("acted") or acted
             waiting["paid"] = waiting.get("paid") or paid
+            waiting.setdefault("checks", []).extend(item["checks"])
             if "eyes" in item and "eyes" not in waiting:
                 waiting["eyes"] = item["eyes"]
         else:
@@ -950,7 +960,10 @@ class MinecraftEngine:
             ]
             self._tasks.append(asyncio.create_task(self._title_loop(), name="mc-title"))
             await self._wait_live()
-            await self._intro()
+            try:
+                await self._intro()
+            except Exception as exc:  # a failed hello must not end the show
+                logger.warning(f"Minecraft: the intro failed: {exc!r}")
             await asyncio.gather(*self._tasks)
         except asyncio.CancelledError:
             raise
@@ -1051,6 +1064,8 @@ class MinecraftEngine:
 
     async def _launch_server(self) -> Any:
         LOG_DIR.mkdir(exist_ok=True)
+        self._answered_since_start = False
+        self._hung_since = 0.0
         set_difficulty(self.difficulty)
         enable_rcon()
         _set_properties({
@@ -1308,17 +1323,21 @@ class MinecraftEngine:
             return  # "ok": her bot's answer to an order the engine already carried out
         recent_viewers = list(self.last_viewer)[-12:]
         to_viewer = any(re.search(rf"\b{re.escape(v)}\b", text, re.I) for v in recent_viewers if len(v) >= 3)
-        if to_viewer and time.time() - self._answered_out_loud.get(cid, 0) < SAID_IT_ALREADY:
-            # She just answered this viewer out loud; her bot saying it again
-            # in chat was the second answer to every comment.
-            await self._push({"kind": "line", "who": cid, "text": text, "to": to})
-            return
-        await self._push({"kind": "line", "who": cid, "text": text, "to": to})
+        # The safety check runs on its own: awaited here it held up every bot
+        # event behind it (block placements, positions) whenever it was slow.
+        _soon(self._show_line(cid, text, to, to_viewer, time.time()))
+
+    async def _show_line(self, cid: str, text: str, to: str, to_viewer: bool, at: float) -> None:
         if await MODERATOR.flagged(text):
             logger.warning(f"Minecraft: a line from {self.names[cid]} was not spoken (unsafe)")
             return
+        await self._push({"kind": "line", "who": cid, "text": text, "to": to})
+        if to_viewer and time.time() - self._answered_out_loud.get(cid, 0) < SAID_IT_ALREADY:
+            # She just answered this viewer out loud; her bot saying it again
+            # in chat was the second answer to every comment (shown, not spoken).
+            return
         # A reply to a viewer jumps the queue; the oldest chatter is dropped.
-        line = {"who": cid, "text": text, "at": time.time()}
+        line = {"who": cid, "text": text, "at": at}
         if to_viewer:
             self.lines.appendleft(line)
         else:
@@ -1514,14 +1533,18 @@ class MinecraftEngine:
         if not match:
             # The port is open but the server does not answer: hung, or out of
             # memory. It used to stay like that for the rest of the stream.
-            if await port_open(self.port):
+            # (Only once it has answered since it started: a wrong RCON
+            # password would otherwise restart it every 3 minutes.)
+            if self._answered_since_start and await port_open(self.port):
                 self._hung_since = self._hung_since or time.time()
                 if time.time() - self._hung_since > SERVER_HUNG_RESTART:
                     logger.error("Minecraft server has not answered for 3 minutes (hung or out of memory): restarting it")
                     self._hung_since = 0.0
+                    self._answered_since_start = False
                     await asyncio.to_thread(stop_one, "server", 30.0)
             return
         self._hung_since = 0.0
+        self._answered_since_start = True
         if time.time() - self._saved_at > WORLD_SAVE_EVERY:
             self._saved_at = time.time()
             await rcon_command("save-all", reply=True)  # a crash in hour 15 loses at most 30 minutes
@@ -2615,31 +2638,34 @@ class MinecraftEngine:
             self._build_keys[key] = now
         if viewer:
             self._viewer_builds += 1
-        _soon(self._free_build(request, who, viewer))
+        _soon(self._free_build(request, who, viewer, key))
         if place:
             return (f" (It is number {place + 1} in line: you build it by hand right after "
                     f"{'the current build' if place == 1 else str(place) + ' other builds'}. No command needed.)")
         return " (You two are building it right now, by hand, block by block: no command needed. Never say it is done before it is.)"
 
-    async def _free_build(self, request: str, who: str, viewer: bool = False) -> None:
+    async def _free_build(self, request: str, who: str, viewer: bool = False, key: str = "") -> None:
         from . import minecraft_freebuild as fb
 
+        started = False
         try:
             async with self._free_lock:
                 self._free_waiting -= 1
                 self._waiting_by[who] = max(0, self._waiting_by.get(who, 1) - 1)
                 self._free_busy = True
-                await self._free_build_now(fb, request, who, viewer)
+                started = await self._free_build_now(fb, request, who, viewer)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.warning(f"Minecraft: free build failed: {exc}")
         finally:
             self._free_busy = False
+            if not started and key:
+                self._build_keys.pop(key, None)  # not built: the same request can be asked again
             if viewer:
                 self._viewer_builds = max(0, self._viewer_builds - 1)
 
-    async def _free_build_now(self, fb: Any, request: str, who: str, viewer: bool = False) -> None:
+    async def _free_build_now(self, fb: Any, request: str, who: str, viewer: bool = False) -> bool:
         base = self.projects.state.get("base")
         for _ in range(90):  # a girl rejoining (a Mindcraft restart): the build waits for her, it is not dropped
             here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 15 and c in self._pos]
@@ -2648,14 +2674,14 @@ class MinecraftEngine:
             await asyncio.sleep(1.0)
         if not base or not here or not await self.projects.ensure_loaded():
             logger.warning(f"Minecraft: the build for {who} could not start (no girl in the world)")
-            return
+            return False
         if await MODERATOR.flagged(request):
             logger.warning(f"Minecraft: a build request from {who} was not built (unsafe)")
             for c in here[:1]:
                 await self.link.emit("send-message", self.names[c], {"from": "system", "message": (
                     f"{who}'s build request was not okay for the stream. Do not repeat it: roast them for trying, "
                     "in one short line, and move on.")})
-            return
+            return False
         key = (os.environ.get("OPENAI_API_KEY") or "").strip()
         if key and self._llm is None:
             from openai import AsyncOpenAI
@@ -2666,56 +2692,66 @@ class MinecraftEngine:
             for c in here:
                 await self.link.emit("send-message", self.names[c], {"from": "system", "message": (
                     f"The build {who} asked for could not be planned right now. Say so honestly and ask for something simpler.")})
-            return
+            return False
         # Its own plot, outside the area of the big projects (the last one was
         # built inside the network wall, where nobody could see it).
         forward = (0, 1)
         spots = dict(fb.blocks_of(plan))
         x1, x2, z1, z2, top = fb.footprint_of(spots)
         left, front_z = self._plot_spot(x2 - x1 + 2, z2 - z1 + 2)
-        px, pz = left - x1 + 1, front_z + 1  # the build's own x=0 / front line on this plot
+        # Built facing south, a design's x is mirrored in the world (world x =
+        # origin - x): the plot, its loading and its clearing use that range.
+        px, pz = left + x2 + 1, front_z + 1  # the build's own x=0 / front line on this plot
         gx, gz = int(base[0]) + px, int(base[2]) + pz
-        await self._hold_site(f"free-{plan['title']}", gx + x1, gz, gx + x2, gz + (z2 - z1))
-        ground = await ground_height(gx, gz + (z2 - z1) // 2, int(base[1]))
-        origin = (gx, ground, gz - min(z1, 0))  # the whole build behind the plot's front line (a dragon's snout)
-        await self._level_plot(origin, (x1, x2, z1, z2, top), digs=any(b == "air" for b in spots.values()))
-        steps = fb.pieces(plan, origin, tuple(base), forward)
-        title = plan["title"]
-        # both fly to the plot first, a little in front of it and above (after
-        # the piece being built now is done: one builder at a time)
-        front = (px, ground - base[1] + 6, pz - 8)
-        middle = (px, ground - base[1] + 2, pz + (z2 - z1) // 2)
-        async with self._builder:
-            free = [c for c in here if time.time() - self._chose_at.get(c, 0) > CHOICE_HOLD]
-            flights = await asyncio.gather(*(self._fly(c, front, middle) for c in free))
-            await asyncio.gather(*(self._arrive(c, front, middle, t) for c, t in zip(free, flights)))
-        total = sum(len(lay(c)) for st in steps for c in st["commands"]) or 1
-        logger.info(f"Minecraft: building '{title}' for {who} by hand ({len(steps)} pieces)")
-        self._now_building = f"{title} for {who}"
-        self._remember(f"{' and '.join(self.names[c] for c in here)} started building {title} for {who}")
-        await self._push({"kind": "project", "title": f"🔨 {title}", "step": f"for {who}", "progress": 0.0, "steps": []})
-        await self._tell_one(
-            f"You and your friend are building {title} for {who} right now, by hand, block by block. "
-            "Talk about it while you build; it is NOT finished until you are told.")
-        await self._lay_build(steps, here, title, who, total, viewer)
+        self._site_seq += 1
+        site = f"free-{self._site_seq}"
+        paused = started = False
+        try:  # its ground is let go however the build ends (a failure kept chunks loaded for hours)
+            await self._hold_site(site, gx - x2, gz, gx - x1, gz + (z2 - z1))
+            ground = await ground_height(gx, gz + (z2 - z1) // 2, int(base[1]))
+            origin = (gx, ground, gz - min(z1, 0))  # the whole build behind the plot's front line (a dragon's snout)
+            await self._level_plot(origin, (-x2, -x1, z1, z2, top), digs=any(b == "air" for b in spots.values()))
+            steps = fb.pieces(plan, origin, tuple(base), forward)
+            title = plan["title"]
+            # both fly to the plot first, a little in front of it and above (after
+            # the piece being built now is done: one builder at a time)
+            front = (px, ground - base[1] + 6, pz - 8)
+            middle = (px, ground - base[1] + 2, pz + (z2 - z1) // 2)
+            async with self._builder:
+                free = [c for c in here if time.time() - self._chose_at.get(c, 0) > CHOICE_HOLD]
+                flights = await asyncio.gather(*(self._fly(c, front, middle) for c in free))
+                await asyncio.gather(*(self._arrive(c, front, middle, t) for c, t in zip(free, flights)))
+            total = sum(len(lay(c)) for st in steps for c in st["commands"]) or 1
+            logger.info(f"Minecraft: building '{title}' for {who} by hand ({len(steps)} pieces)")
+            self._now_building = f"{title} for {who}"
+            self._remember(f"{' and '.join(self.names[c] for c in here)} started building {title} for {who}")
+            await self._push({"kind": "project", "title": f"🔨 {title}", "step": f"for {who}", "progress": 0.0, "steps": []})
+            await self._tell_one(
+                f"You and your friend are building {title} for {who} right now, by hand, block by block. "
+                "Talk about it while you build; it is NOT finished until you are told.")
+            started = True
+            paused = await self._lay_build(steps, here, title, who, total, viewer, site=site)
+        finally:
+            if not paused:
+                await self._release_site(site)
+        return started
 
     async def _lay_build(self, steps: list, here: list[str], title: str, who: str, total: int, viewer: bool,
-                         done: int = 0) -> None:
+                         done: int = 0, site: str = "") -> bool:
         """A free build's pieces, by hand. Their own idea pauses when chat asks
         for a build, and is picked up again right after (it used to stay
-        half built for good)."""
+        half built for good). True when it paused (its site stays loaded)."""
         for i, step in enumerate(steps):
             if not viewer and self._viewer_builds:
                 logger.info(f"Minecraft: '{title}' (their own idea) paused: a viewer build comes first")
                 self._remember(f"they paused {title} because chat asked for something")
                 await self._push({"kind": "project", **self.projects.view()})
                 self._free_waiting += 1
-                _soon(self._resume_build(steps[i:], here, title, who, total, done))
-                return
+                _soon(self._resume_build(steps[i:], here, title, who, total, done, site))
+                return True
             done += await self._lay_step(step, here)
             await self._push({"kind": "project", "title": f"🔨 {title}", "step": f"for {who}",
                               "progress": round(done / total, 3), "steps": []})
-        await self._release_site(f"free-{title}")
         self._now_building = ""  # back to the Kingdom (it says so when it starts again)
         await self._push({"kind": "project_done", "title": title, "step": title})
         self._remember(f"{title} for {who} is finished")
@@ -2723,8 +2759,11 @@ class MinecraftEngine:
         self._exclaim(random.choice(here), "done")
         await self._tell_one(f"{title} for {who} is finished! Show it off to {who} in one line.")
         await self._push({"kind": "project", **self.projects.view()})
+        return False
 
-    async def _resume_build(self, steps: list, here: list[str], title: str, who: str, total: int, done: int) -> None:
+    async def _resume_build(self, steps: list, here: list[str], title: str, who: str, total: int, done: int,
+                            site: str = "") -> None:
+        paused = False
         try:
             async with self._free_lock:  # after the viewer builds that were waiting (the lock is first come, first served)
                 self._free_waiting -= 1
@@ -2732,13 +2771,15 @@ class MinecraftEngine:
                 here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 15 and c in self._pos] or here
                 logger.info(f"Minecraft: back to '{title}' (their own idea)")
                 self._remember(f"they went back to building {title}")
-                await self._lay_build(steps, here, title, who, total, False, done)
+                paused = await self._lay_build(steps, here, title, who, total, False, done, site=site)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.warning(f"Minecraft: resuming a build failed: {exc}")
         finally:
             self._free_busy = False
+            if not paused and site:
+                await self._release_site(site)
 
     async def _keep_daylight(self) -> None:
         """Always day and clear (a dark night stream is hard to watch), set
@@ -2790,13 +2831,15 @@ class MinecraftEngine:
         from . import minecraft_kingdom as kd
 
         state = self.projects.state.setdefault("kingdom", {"lot": 0, "piece": 0})
+        if "order" not in state:  # a kingdom begun with the old lot order keeps it (its lot number means that order)
+            state["order"] = "ring" if int(state.get("lot", 0)) == 0 else "old"
         if self._kingdom is None:
-            self._kingdom = kd.lots(int(state.get("round", 0)))
+            self._kingdom = self._kingdom_lots(state)
         if int(state.get("lot", 0)) >= len(self._kingdom):
             # Kingdom done: the next one, further out (the stream never runs out of building)
-            state.update({"round": int(state.get("round", 0)) + 1, "lot": 0, "piece": 0})
+            state.update({"round": int(state.get("round", 0)) + 1, "lot": 0, "piece": 0, "order": "ring"})
             state.pop("ground", None)
-            self._kingdom = kd.lots(int(state["round"]))
+            self._kingdom = self._kingdom_lots(state)
             self.projects._save()
             logger.info(f"Minecraft: the Kingdom is complete! Kingdom {int(state['round']) + 1} starts")
             CLIPS.mark("built", "the whole Kingdom is complete", 4.0)
@@ -2812,7 +2855,7 @@ class MinecraftEngine:
         spots = kd.lot_blocks(lot)
         x1, x2, z1, z2, top = fb.footprint_of(spots)
         dz = -min(z1, 0)
-        box = (lot["x"] + x1, lot["z"] + z1 + dz, lot["x"] + x2, lot["z"] + z2 + dz)  # base relative
+        box = (lot["x"] - x2, lot["z"] + z1 + dz, lot["x"] - x1, lot["z"] + z2 + dz)  # base relative (x mirrored: facing south)
         if int(state.get("piece", 0)) == 0 and self._taken(*box, pad=1):
             # its ground is taken (the base's projects, a viewer build): this lot stays empty
             logger.info(f"Minecraft: Kingdom lot {int(state['lot']) + 1} skipped (that ground is already built on)")
@@ -2823,7 +2866,7 @@ class MinecraftEngine:
         await self._hold_site("kingdom", base[0] + box[0], base[2] + box[1], base[0] + box[2], base[2] + box[3])
         if int(state.get("piece", 0)) == 0 or "ground" not in state:
             state["ground"] = await ground_height(gx, gz + (z2 - z1) // 2, int(base[1]))
-            await self._level_plot((gx, state["ground"], gz - min(z1, 0)), (x1, x2, z1, z2, top), digs=False)
+            await self._level_plot((gx, state["ground"], gz - min(z1, 0)), (-x2, -x1, z1, z2, top), digs=False)
             self.projects._save()
         ground = int(state["ground"])
         origin = (gx, ground, gz - min(z1, 0))
@@ -2904,11 +2947,15 @@ class MinecraftEngine:
         if self._taken(rx - r, rz - r, rx + r, rz + r, pad=0):
             return True
         if self._kingdom is None:
-            from . import minecraft_kingdom as kd
-
-            self._kingdom = kd.lots(int((self.projects.state.get("kingdom") or {}).get("round", 0)))
+            self._kingdom = self._kingdom_lots(self.projects.state.get("kingdom") or {})
         built = int((self.projects.state.get("kingdom") or {}).get("lot", 0)) + 1  # the one in progress too
         return any(abs(lot["x"] - rx) < 32 + r and abs(lot["z"] - rz) < 32 + r for lot in self._kingdom[:built])
+
+    @staticmethod
+    def _kingdom_lots(state: dict[str, Any]) -> list[dict[str, Any]]:
+        from . import minecraft_kingdom as kd
+
+        return kd.lots(int(state.get("round", 0)), ring=state.get("order", "ring") != "old")
 
     def _plot_spot(self, width: int, depth: int) -> tuple[int, int]:
         """Where the next viewer build goes (base relative, its left and
@@ -3098,7 +3145,7 @@ class MinecraftEngine:
         first = fresh[0]
         if not first.get("named") and len(self.cast) > 1:
             # Nobody was named: whoever is free answers (a burst used to all go to one girl).
-            first["who"] = self._quietest(list(self.cast))
+            first["who"] = self._quietest(self._present())
         who = first["who"]
         batch = [first] + [c for c in fresh[1:] if c["who"] == who or not c.get("named")][:ANSWER_BATCH - 1]
         for c in batch:
@@ -3120,7 +3167,16 @@ class MinecraftEngine:
             batch = self._next_batch()
             if not batch:
                 return
-            flags = await asyncio.gather(*(MODERATOR.flagged(c.get("raw") or c["text"]) for c in batch))
+            async def unsafe(c: dict[str, Any]) -> bool:
+                checks = c.get("checks") or []
+                if checks:  # started when the comment came in
+                    try:
+                        return any(await asyncio.gather(*checks))
+                    except Exception:
+                        return False
+                return await MODERATOR.flagged(c.get("raw") or c["text"])
+
+            flags = await asyncio.gather(*(unsafe(c) for c in batch))
             for c, bad in zip(batch, flags):
                 if bad:
                     logger.info(f"Minecraft: a comment from {c['author'][:3]}... was not answered (unsafe)")

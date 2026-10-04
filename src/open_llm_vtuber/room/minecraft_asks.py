@@ -29,23 +29,35 @@ def _asked(text: str, action: str) -> bool:
 
 
 BUILD_VERB = (
-    r"build|built|construct|create|make|craft|add|dig|place|put up|put|design|"
-    r"how about (?:building |making )?(?:a|an|the|some|two|three)\b|"
-    r"i want (?:a|an|to see (?:a|an))\b|we want (?:a|an)\b"
+    r"build|construct|create|make|craft|add|dig|place|put up|put|design|"
+    r"how about (?:building |making )?(?:a|an|the|some|two|three)\b"
+)
+# what follows "make/put/place/add" in everyday chat, not a build: "make sure
+# to subscribe", "put your hands up", "add me on discord", "make a wish"
+NOT_A_BUILD = re.compile(
+    r"(?:it|its|it'?s|that|this|those|these|sure|your|ur|yours|me|us|him|her|them|my day|my|our|"
+    r"some noise|noise|a wish|wishes|a shoutout|shoutouts?|bets?|a bet|money|friends?|sense|fun|time|way|room|"
+    r"love|peace|progress|a mistake|mistakes?|a comment|comments?|a video|videos?|content|a deal|plans?|"
+    r"out|up|in|on|down|off|over|a joke|jokes|a point|points|history|an effort|efforts?|a choice|"
+    r"a difference|the most|the best|it count|do)\b",
+    re.I,
 )
 
 
 def wants_build(text: str) -> bool:
     """'Mika build a dragon', 'can you make two towers?', 'create a pumpkin',
     'dig a hole', 'how about a pirate ship' (not 'first place!', 'I dig it',
-    'how did you build that')."""
+    'how did you build that', 'make sure to subscribe', 'put your hands up')."""
     text = text or ""
-    if not _asked(text, rf"(?:{BUILD_VERB})\b"):
-        return False
-    # "place"/"put"/"dig"/"make" alone are common words: they need something after them
     match = re.search(LEAD + rf"(?:{BUILD_VERB})\b\s*(.*)", text, re.I)
-    rest = (match.group(1) if match else "").strip(" !.?,")
-    return len(rest) >= 3 and not re.fullmatch(r"(?:it|that|this|me|us|them|him|her|sure|ok)\W*", rest, re.I)
+    if not match:
+        return False
+    rest = match.group(1).strip(" !.?,")
+    verb = re.search(rf"(?:{BUILD_VERB})\b", text[match.start():], re.I)
+    loose = bool(verb) and verb.group(0).lower() in ("make", "put", "place", "add", "craft", "design", "create")
+    if len(rest) < 3 or (loose and NOT_A_BUILD.match(rest)):
+        return False
+    return not re.fullmatch(r"(?:it|that|this|me|us|them|him|her|sure|ok)\W*", rest, re.I)
 
 
 def wants_tnt(text: str) -> bool:
@@ -92,9 +104,11 @@ def says_stuck(text: str) -> bool:
     text = (text or "").strip()
     bad = (r"stuck|frozen|freez\w*|glitch\w*|bugg?ed|bugging|lagg?ing|laggy|not moving|can'?t move|shaking|"
            r"jitter\w*|teleporting back|spinning|broken")
-    subject = (r"(?:you|u|ya|you'?re|ur|youre|she|she'?s|shes|mika|luna|they|they'?re|theyre|both|"
-               r"the camera|camera|cam|the stream|stream|the screen|screen|the view|view|the game|game|it|it'?s|its|"
-               r"her|the girls|girls)")
+    # whole words only ("it" was found inside "submit"), and only about the
+    # girls or the picture ("my game keeps lagging" is the viewer's own game)
+    subject = (r"\b(?:you|u|ya|you'?re|ur|youre|she|she'?s|shes|mika|luna|they|they'?re|theyre|both|"
+               r"the camera|camera|cam|the stream|stream|the screen|screen|the view|view|it'?s|its|"
+               r"her|the girls|girls)\b")
     if re.search(subject + r"\s+(?:are|is|r|'re|'s|look|looks|seem|seems|got|get|getting|keep|keeps|still|so|"
                  r"really|kinda|totally|completely|literally)?\s*(?:\w+\s+){0,2}?(?:" + bad + r")\b", text, re.I):
         clause = re.search(subject + r"\s+(.{0,30}?)(?:" + bad + r")", text, re.I)
