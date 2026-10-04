@@ -3422,6 +3422,31 @@ ECHO_QUIET = """                const quiet = source === '""" + DIRECTOR + """';
                     this.routeResponse(source, execute_res);"""
 
 
+# A message that reaches a bot before she has spawned (she is just joining
+# or rejoining) failed with "respondFunc is not a function" and was lost:
+# 286 times in one stream. Now it waits for her (up to 20 s).
+SEND_ORIGINAL = """            try {
+                this.agent.respondFunc(data.from, data.message);
+            } catch (error) {"""
+SEND_WAITS = """            try { // VR Agent: wait for her to spawn instead of losing the message
+                if (typeof this.agent.respondFunc !== 'function') {
+                    let waited = 0;
+                    const later = setInterval(() => {
+                        waited += 500;
+                        if (typeof this.agent.respondFunc === 'function') {
+                            clearInterval(later);
+                            this.agent.respondFunc(data.from, data.message);
+                        } else if (waited >= 20000) {
+                            clearInterval(later);
+                            console.log('Not spawned yet, message dropped: ' + String(data.message).slice(0, 60));
+                        }
+                    }, 500);
+                    return;
+                }
+                this.agent.respondFunc(data.from, data.message);
+            } catch (error) {"""
+
+
 def patch_mindcraft() -> list[str]:
     """Small, repeatable edits to Mindcraft's packages (safe to run every start).
 
@@ -3453,6 +3478,7 @@ def patch_mindcraft() -> list[str]:
         ),
         (MINDCRAFT_DIR / "src/agent/commands/actions.js", FLY_ANCHOR, FLY_COMMANDS + FLY_ANCHOR),
         (MINDCRAFT_DIR / "src/agent/agent.js", ECHO_ORIGINAL, ECHO_QUIET),
+        (MINDCRAFT_DIR / "src/agent/mindserver_proxy.js", SEND_ORIGINAL, SEND_WAITS),
     ]
     for path, old, new in edits:
         try:

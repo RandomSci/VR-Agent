@@ -84,9 +84,13 @@ def main() -> None:
     # 1) our own log: the terminal output, kept in logs/debug_<date>*.log
     received: dict[str, list[str]] = {}
     waits: list[tuple[str, str, float]] = []
+    covered: list[str] = []
     for path in sorted(LOGS.glob(f"debug_{day}*.log")):
+        first = last = ""
         for line in _open(path):
             m = re.match(r"(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)", line)
+            if m:
+                first, last = first or m.group(2), m.group(2)
             if not m or not _in_window(m.group(2), start, end):
                 continue
             clock = m.group(2)
@@ -109,6 +113,9 @@ def main() -> None:
                 if re.search(pattern, message):
                     events.append((clock, label, message[:180]))
                     break
+
+        if first:
+            covered.append(f"{path.name}: {first} to {last}")
 
     # 2) the Minecraft server
     server_files = [LOGS / "minecraft-server.log"] + sorted(SERVER_LOGS.glob(f"{day}-*.log.gz")) + [SERVER_LOGS / "latest.log"]
@@ -150,6 +157,10 @@ def main() -> None:
             if re.search(r"error|Error|disconnect|kicked|ECONNRESET|timed out|crash", line):
                 mind_errors.append(line.strip()[:180])
 
+    if covered:
+        print("Our logs (a run each; pick your window inside one):")
+        for line in covered:
+            print("  " + line)
     events.sort()
     seen = set()
     print(f"=== Timeline {day} {start or '00:00'}-{end or '23:59'} ===")

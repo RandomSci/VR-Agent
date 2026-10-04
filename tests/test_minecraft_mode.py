@@ -947,3 +947,16 @@ def test_movement_check_is_switched_off(monkeypatch):
 def test_flight_stops_fighting_the_server():
     js = mm.FLY_COMMANDS
     assert "forcedMove" in js and "[VR] pulledBack" in js and "removeListener('forcedMove'" in js
+
+
+def test_messages_wait_for_a_bot_that_is_still_joining(tmp_path, monkeypatch):
+    """'respondFunc is not a function': a command sent while she was still
+    joining was lost. The patch makes it wait for her."""
+    proxy = tmp_path / "src/agent/mindserver_proxy.js"
+    proxy.parent.mkdir(parents=True)
+    proxy.write_text("before\n" + mm.SEND_ORIGINAL + "\nafter\n")
+    monkeypatch.setattr(mm, "MINDCRAFT_DIR", tmp_path)
+    assert "mindserver_proxy.js" in mm.patch_mindcraft()
+    text = proxy.read_text()
+    assert "typeof this.agent.respondFunc !== 'function'" in text
+    assert mm.patch_mindcraft() == []  # once only
