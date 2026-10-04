@@ -1012,7 +1012,8 @@ def test_own_build_ideas_do_not_repeat():
     assert eng._fresh_idea("a floating garden") == "a floating garden"
     second = eng._fresh_idea("a mystical floating garden oasis")
     assert "garden" not in second and "floating" not in second
-    assert eng._fresh_idea("a wizard tower") in ("a wizard tower",) or "tower" not in second
+    third = eng._fresh_idea("a lighthouse")  # something new is kept as it is, unless it repeats the swap
+    assert third == "a lighthouse" or "lighthouse" in second
 
 
 def test_a_frozen_castle_is_a_build_not_a_glitch():

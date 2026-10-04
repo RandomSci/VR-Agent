@@ -7,6 +7,7 @@ import pytest
 from src.open_llm_vtuber.room import minecraft_freebuild as fb
 from src.open_llm_vtuber.room import minecraft_fun as fun
 from src.open_llm_vtuber.room import minecraft_mode as mm
+from src.open_llm_vtuber.room import minecraft_projects as mp
 
 from .test_minecraft_mode import _live_engine
 
@@ -135,11 +136,14 @@ def test_a_viewer_build_is_laid_by_hand_in_front_of_the_camera(monkeypatch):
         assert not placed  # nothing just appeared
         assert len(sets) == len(set(sets)) == expected  # every block once, each on a swing
         assert {c for c, _t in lays} == {"mika", "luna"}  # both build
-        # on its own plot in the viewer build area (east of the Kingdom), on the ground (y 64 up)
+        # on a Kingdom lot of its own next to where they work (never on the base projects), on the ground
         base = eng.projects.state["base"]
-        xs = [int(c.split()[1]) for c in sets]
+        xs = [int(c.split()[1]) - base[0] for c in sets]
+        zs = [int(c.split()[3]) - base[2] for c in sets]
         ys = [int(c.split()[2]) for c in sets]
-        assert min(xs) >= base[0] + mm.PLOT_AREA_X and min(ys) >= 64
+        assert eng.projects.state["kingdom"]["claimed"] and min(ys) >= 64
+        p1, q1, p2, q2 = mp.LOADED
+        assert max(xs) < p1 or min(xs) > p2 or max(zs) < q1 or min(zs) > q2
         assert any(c.startswith("fill ") and c.endswith("minecraft:air") for c in rcon)  # the plot was cleared first
         assert any(c.startswith("forceload add") for c in rcon)  # its ground was loaded before it was measured
         assert any(c.startswith("forceload remove") for c in rcon)  # and let go when it was done

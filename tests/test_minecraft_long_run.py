@@ -487,3 +487,22 @@ def test_can_i_see_the_network_and_visit_it():
             task.cancel()
 
     asyncio.run(run())
+
+
+def test_viewer_builds_go_on_kingdom_lots_close_by():
+    """The far plot area (420 blocks away, never loaded) showed black holes on
+    stream. A viewer build now takes the next free Kingdom lot(s)."""
+    from src.open_llm_vtuber.room import minecraft_kingdom as kd
+
+    eng = _engine()
+    eng.projects.state.update({"base": [0, 64, 0], "kingdom": {"lot": 0, "piece": 4}})
+    lots = kd.lots()
+    small = eng._claim_lots(20, 30)
+    big = eng._claim_lots(70, 70)
+    for x, z in (small, big):
+        near = min(abs(lot["x"] - x) + abs(lot["z"] - z) for lot in lots[:30])
+        assert near < 100  # among the first lots, next to where they work
+    claimed = {tuple(c) for c in eng.projects.state["kingdom"]["claimed"]}
+    assert len(claimed) == 1 + 4  # one lot, then a 2 x 2 block
+    # the Kingdom skips them
+    assert any(eng._lot_cell(lot) in claimed for lot in lots[1:30])

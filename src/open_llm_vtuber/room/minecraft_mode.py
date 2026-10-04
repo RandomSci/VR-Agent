@@ -667,7 +667,8 @@ class MinecraftEngine:
         self._answered_before: set[str] = set()
         self._girl_potion_at = 0.0
         self._net_shown: Any = None
-        self._topic: dict[str, tuple] = {}  # what each viewer last talked about ("let's visit it")
+        self._topic: dict[str, tuple] = {}
+        self._kingdom_panel: dict[str, Any] = {}  # what each viewer last talked about ("let's visit it")
         self._building: Optional[dict[str, Any]] = None  # the free build going on: its pieces and the next one
         self._bots_started = False  # the first Mindcraft start greets; a restart does not
         self._now_building = ""  # what they really build right now (the prompts used to say "free building")
@@ -1457,7 +1458,7 @@ class MinecraftEngine:
                 {self.names[c]: self._pos[c] for c in hud if c in self._pos},
                 {self.names[c]: counts_of.get(c, {}) for c in hud},
             )
-            self.view["project"] = self.projects.view()
+            self.view["project"] = self._panel()
         except Exception as exc:
             logger.debug(f"Minecraft project update failed: {exc}")
         self._state_at = time.time()
@@ -2777,7 +2778,7 @@ class MinecraftEngine:
         forward = (0, 1)
         spots = dict(fb.blocks_of(plan))
         x1, x2, z1, z2, top = fb.footprint_of(spots)
-        left, front_z = self._plot_spot(x2 - x1 + 2, z2 - z1 + 2)
+        left, front_z = self._claim_lots(x2 - x1 + 2, z2 - z1 + 2)
         # Built facing south, a design's x is mirrored in the world (world x =
         # origin - x): the plot, its loading and its clearing use that range.
         px, pz = left + x2 + 1, front_z + 1  # the build's own x=0 / front line on this plot
@@ -2840,7 +2841,7 @@ class MinecraftEngine:
             if not viewer and self._viewer_builds:
                 logger.info(f"Minecraft: '{title}' (their own idea) paused: a viewer build comes first")
                 self._remember(f"they paused {title} because chat asked for something")
-                await self._push({"kind": "project", **self.projects.view()})
+                await self._push(self._panel())
                 self._free_waiting += 1
                 self._building = None
                 _soon(self._resume_build(steps[i:], here, title, who, total, done, site, frame, record))
@@ -2860,7 +2861,7 @@ class MinecraftEngine:
         CLIPS.mark("built", f"{title} for {who} finished", 3.0)
         self._exclaim(random.choice(here), "done")
         await self._tell_one(f"{title} for {who} is finished! Show it off to {who} in one line.")
-        await self._push({"kind": "project", **self.projects.view()})
+        await self._push(self._panel())
         return False
 
     async def _resume_build(self, steps: list, here: list[str], title: str, who: str, total: int, done: int,
@@ -2959,7 +2960,9 @@ class MinecraftEngine:
         x1, x2, z1, z2, top = fb.footprint_of(spots)
         dz = -min(z1, 0)
         box = (lot["x"] - x2, lot["z"] + z1 + dz, lot["x"] - x1, lot["z"] + z2 + dz)  # base relative (x mirrored: facing south)
-        if int(state.get("piece", 0)) == 0 and self._taken(*box, pad=1):
+        cell = self._lot_cell(lot)
+        if int(state.get("piece", 0)) == 0 and (self._taken(*box, pad=1) or
+                                                 cell in {tuple(c) for c in state.get("claimed", [])}):
             # its ground is taken (the base's projects, a viewer build): this lot stays empty
             logger.info(f"Minecraft: Kingdom lot {int(state['lot']) + 1} skipped (that ground is already built on)")
             state.update({"lot": int(state["lot"]) + 1, "piece": 0})
@@ -3000,8 +3003,9 @@ class MinecraftEngine:
             await self._lay_step(steps[i], here)
             state["piece"] = i + 1
             self.projects._save()
-            await self._push({**panel, "step": f"{lot['title']} · lot {n + 1} of {total}",
-                              "progress": round((n + (i + 1) / len(steps)) / total, 4)})
+            self._kingdom_panel = {**panel, "step": f"{lot['title']} · lot {n + 1} of {total}",
+                                   "progress": round((n + (i + 1) / len(steps)) / total, 4)}
+            await self._push(self._kingdom_panel)
         state.update({"lot": n + 1, "piece": 0})
         state.pop("ground", None)
         state.pop("main", None)
@@ -3059,6 +3063,47 @@ class MinecraftEngine:
         from . import minecraft_kingdom as kd
 
         return kd.lots(int(state.get("round", 0)), ring=state.get("order", "ring") != "old")
+
+    def _lot_cell(self, lot: dict[str, Any]) -> tuple[int, int]:
+        from . import minecraft_kingdom as kd
+
+        lots = self._kingdom or [lot]
+        cx, cz = min(x["x"] for x in lots), min(x["z"] for x in lots)  # the grid's corner
+        return round((lot["x"] - cx) / kd.LOT), round((lot["z"] - cz) / kd.LOT)
+
+    def _claim_lots(self, width: int, depth: int) -> tuple[int, int]:
+        """Where a viewer build goes: on Kingdom lots not built yet, right
+        after the one in progress (close by: the far plot area 420 blocks
+        away was never loaded and the stream showed black holes). Big builds
+        take 2 x 2 or 3 x 3 lots. Those lots are skipped by the Kingdom (the
+        build becomes part of it). Returns its left and front edge, base relative."""
+        from . import minecraft_kingdom as kd
+
+        state = self.projects.state.setdefault("kingdom", {"lot": 0, "piece": 0})
+        if self._kingdom is None:
+            self._kingdom = self._kingdom_lots(state)
+        lots = self._kingdom
+        cx, cz = min(lot["x"] for lot in lots), min(lot["z"] for lot in lots)  # the grid's corner
+        cell = {self._lot_cell(lot): n for n, lot in enumerate(lots)}
+        claimed = {tuple(c) for c in state.setdefault("claimed", [])}
+        current = int(state.get("lot", 0))
+        span = 1 if max(width, depth) <= kd.LOT - 4 else (2 if max(width, depth) <= 2 * kd.LOT - 4 else 3)
+        if max(width, depth) <= span * kd.LOT - 4:
+            for n in range(current + 1, len(lots)):
+                i0, j0 = round((lots[n]["x"] - cx) / kd.LOT), round((lots[n]["z"] - cz) / kd.LOT)
+                block = [(i0 + a, j0 + b) for a in range(span) for b in range(span)]
+                if not all(c in cell and cell[c] > current and c not in claimed for c in block):
+                    continue
+                x1 = cx + i0 * kd.LOT - kd.LOT // 2 + 2
+                z1 = cz + j0 * kd.LOT - kd.LOT // 2 + 2
+                size = span * kd.LOT - 4
+                if self._taken(x1, z1, x1 + size, z1 + size, pad=0):
+                    continue
+                state["claimed"] = sorted(claimed | set(block))
+                self._take(x1, z1, x1 + size, z1 + size)
+                # centred on its lots
+                return x1 + (size - width) // 2, z1 + (size - depth) // 2
+        return self._plot_spot(width, depth)  # (never in practice: the Kingdom has 256 lots)
 
     def _plot_spot(self, width: int, depth: int) -> tuple[int, int]:
         """Where the next viewer build goes (base relative, its left and
@@ -3184,6 +3229,13 @@ class MinecraftEngine:
     def _topic_fresh(self, now: float) -> set[str]:
         """Viewers whose topic was set by this very comment's action (not overwritten by a mention)."""
         return {a for a, t in self._topic.items() if now - t[2] < 0.001}
+
+    def _panel(self) -> dict[str, Any]:
+        """The build panel on stream: the Kingdom while they build it (it used
+        to say "Free building, chat decides" whenever a viewer build ended)."""
+        if self.projects.current() is None and self._kingdom_panel and self._building is None:
+            return dict(self._kingdom_panel)
+        return {"kind": "project", **self.projects.view()}
 
     def _finished_builds(self) -> list[dict]:
         return [b for b in self.projects.state.get("builds", []) if b.get("done") and b.get("frame")]
