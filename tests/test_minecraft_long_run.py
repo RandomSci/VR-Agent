@@ -389,3 +389,70 @@ def test_the_network_panel_only_shows_after_a_viewer_digit():
         assert not any("draw 7" in h for h in mm.HINTS)
 
     asyncio.run(run())
+
+
+def test_she_can_go_back_to_an_old_build():
+    """'Mika can you look over the first tower you built?' - she said she was
+    flying over and never moved."""
+    async def run():
+        eng = _engine()
+        eng.creative = True
+        eng.projects.state.update({"base": [0, 64, 0], "builds": [
+            {"title": "Finance Tower", "who": "FRCFinance", "frame": [[10, 20, -30], [10, 5, 5]], "done": True},
+            {"title": "Faster Mika", "who": "FRCFinance", "frame": [[50, 20, -30], [50, 5, 5]], "done": True}]})
+        shown = []
+
+        async def show(build, who):
+            shown.append(build["title"])
+
+        eng._show_build = show
+        eng.enqueue("FRCFinance", "Mika can you look over the first tower you built? We are sharing the vision "
+                                  "and I want to see it!")
+        await asyncio.sleep(0)
+        assert shown == ["Finance Tower"] and "flying back to Finance Tower" in eng.chat_queue[-1]["text"]
+
+    asyncio.run(run())
+
+
+def test_no_stage_directions_are_read_out_loud():
+    assert mm.clean_reply("Here I go! *flies over dramatically* Wheee") == "Here I go! Wheee"
+
+
+def test_a_girls_material_pick_changes_the_build_going_on():
+    async def run():
+        eng = _engine()
+        steps = [{"commands": ["fill {x0} {y0} {z0} {x3} {y0} {z0} minecraft:stone_bricks"]} for _ in range(3)]
+        eng._building = {"steps": steps, "next": 0, "title": "Finance Tower", "who": "FRCFinance"}
+        await eng._heard("Luna", "[VR] changeMaterial gold_block")
+        assert all("gold_block" in st["commands"][0] for st in steps)
+        assert "Finance Tower" in eng.link.sent[-1][1]["message"]
+
+    asyncio.run(run())
+
+
+def test_the_camera_girl_builds_from_further_back():
+    async def run():
+        eng = _engine()
+        eng.projects.state.update({"base": [0, 64, 0]})
+        flights = {}
+
+        async def fly(cid, view, focus):
+            flights.setdefault(cid, view)
+            return 0.0
+
+        async def arrive(*a):
+            return None
+
+        async def hop(cid, hover, look, last):
+            return 0.0
+
+        async def lay(cid, run, hover=None, look=None):
+            return True
+
+        eng._fly, eng._arrive, eng._hop, eng._lay_by_hand = fly, arrive, hop, lay
+        step = {"focus": (0, 0, 0), "view": (0, 0, -10), "commands": ["setblock {x0} {y0} {z0} minecraft:stone"]}
+        await eng._lay_runs("mika", ["setblock {x0} {y0} {z0} minecraft:stone"] * 2, step)
+        await eng._lay_runs("luna", ["setblock {x0} {y0} {z0} minecraft:stone"] * 2, step)
+        assert flights["mika"][2] < flights["luna"][2]  # Mika (the stream) further back
+
+    asyncio.run(run())

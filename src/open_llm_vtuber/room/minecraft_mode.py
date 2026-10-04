@@ -78,7 +78,7 @@ from ..vr_agent.text_safety import strip_emoji
 from ..live.clip_marks import CLIPS
 from .minecraft_eyes import wants_look
 from .minecraft_asks import (digit_asked, friend_asked, further_asked, restyle_asked, says_stuck, show_asked,
-                             tour_asked)
+                             tour_asked, which_build)
 from .minecraft_freebuild import wants_build
 from .minecraft_safety import MODERATOR, locally_bad
 from .minecraft_fun import potion_ask, wants_race, wants_tnt
@@ -295,6 +295,11 @@ CAM_TAG = "vr_cam"
 CAMERA_GUARD_EVERY = 10.0  # seconds between checks that the camera is really with her
 CAMERA_APART = 6.0  # farther than this from her: the camera lost her
 LOOK_AT = re.compile(r"!flyTo\([^,]+,[^,]+,[^,]+,\s*(-?[\d.]+),\s*-?[\d.]+,\s*(-?[\d.]+)")
+CAMERA_HOVER_BACK = 6.0  # the camera girl builds this far back (the others 3)
+CAMERA_HOVER_UP = 3.0
+PEEK_EVERY = 6  # every this many pieces she backs off and shows the whole build
+PEEK_SECONDS = 4.0
+ADMIRE_SECONDS = 7.0  # a finished build: she looks at all of it this long
 SHOW_HOLD = 35.0  # after "show me ...", the builder leaves the camera girl alone this much longer
 PLACE_WORDS = {"neural network": "network", "network": "network", "castle": "castle", "farm": "farm",
                "garden": "garden", "base": "base", "sky": "sky", "kingdom": "kingdom"}
@@ -817,6 +822,15 @@ class MinecraftEngine:
             elif self.creative and wants_tnt(text):
                 _soon(self.fun.tnt(targets[0]))
                 heard += " (You are placing TNT right now, by hand: no command needed. It only goes off away from your builds.)"
+                acted = True
+            elif self.creative and self._finished_builds() and which_build(
+                    text, self._finished_builds(), author) >= 0:
+                b = self._finished_builds()[which_build(text, self._finished_builds(), author)]
+                if now - self._camera_moved_at > CAMERA_MOVE_GAP:
+                    self._camera_moved_at = now
+                    _soon(self._show_build(b, author))
+                heard += (f" (You are flying back to {b['title']} (built for {b.get('who', 'chat')}) right now to show "
+                          "it from the front: describe it. No command needed.)")
                 acted = True
             elif self.creative and tour_asked(text):
                 if now - self._camera_moved_at > CAMERA_MOVE_GAP:
@@ -1989,6 +2003,9 @@ class MinecraftEngine:
         dx, dz = vx - fx, vz - fz
         length = (dx * dx + dz * dz) ** 0.5 or 1.0
         dx, dz = dx / length, dz / length
+        # her eyes are the stream: she works from further back and a bit
+        # higher, so viewers see what is being built, not three blocks of wall
+        back, up = (CAMERA_HOVER_BACK, CAMERA_HOVER_UP) if cid == self._camera_girl() else (3.0, 1.5)
         if (len(runs) == 1 and lay(runs[0]) == runs and step["commands"] == runs
                 and hand_blocks(self.projects.absolute(runs[0])) is None):
             # one big move (clearing the site, a huge lawn): she watches it from the piece's spot
@@ -1996,13 +2013,13 @@ class MinecraftEngine:
             return await self.projects.place_one(runs[0])
         # first a proper flight to the piece, then short hops along it
         first = center(runs[0])
-        start = (first[0] + dx * 3, first[1] + 1.5, first[2] + dz * 3)
+        start = (first[0] + dx * back, first[1] + up, first[2] + dz * back)
         if not await self._back_to_work(cid, start, first):  # a race or "show me" first: then here
             await self._arrive(cid, start, first, await self._fly(cid, start, first))
         last: Optional[tuple] = start
         for run in runs:
             cx, cy, cz = center(run)
-            hover = (cx + dx * 3, cy + 1.5, cz + dz * 3)
+            hover = (cx + dx * back, cy + up, cz + dz * back)
             if await self._back_to_work(cid, hover, (cx, cy, cz)):
                 last = hover  # she flew back from what a viewer asked: right at this run
             else:
@@ -2260,6 +2277,13 @@ class MinecraftEngine:
                     "Pick materials again for the next project.")})
                 return
             block = arg.replace("minecraft:", "")
+            if self._building is not None:  # the free build going on (it used to change the Kingdom instead)
+                if block in MATERIALS or block.endswith(("_block", "_concrete", "_planks", "_bricks")):
+                    note = self._restyle([block], [], name)
+                else:
+                    note = f"{block} is not a building block. Pick one of: {', '.join(sorted(MATERIALS))}."
+                await self.link.emit("send-message", name, {"from": "system", "message": note})
+                return
             kingdom = self.projects.state.get("kingdom")
             if self.projects.current() is None and kingdom is not None:
                 if block in MATERIALS:
@@ -2740,6 +2764,17 @@ class MinecraftEngine:
             await self._level_plot(origin, (-x2, -x1, z1, z2, top), digs=any(b == "air" for b in spots.values()))
             steps = fb.pieces(plan, origin, tuple(base), forward)
             title = plan["title"]
+            # where a person would stand to show it off: in front, a bit up, all of it in view
+            width, depth = x2 - x1 + 1, z2 - z1 + 1
+            reach = max(width, depth, top) * 0.9 + 10
+            mid_x = px - (x1 + x2) / 2
+            frame = ((mid_x, ground - base[1] + top * 0.6 + reach * 0.3, pz - reach),
+                     (mid_x, ground - base[1] + top / 2, pz + depth / 2))
+            record = {"title": title, "who": who, "frame": [list(frame[0]), list(frame[1])], "done": False}
+            builds = self.projects.state.setdefault("builds", [])
+            builds.append(record)
+            del builds[:-200]
+            self.projects._save()
             # both fly to the plot first, a little in front of it and above (after
             # the piece being built now is done: one builder at a time)
             front = (px, ground - base[1] + 6, pz - 8)
@@ -2757,32 +2792,41 @@ class MinecraftEngine:
                 f"You and your friend are building {title} for {who} right now, by hand, block by block. "
                 "Talk about it while you build; it is NOT finished until you are told.")
             started = True
-            paused = await self._lay_build(steps, here, title, who, total, viewer, site=site)
+            paused = await self._lay_build(steps, here, title, who, total, viewer, site=site, frame=frame,
+                                           record=record)
         finally:
             if not paused:
                 await self._release_site(site)
         return started
 
     async def _lay_build(self, steps: list, here: list[str], title: str, who: str, total: int, viewer: bool,
-                         done: int = 0, site: str = "") -> bool:
+                         done: int = 0, site: str = "", frame: Optional[tuple] = None,
+                         record: Optional[dict] = None) -> bool:
         """A free build's pieces, by hand. Their own idea pauses when chat asks
         for a build, and is picked up again right after (it used to stay
         half built for good). True when it paused (its site stays loaded)."""
         for i, step in enumerate(steps):
             self._building = {"steps": steps, "next": i, "title": title, "who": who}
+            if frame and i and i % PEEK_EVERY == 0:
+                self._peek(frame, PEEK_SECONDS)  # she steps back and shows how far it is (Luna builds on)
             if not viewer and self._viewer_builds:
                 logger.info(f"Minecraft: '{title}' (their own idea) paused: a viewer build comes first")
                 self._remember(f"they paused {title} because chat asked for something")
                 await self._push({"kind": "project", **self.projects.view()})
                 self._free_waiting += 1
                 self._building = None
-                _soon(self._resume_build(steps[i:], here, title, who, total, done, site))
+                _soon(self._resume_build(steps[i:], here, title, who, total, done, site, frame, record))
                 return True
             done += await self._lay_step(step, here)
             await self._push({"kind": "project", "title": f"🔨 {title}", "step": f"for {who}",
                               "progress": round(done / total, 3), "steps": []})
         self._now_building = ""  # back to the Kingdom (it says so when it starts again)
         self._building = None
+        if record is not None:
+            record["done"] = True
+            self.projects._save()
+        if frame:  # like a player: back off and look at the whole thing before moving on
+            await self._admire(frame, ADMIRE_SECONDS)
         await self._push({"kind": "project_done", "title": title, "step": title})
         self._remember(f"{title} for {who} is finished")
         CLIPS.mark("built", f"{title} for {who} finished", 3.0)
@@ -2792,7 +2836,7 @@ class MinecraftEngine:
         return False
 
     async def _resume_build(self, steps: list, here: list[str], title: str, who: str, total: int, done: int,
-                            site: str = "") -> None:
+                            site: str = "", frame: Optional[tuple] = None, record: Optional[dict] = None) -> None:
         paused = False
         try:
             async with self._free_lock:  # after the viewer builds that were waiting (the lock is first come, first served)
@@ -2801,7 +2845,8 @@ class MinecraftEngine:
                 here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 15 and c in self._pos] or here
                 logger.info(f"Minecraft: back to '{title}' (their own idea)")
                 self._remember(f"they went back to building {title}")
-                paused = await self._lay_build(steps, here, title, who, total, False, done, site=site)
+                paused = await self._lay_build(steps, here, title, who, total, False, done, site=site,
+                                               frame=frame, record=record)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -3103,6 +3148,32 @@ class MinecraftEngine:
         self._remember(f"{who} asked for {what} on {title}: the rest of it is built that way")
         logger.info(f"Minecraft: {who} restyled '{title}': {what}")
         return f"The rest of {title} is now built with {what}, as {who} asked: point it out as it goes up."
+
+    def _finished_builds(self) -> list[dict]:
+        return [b for b in self.projects.state.get("builds", []) if b.get("done") and b.get("frame")]
+
+    def _peek(self, frame: tuple, seconds: float) -> None:
+        """Now and then during a build: the camera girl backs off for a few
+        seconds so the stream sees the whole thing growing."""
+        cid = self._camera_girl()
+        if time.time() - self._chose_at.get(cid, 0) < CHOICE_HOLD:
+            return  # busy with what chat asked
+        self._chose_at[cid] = time.time() + seconds + 8 - CHOICE_HOLD  # the build lets her go that long
+        _soon(self._admire(frame, seconds))
+
+    async def _admire(self, frame: tuple, seconds: float) -> None:
+        cid = self._camera_girl()
+        view, focus = tuple(frame[0]), tuple(frame[1])
+        await self._arrive(cid, view, focus, await self._fly(cid, view, focus))
+        await asyncio.sleep(seconds)
+
+    async def _show_build(self, build: dict, who: str) -> None:
+        """'Look over the first tower you built': she flies back to it and shows it from the front."""
+        cid = self._camera_girl()
+        self._chose_at[cid] = time.time() + SHOW_HOLD
+        logger.info(f"Minecraft: {who} wants to see {build['title']} again: {self.names[cid]} flies back to it")
+        self._remember(f"{self.names[cid]} flew back to show {build['title']} because {who} asked")
+        await self._admire(build["frame"], 6.0)
 
     async def _tour(self, who: str) -> None:
         """'Fly around your whole world': the camera girl flies high over
@@ -3409,7 +3480,9 @@ class MinecraftEngine:
             "and move on. "
             "Only say things that are true about the game and the stream; when you do not know, joke about it "
             "instead of making something up. "
-            "Plain spoken words only: no emojis, no emoticons, no symbols, no hashtags, no commands, no quotes."
+            "Plain spoken words only: no emojis, no emoticons, no symbols, no hashtags, no commands, no quotes, "
+            "no actions in asterisks. Only say you are flying somewhere or changing something when the note in "
+            "brackets says it is happening; otherwise say what you would love to do."
         )
         return system, user
 
@@ -3595,7 +3668,8 @@ def _numbers(reply: Any) -> list[float]:
 
 
 def clean_reply(text: str) -> str:
-    return strip_emoji(COMMAND_RE.sub(" ", text or "")).strip().strip('"').strip()
+    text = re.sub(r"\*[^*]{0,80}\*|\*", " ", text or "")  # "*flies over dramatically*" was read out loud
+    return " ".join(strip_emoji(COMMAND_RE.sub(" ", text)).split()).strip('"').strip()
 
 
 class ViewerMemory:

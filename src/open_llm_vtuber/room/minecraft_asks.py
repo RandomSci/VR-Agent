@@ -180,3 +180,41 @@ def friend_asked(text: str, friend: str) -> bool:
     return bool(re.search(rf"\b(?:where(?:'?s| is| are you)\s+{f}|(?:come|go|fly) (?:to|back to|over to|near) "
                           rf"(?:{f}|her)|find {f}|visit {f}|stand (?:next to|with|near) (?:{f}|her)|look at {f})\b",
                           text or "", re.I))
+
+
+_REVISIT_VERB = (r"(?:look (?:at|over|back at)|show (?:me|us)|go (?:back )?to|fly (?:back )?to|see|visit|check(?: out)?|"
+                 r"take (?:me|us) to|i (?:want|wanna) (?:to )?see|let'?s see|can (?:we|i) see|back to)")
+_WHICH = re.compile(r"\b(first|last|previous|other|old|older|earlier|you built|we built|they built|my|mine|"
+                    r"for me)\b", re.I)
+
+
+def revisit_asked(text: str) -> bool:
+    """'look over the first tower you built', 'show me my castle again'."""
+    return bool(re.search(_REVISIT_VERB, text or "", re.I))
+
+
+def which_build(text: str, builds: list[dict], author: str = "") -> int:
+    """Which finished build a viewer means (-1: none). 'first' -> the first,
+    'last/previous/that' -> the latest, 'my' -> theirs, a title word -> that one."""
+    low = (text or "").lower()
+    if not builds or not revisit_asked(low):
+        return -1
+    words = set(re.findall(r"[a-z]{4,}", low)) - {"look", "show", "over", "back", "first", "last", "built", "build",
+                                                   "want", "wanna", "check", "visit", "again", "please", "that", "this",
+                                                   "with", "your", "mika", "luna", "they", "there", "where"}
+    best, score = -1, 0
+    for i, b in enumerate(builds):
+        title = set(re.findall(r"[a-z]{4,}", str(b.get("title", "")).lower()))
+        overlap = len(words & title)
+        if overlap > score or (overlap and overlap == score):  # ties: the newer one
+            best, score = i, overlap
+    which = _WHICH.search(low)
+    if which:
+        kind = which.group(1)
+        pool = [i for i in range(len(builds)) if best < 0 or score == 0 or
+                set(re.findall(r"[a-z]{4,}", str(builds[i].get("title", "")).lower())) & words] or list(range(len(builds)))
+        if kind in ("my", "mine", "for me") and author:
+            mine = [i for i in pool if str(builds[i].get("who", "")).lower() == author.lower()]
+            pool = mine or pool
+        return pool[0] if kind == "first" else pool[-1]
+    return best
