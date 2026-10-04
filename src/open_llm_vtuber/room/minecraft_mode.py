@@ -108,8 +108,11 @@ VIEWERS_FILE = Path("data/minecraft_viewers.json")
 # The first spoken piece: a full sentence of at least a few words (so a lone
 # "Argh!" is not followed by a pause), cut where the sentence ends.
 FIRST_SENTENCE = re.compile(r"^.{18,}?[.!?]+[\"')\]]*\s")
+SELF_BUILD_GAP = 1200.0  # a build of their own idea at most every 20 minutes (chat and the Kingdom first)
+GIRL_TEST_GAP = 600.0  # the girls test the network themselves at most every 10 minutes (viewers any time)
 ANSWER_HOLD = 5.0  # bot chatter waits at most this long for an answer being written
-CHAT_MAX_AGE = 40.0  # a comment not answered by then is skipped (busy chat moves on)
+CHAT_MAX_AGE = 120.0  # a comment not answered by then is skipped (busy chat moves on)
+NEW_VIEWER_HEAD_START = 15.0  # first-time viewers count as waiting this much longer (they used to always go first)
 ANSWER_BATCH = 3  # one spoken answer covers up to this many viewers
 BOT_BATCH = 4  # one message to a bot carries up to this many comments
 EXCLAIM_GAP = 20.0
@@ -122,7 +125,7 @@ ARRIVE_TELEPORT = 12.0  # farther than this from her spot after the flight: tele
 HAND_WAIT = 8.0  # seconds (plus 0.9 per block) for a run laid by hand before the rest just appears
 PART_DISTANCE = 4.5  # overlapping anyway: the other girl flies this far aside
 CHOICE_HOLD = 25.0  # after a girl flies somewhere herself, the builder leaves her alone this long
-NUDGE_SECONDS = 45.0  # creative: one girl is asked what she wants to do next this often
+NUDGE_SECONDS = 120.0  # creative: one girl is asked what she wants to do next this often
 # Places a girl can fly to herself (!flyToPlace): where she hovers and what she looks at, base relative.
 PLACES = {
     "castle": ((0, 22, -26), (0, 8, 0)),
@@ -135,6 +138,7 @@ PLACES = {
 # What viewers can do, shown one at a time under the network panel: people
 # stay when they know they can change what happens.
 HINTS = (
+    'Type "show me the castle" (or network, kingdom) and Mika flies there',
     'Type "race" and Mika and Luna race through the sky hoops',
     'Type "draw 7" and the neural network tries to read it',
     'Say "Mika drink a potion of invisibility" (or levitation, glowing...)',
@@ -227,8 +231,9 @@ SYSTEM_FACTS = (
     "in front of the camera, !blowUp to place TNT and blow it up (only far from your builds), !race for "
     "a flying race through the sky hoops (a speed potion really makes you faster), !standInFront to fly in front "
     "of your friend's eyes so the stream sees you. Say yes to EVERY viewer request and do it right away with the "
-    "matching command: no refusing, no stalling, no 'are you sure', no 'that is too big'. Between requests you "
-    "build your Kingdom together."
+    "matching command: no refusing, no stalling, no 'are you sure', no 'that is too big'. Chat ALWAYS comes "
+    "first: drop what you are doing for them. Between requests you build your Kingdom together and talk with "
+    "chat; mention the neural network only when someone asks about it."
 )
 CAMERA_HOLD = 15.0  # "eyes": the camera stays on one girl at least this long
 # "director": your camera floats behind both girls, aimed at them and what they
@@ -237,6 +242,25 @@ CAMERA_HZ = 20  # the camera stand moves this often; the game smooths moving ent
 CAMERA_EASE = 0.05  # share of the way to the new angle per step (about a second and a half)
 CAM_TAG = "vr_cam"
 LOOK_AT = re.compile(r"!flyTo\([^,]+,[^,]+,[^,]+,\s*(-?[\d.]+),\s*-?[\d.]+,\s*(-?[\d.]+)")
+SHOW_HOLD = 35.0  # after "show me ...", the builder leaves the camera girl alone this much longer
+PLACE_WORDS = {"neural network": "network", "network": "network", "castle": "castle", "farm": "farm",
+               "garden": "garden", "base": "base", "sky": "sky", "kingdom": "kingdom"}
+SHOW_ASK = re.compile(r"\b(see|show|look at|go to|fly to|visit|take (?:me|us) to|check out|watch)\b", re.I)
+FURTHER_ASK = re.compile(
+    r"\b(further|farther|zoom out|back up|from afar|from above|higher|wider|bigger view|full view|whole thing)\b", re.I)
+
+
+def place_ask(text: str) -> str:
+    """'I want to see the neural network' -> 'network' ('' when it is not that)."""
+    if not SHOW_ASK.search(text or ""):
+        return ""
+    low = (text or "").lower()
+    for words, place in PLACE_WORDS.items():
+        if re.search(rf"\b{words}\b", low):
+            return place
+    return ""
+
+
 SPLASH_ASK = re.compile(r"\b(splash|throw)\b", re.I)
 # "behind" (the default camera): like a chase cam in third person
 CHASE_BACK = 6.5  # blocks behind her
@@ -276,12 +300,14 @@ DEFAULT_GOAL = (
 )
 
 STREAM_TITLE = "Mika & Luna play Minecraft LIVE 🔴 AI girls survive while chat bosses them around"
-CREATIVE_TITLE = "Mika & Luna build a castle and a REAL neural network in Minecraft LIVE 🔴 chat joins in"
+CREATIVE_TITLE = "Mika & Luna build ANYTHING chat asks in Minecraft LIVE 🔴 by hand, block by block"
 CREATIVE_HEAD = (
-    "🧠 Mika and Luna are two AI characters building in creative Minecraft by themselves, live: a castle, "
-    "then a real neural network (written from scratch, trained live with backpropagation) that reads "
-    "handwritten digits on a giant wall.\n"
-    "Talk to them in chat! Say Mika or Luna to pick one, or type \"draw 7\" and watch the network guess it.\n\n"
+    "🔨 Mika and Luna are two AI characters building in creative Minecraft live, every block by hand. "
+    "Whatever chat asks for, they build: a sky castle with your name on it, a giant dragon, a garden, a house. "
+    "Between requests they build a whole Kingdom, lot by lot.\n"
+    "Talk to them in chat! Type \"build ...\", \"show me the castle\", \"race\", \"Mika drink a potion of "
+    "invisibility\", \"TNT\", or \"draw 7\" for their real neural network. Say Mika or Luna to pick one "
+    "(and expect to get roasted).\n\n"
 )
 STREAM_HEAD = (
     "⛏️ Mika and Luna are two AI characters playing survival Minecraft by themselves, live.\n"
@@ -553,7 +579,10 @@ class MinecraftEngine:
         self._looking: dict[str, tuple[float, float, float]] = {}  # x, z she was told to look at, when
         self._trail: dict[str, tuple[float, float, float]] = {}  # an earlier position (movement direction)
         self._free_lock = asyncio.Lock()
-        self._daylight_set = False
+        self._daylight_at = 0.0
+        self._self_build_at = 0.0
+        self._viewer_builds = 0  # viewer builds waiting or running (they come before the girls' own ideas)
+        self._girl_test_at = 0.0
         self._kingdom: Optional[list[dict[str, Any]]] = None
         self._free_busy = False
         self._free_waiting = 0
@@ -626,7 +655,14 @@ class MinecraftEngine:
             asyncio.create_task(self.fun.tnt(targets[0]))
             heard += " (You are placing TNT right now, by hand: no command needed. It only works far from your builds.)"
         elif self.creative and wants_build(text):
-            heard += self.request_build(text, author)
+            heard += self.request_build(text, author, viewer=True)
+        elif self.creative and place_ask(text):
+            place = place_ask(text)
+            _soon(self._show_place(place, author))
+            heard += f" (The camera is flying to the {place} right now so everyone sees it: no command needed.)"
+        elif self.creative and FURTHER_ASK.search(text):
+            _soon(self._step_back(author))
+            heard += " (The camera is moving back and up right now for a wider view: no command needed.)"
         # The asked girl answers out loud right away (one short AI call here).
         # Mindcraft alone took minutes: a bot drops its reply whenever another
         # message reaches it while it is still thinking.
@@ -1448,18 +1484,14 @@ class MinecraftEngine:
                 if not here or not base or not self.link.connected.is_set():
                     await asyncio.sleep(1.0)
                     continue
-                if self.projects.current() is None:
-                    if not (self.creative and await self.projects.ensure_loaded() and await self._kingdom_step()):
-                        await asyncio.sleep(2.0)
-                    continue
                 if not await self.projects.ensure_loaded():
                     await asyncio.sleep(10)  # no server console yet
                     continue
-                if not self._daylight_set and os.environ.get("VR_MINECRAFT_DAYLIGHT", "1").strip() not in ("0", "false", "off", "no"):
-                    self._daylight_set = True  # a dark night stream is hard to watch
-                    for command in ("time set day", "gamerule doDaylightCycle false", "weather clear",
-                                    "gamerule doWeatherCycle false"):
-                        await rcon_command(command)
+                await self._keep_daylight()
+                if self.projects.current() is None:
+                    if not (self.creative and await self._kingdom_step()):
+                        await asyncio.sleep(2.0)
+                    continue
                 if self.projects.timed():
                     await self._teach_round(here)
                     continue
@@ -1740,10 +1772,17 @@ class MinecraftEngine:
             "standInFront": f"{name} asked to stand in front of the camera",
         }.get(verb, f"{name} did {verb} {arg}"))
         if verb == "buildThis" and arg:
+            if self._viewer_builds or time.time() - max(self.last_viewer.values(), default=0) < 60:
+                return  # chat asked for something (the engine is already on it): no build of her own now
+            if time.time() - self._self_build_at < SELF_BUILD_GAP:
+                await self.link.emit("send-message", name, {"from": "system", "message": (
+                    "Not now: you two are building the Kingdom, and chat's requests come first. Ask chat what "
+                    "they want instead.")})
+                return
+            self._self_build_at = time.time()
             self.request_build(arg, name)
         elif verb == "buildNext" and self.creative and self.projects.current() is None:
-            # every project is finished: she builds something of her own
-            self.request_build("something fun and surprising of your own choice for the viewers", name)
+            return  # every project is done: the Kingdom goes on by itself
         elif verb == "buildNext":
             self._build_now = cid
             self._build_event.set()
@@ -1803,7 +1842,11 @@ class MinecraftEngine:
             asyncio.create_task(self.fun.tnt(cid))
         elif verb == "standInFront":
             await self.fun.stand_in_front(cid)
+        elif verb == "testNetwork" and arg.isdigit() and time.time() - self._girl_test_at < GIRL_TEST_GAP:
+            await self.link.emit("send-message", name, {"from": "system", "message": (
+                "Not now: the network was just tested. Do what chat asks, or keep building.")})
         elif verb == "testNetwork" and arg.isdigit():
+            self._girl_test_at = time.time()
             if not self.net_show.request(int(arg), name):
                 await self.link.emit("send-message", name, {"from": "system", "message": "The network is not built far enough yet: it needs its weights first."})
 
@@ -1816,17 +1859,15 @@ class MinecraftEngine:
             here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 10]
             if not here or not self.link.connected.is_set():
                 continue
+            if self.chat_queue or self._free_busy or time.time() - max(self.last_viewer.values(), default=0) < 90:
+                continue  # chat is talking: no need to fill silence
             cid = self._quietest(here)
             view = self.projects.view()
-            steps = self.projects.steps()
-            done = int(self.projects.state.get("built", 0))
             friend = self.names[self._friend(cid)]
-            net = self.net_show.describe()
             await self.link.emit("send-message", self.names[cid], {"from": "system", "message": (
-                f"Status: {strip_emoji(view.get('title', ''))}, part {view.get('step', '')}, "
-                f"{done} of {len(steps) or 'a few'} pieces built. {net} "
-                f"Say something to {friend} out loud about what you are building or what to do next, and if you "
-                "want, use one of your commands (!buildNext, !flyToPlace, !changeMaterial, !testNetwork)."
+                f"Status: {strip_emoji(view.get('title', ''))}, {view.get('step', '')}. "
+                f"Say one short line to {friend} or to chat about what you are building right now, or ask chat what "
+                "they want you to build. Do not test the network or change materials unless chat asks."
             )})
 
     async def _arrive(self, cid: str, view: tuple, focus: tuple, flight: float) -> None:
@@ -2102,32 +2143,37 @@ class MinecraftEngine:
         now = time.time()
         return " | ".join(t for at, t in list(self.memory)[-MEMORY_LINES:] if now - at < MEMORY_SECONDS)
 
-    def request_build(self, request: str, who: str) -> str:
-        """A free build, one at a time. Returns what to tell the girls."""
+    def request_build(self, request: str, who: str, viewer: bool = False) -> str:
+        """A free build, one at a time (viewers' before the girls' own).
+        Returns what to tell the girls."""
         if self._free_waiting >= 20:
             return " (Many builds are waiting already: it comes after them, say so cheerfully.)"
         self._free_waiting += 1
-        _soon(self._free_build(request, who))
+        if viewer:
+            self._viewer_builds += 1
+        _soon(self._free_build(request, who, viewer))
         if self._free_busy:
             return " (You build it right after the current build, by hand: no command needed.)"
         return " (You two are building it right now, by hand, block by block: no command needed. Never say it is done before it is.)"
 
-    async def _free_build(self, request: str, who: str) -> None:
+    async def _free_build(self, request: str, who: str, viewer: bool = False) -> None:
         from . import minecraft_freebuild as fb
 
         try:
             async with self._free_lock:
                 self._free_waiting -= 1
                 self._free_busy = True
-                await self._free_build_now(fb, request, who)
+                await self._free_build_now(fb, request, who, viewer)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.warning(f"Minecraft: free build failed: {exc}")
         finally:
             self._free_busy = False
+            if viewer:
+                self._viewer_builds = max(0, self._viewer_builds - 1)
 
-    async def _free_build_now(self, fb: Any, request: str, who: str) -> None:
+    async def _free_build_now(self, fb: Any, request: str, who: str, viewer: bool = False) -> None:
         base = self.projects.state.get("base")
         here = [c for c in self.cast if time.time() - self._seen_at.get(c, 0) < 15 and c in self._pos]
         if not base or not here or not await self.projects.ensure_loaded():
@@ -2173,6 +2219,11 @@ class MinecraftEngine:
                 "Talk about it while you build; it is NOT finished until you are told.")})
         done = 0
         for step in steps:
+            if not viewer and self._viewer_builds:
+                logger.info(f"Minecraft: '{title}' (their own idea) paused: a viewer build comes first")
+                self._remember(f"they stopped {title} because chat asked for something")
+                await self._push({"kind": "project", **self.projects.view()})
+                return
             done += await self._lay_step(step, here)
             await self._push({"kind": "project", "title": f"🔨 {title}", "step": f"for {who}",
                               "progress": round(done / total, 3), "steps": []})
@@ -2184,6 +2235,20 @@ class MinecraftEngine:
             await self.link.emit("send-message", self.names[c], {"from": "system", "message": (
                 f"{title} for {who} is finished! Show it off in one line.")})
         await self._push({"kind": "project", **self.projects.view()})
+
+    async def _keep_daylight(self) -> None:
+        """Always day and clear (a dark night stream is hard to watch), set
+        again every 10 minutes in case the server restarted.
+        VR_MINECRAFT_DAYLIGHT=0 turns it off."""
+        if os.environ.get("VR_MINECRAFT_DAYLIGHT", "1").strip().lower() in ("0", "false", "off", "no"):
+            return
+        if time.time() - self._daylight_at < 600:
+            return
+        self._daylight_at = time.time()
+        for command in ("time set day", "gamerule doDaylightCycle false", "weather clear",
+                        "gamerule doWeatherCycle false"):
+            await rcon_command(command)
+        logger.info("Minecraft: daytime and clear weather locked")
 
     async def _lay_step(self, step: dict[str, Any], here: list[str]) -> int:
         """One piece, shared by whoever is free (by hand). Returns its run count."""
@@ -2267,6 +2332,43 @@ class MinecraftEngine:
             await rcon_command(f"fill {a} {oy - 1} {c} {b} {oy - 1} {d} minecraft:grass_block", reply=True)
             await rcon_command(f"fill {a} {oy - 3} {c} {b} {oy - 2} {d} minecraft:dirt", reply=True)
 
+    def _camera_girl(self) -> str:
+        return self.cam_focus if self.cam_focus in self.cast else self.cast[0]
+
+    async def _show_place(self, place: str, who: str) -> None:
+        """'I want to see the neural network': the camera girl (her eyes are
+        the stream) flies there right away and stays a while."""
+        cid = self._camera_girl()
+        base = self.projects.state.get("base")
+        if not base:
+            return
+        if place == "kingdom":
+            from .minecraft_kingdom import CENTER
+
+            view, focus = (CENTER[0], 40, CENTER[1] - 70), (CENTER[0], 0, CENTER[1])
+        else:
+            view, focus = PLACES.get(place, PLACES["base"])
+        self._chose_at[cid] = time.time() + SHOW_HOLD  # the build waits while chat looks
+        self._remember(f"{self.names[cid]} flew to the {place} because {who} wanted to see it")
+        logger.info(f"Minecraft: {who} wants to see the {place}: {self.names[cid]} flies there")
+        await self._arrive(cid, view, focus, await self._fly(cid, view, focus))
+
+    async def _step_back(self, who: str) -> None:
+        """'go a little further, I want to see it from afar': back and up."""
+        cid = self._camera_girl()
+        base = self.projects.state.get("base")
+        here = self._pos.get(cid)
+        if not base or not here:
+            return
+        fx, fz = self._facing(cid)
+        look = self.build_focus or (here[0] + fx * 10, here[1], here[2] + fz * 10)
+        x, y, z = here[0] - fx * 12, here[1] + 8, here[2] - fz * 12
+        view = (x - base[0], y - base[1], z - base[2])
+        focus = (look[0] - base[0], look[1] - base[1], look[2] - base[2])
+        self._chose_at[cid] = time.time() + SHOW_HOLD
+        logger.info(f"Minecraft: {who} wants a wider view: {self.names[cid]} backs up")
+        await self._arrive(cid, view, focus, await self._fly(cid, view, focus))
+
     def _exclaim(self, cid: str, kind: str, info: Optional[dict[str, Any]] = None) -> None:
         """A loud, quick reaction at a big moment, said by the engine (no AI call)."""
         now = time.time()
@@ -2318,7 +2420,7 @@ class MinecraftEngine:
         self.chat_queue.clear()
         if not fresh:
             return []
-        fresh.sort(key=lambda c: (not c["first"], c["at"]))
+        fresh.sort(key=lambda c: c["at"] - (NEW_VIEWER_HEAD_START if c["first"] else 0))
         who = fresh[0]["who"]
         batch = [c for c in fresh if c["who"] == who][:ANSWER_BATCH]
         self.chat_queue.extend(c for c in fresh if c not in batch)

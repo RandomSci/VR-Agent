@@ -675,17 +675,17 @@ def test_a_flood_of_comments_is_answered_in_batches(monkeypatch):
     asyncio.run(run())
 
 
-def test_old_comments_are_skipped_when_chat_is_busy(monkeypatch):
+def test_chat_is_answered_fairly_and_nothing_is_dropped_too_soon(monkeypatch):
     eng = _engine()
     now = mm.time.time()
     eng.chat_queue.extend([
-        {"who": "luna", "author": "old", "text": "hi", "at": now - 100, "first": True},
-        {"who": "luna", "author": "regular", "text": "hi", "at": now - 5, "first": False},
+        {"who": "luna", "author": "ancient", "text": "hi", "at": now - mm.CHAT_MAX_AGE - 5, "first": True},
+        {"who": "luna", "author": "regular", "text": "hi", "at": now - 30, "first": False},
         {"who": "luna", "author": "new", "text": "hi", "at": now - 1, "first": True},
     ])
     batch = eng._next_batch()
-    assert [c["author"] for c in batch] == ["new", "regular"]  # newcomers first, the stale one dropped
-
+    # the regular who waited 30 s goes first; a newcomer only gets a small head start
+    assert [c["author"] for c in batch] == ["regular", "new"]
 
 def test_a_bot_gets_a_busy_chat_in_one_message(monkeypatch):
     async def run():
@@ -861,5 +861,35 @@ def test_the_behind_camera_floats_behind_mika(monkeypatch):
         (cx, cy, cz), (lx, ly, lz) = eng._shot
         assert (cx, cy, cz) == (100.5, 70.0 + mm.CHASE_UP, 200.5 - mm.CHASE_BACK)  # behind (-z) and above
         assert lz > 200.5 and cy > ly  # looking past her, down at her back
+
+    asyncio.run(run())
+
+
+def test_show_me_moves_the_camera_and_the_network_stays_quiet(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        eng.projects.state.update({"base": [0, 64, 0]})
+        flights = []
+
+        async def fly(cid, view, focus):
+            flights.append((cid, view, focus))
+            return 0.0
+
+        async def arrive(*a):
+            return None
+
+        eng._fly, eng._arrive = fly, arrive
+        assert mm.place_ask("Mika let's go to the front of the neural network") == "network"
+        assert mm.place_ask("I want to see the castle") == "castle"
+        assert mm.place_ask("nice castle") == ""
+        assert mm.FURTHER_ASK.search("go a little further from it I wanna see it in further view")
+        eng.enqueue("MathUnlockedYT", "I want to see the neural network")
+        await asyncio.sleep(0.05)
+        assert flights and flights[-1][0] == "mika" and flights[-1][1] == mm.PLACES["network"][0]  # Mika = the camera
+        assert eng._chose_at["mika"] > mm.time.time()  # the build leaves her there for a while
+        # the girls cannot keep testing the network themselves
+        await eng._heard("Mika", "[VR] testNetwork 3")
+        await eng._heard("Mika", "[VR] testNetwork 4")
+        assert eng.link.sent[-1][1]["message"].startswith("Not now: the network was just tested")
 
     asyncio.run(run())

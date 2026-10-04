@@ -36,7 +36,7 @@ LAYER_Z = (-15, -6, 3)  # hidden 1, hidden 2, outputs (each neuron 2 x 2)
 CENTER_Y = 17
 SITE = (-33, 21)  # z range of the lab
 TRAIN_BATCHES = 3  # mini-batches per tick while training
-DEMO_EVERY = 120.0  # seconds between demos once trained
+DEMO_EVERY = 900.0  # seconds between automatic demos once trained (viewers' "draw 7" any time)
 GOOD_ENOUGH = 0.95  # stop training after this test accuracy
 
 _net: Optional[DigitNet] = None
@@ -252,7 +252,7 @@ class NetShow:
             net.save()
             if self._ticks % 4 == 0:
                 await self._run(weights(net))
-            if self.training and self._ticks % 8 == 0:
+            if self.training and self._ticks % 32 == 0:
                 await self.tell(
                     f"Neural network training update: {stats['steps']} backpropagation steps, loss {stats['loss']:.2f}, "
                     f"accuracy {stats['accuracy'] * 100:.0f} percent on digits it never saw. React in one short line."
@@ -285,6 +285,9 @@ class NetShow:
             "author": author or drawn_by,
         }
         logger.info(f"Minecraft: the neural network read a {d} and guessed {result['guess']} ({result['confidence']:.0%})")
+        await self.push(self.stats())
+        if not (author or drawn_by):
+            return  # an automatic demo: shown on screen, the girls are not asked to talk about it
         who = f" {author} asked for a {d}." if author else (f" {drawn_by} drew it." if drawn_by else "")
         verdict = "It got it RIGHT" if result["right"] else "It got it WRONG"
         await self.tell(
