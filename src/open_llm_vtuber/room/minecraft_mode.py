@@ -77,7 +77,8 @@ from loguru import logger
 from ..vr_agent.text_safety import strip_emoji
 from ..live.clip_marks import CLIPS
 from .minecraft_eyes import wants_look
-from .minecraft_asks import digit_asked, further_asked, says_stuck, show_asked
+from .minecraft_asks import (digit_asked, friend_asked, further_asked, restyle_asked, says_stuck, show_asked,
+                             tour_asked)
 from .minecraft_freebuild import wants_build
 from .minecraft_safety import MODERATOR, locally_bad
 from .minecraft_fun import potion_ask, wants_race, wants_tnt
@@ -182,9 +183,10 @@ PLACES = {
 # What viewers can do, shown one at a time under the network panel: people
 # stay when they know they can change what happens.
 HINTS = (
-    'Type "show me the castle" (or network, kingdom) and Mika flies there',
+    'Type "show me the castle" (or the kingdom) and Mika flies there',
     'Type "race" and Mika and Luna race through the sky hoops',
-    'Type "draw 7" and the neural network tries to read it',
+    'Type "Mika fly around" for a tour of everything they built',
+    'Too plain? Type "make it more colorful" or "add gold on it"',
     'Say "Mika drink a potion of invisibility" (or levitation, glowing...)',
     "Ask Luna to splash Mika with a potion. She will.",
     "Say a name to talk to one of them: Mika or Luna",
@@ -325,7 +327,7 @@ def place_ask(text: str) -> str:
     return ""
 
 
-SPLASH_ASK = re.compile(r"\b(splash|throw)\b", re.I)
+SPLASH_ASK = re.compile(r"\b(splash|throw|give (?:her|him|luna|mika|your friend|them)|on (?:her|luna|mika))\b", re.I)
 # "behind" (the default camera): like a chase cam in third person
 CHASE_BACK = 6.5  # blocks behind her
 CHASE_UP = 4.0  # blocks above her feet
@@ -658,6 +660,8 @@ class MinecraftEngine:
         self._ending = False
         self._answered_before: set[str] = set()
         self._girl_potion_at = 0.0
+        self._net_shown: Any = None
+        self._building: Optional[dict[str, Any]] = None  # the free build going on: its pieces and the next one
         self._bots_started = False  # the first Mindcraft start greets; a restart does not
         self._now_building = ""  # what they really build right now (the prompts used to say "free building")
         self._answered_out_loud: dict[str, float] = {}
@@ -691,7 +695,7 @@ class MinecraftEngine:
         self._parted_at = 0.0
         from .minecraft_net_show import NetShow
 
-        self.net_show = NetShow(self.projects, lambda *a, **k: rcon_command(*a, **k), self._tell_one, self._push)
+        self.net_show = NetShow(self.projects, lambda *a, **k: rcon_command(*a, **k), self._tell_one, self._net_push)
         from .minecraft_fun import FunShow
 
         self.fun = FunShow(self)  # items, potions, the sky race, stand in front
@@ -779,8 +783,14 @@ class MinecraftEngine:
         if digit and self.net_show.request(int(digit), author):
             heard += f" (The neural network will read a {digit} on the board in a moment.)"
         acted = False  # the engine already does what was asked: her bot must not do it a second time
+        main, trim = restyle_asked(text) if self.creative else ([], [])
+        if (main or trim) and self._restyle_fits(text):
+            # "make it more colorful", "add gold on it", "build me a golden tower" while
+            # a tower is built: the build going on changes (it used to start another build)
+            heard += f" ({self._restyle(main, trim, author)} Right now, no command needed.)"
+            acted = True
         # Builds first: "build a castle that won't blow up" is a build, not TNT.
-        if self.creative and wants_build(text):
+        elif self.creative and wants_build(text):
             heard += self.request_build(text, author, viewer=True)
             acted = True
         elif self.creative and says_stuck(text):
@@ -807,6 +817,19 @@ class MinecraftEngine:
             elif self.creative and wants_tnt(text):
                 _soon(self.fun.tnt(targets[0]))
                 heard += " (You are placing TNT right now, by hand: no command needed. It only goes off away from your builds.)"
+                acted = True
+            elif self.creative and tour_asked(text):
+                if now - self._camera_moved_at > CAMERA_MOVE_GAP:
+                    self._camera_moved_at = now
+                    _soon(self._tour(author))
+                heard += (" (You are flying a tour of your whole world right now, high up so everyone sees it: "
+                          "describe what you fly over. No command needed.)")
+                acted = True
+            elif self.creative and len(self.cast) > 1 and friend_asked(text, self.names[self._friend(self._camera_girl())]):
+                if now - self._camera_moved_at > CAMERA_MOVE_GAP:
+                    self._camera_moved_at = now
+                    _soon(self._to_friend(author))
+                heard += f" (You are flying over to {self.names[self._friend(self._camera_girl())]} right now: no command needed.)"
                 acted = True
             elif self.creative and place_ask(text):
                 place = place_ask(text)
@@ -1232,7 +1255,10 @@ class MinecraftEngine:
             env["NODE_OPTIONS"] += " --max-old-space-size=4096"
         env["VR_VIEWER_PORT_BASE"] = str(VIEWER_PORT_BASE)
         _rotate_log(LOG_DIR / "mindcraft.log")
-        with open(LOG_DIR / "mindcraft.log", "ab") as log:  # Mindcraft keeps its own copy
+        with open(LOG_DIR / "mindcraft.log", "ab") as log:
+            # Mindcraft's lines have no time: this one dates the run (the doctor script uses it)
+            log.write(f"=== VR Agent: Mindcraft started {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n".encode())
+            log.flush()  # Mindcraft keeps its own copy
             proc = await asyncio.create_subprocess_exec(
                 "node", "main.js",
                 cwd=str(MINDCRAFT_DIR), env=env, stdin=asyncio.subprocess.DEVNULL, stdout=log, stderr=log,
@@ -2368,7 +2394,8 @@ class MinecraftEngine:
             last = time.time()
             try:
                 await self.net_show.tick()
-                self.view["net"] = self.net_show.stats()
+                if NETWORK_TALK:
+                    self.view["net"] = self.net_show.stats()
                 result = getattr(self.net_show, "last", None)
                 if isinstance(result, dict) and result is not self._net_seen:
                     self._net_seen = result
@@ -2742,17 +2769,20 @@ class MinecraftEngine:
         for a build, and is picked up again right after (it used to stay
         half built for good). True when it paused (its site stays loaded)."""
         for i, step in enumerate(steps):
+            self._building = {"steps": steps, "next": i, "title": title, "who": who}
             if not viewer and self._viewer_builds:
                 logger.info(f"Minecraft: '{title}' (their own idea) paused: a viewer build comes first")
                 self._remember(f"they paused {title} because chat asked for something")
                 await self._push({"kind": "project", **self.projects.view()})
                 self._free_waiting += 1
+                self._building = None
                 _soon(self._resume_build(steps[i:], here, title, who, total, done, site))
                 return True
             done += await self._lay_step(step, here)
             await self._push({"kind": "project", "title": f"🔨 {title}", "step": f"for {who}",
                               "progress": round(done / total, 3), "steps": []})
         self._now_building = ""  # back to the Kingdom (it says so when it starts again)
+        self._building = None
         await self._push({"kind": "project_done", "title": title, "step": title})
         self._remember(f"{title} for {who} is finished")
         CLIPS.mark("built", f"{title} for {who} finished", 3.0)
@@ -3015,6 +3045,115 @@ class MinecraftEngine:
     def _camera_girl(self) -> str:
         return self.cam_focus if self.cam_focus in self.cast else self.cast[0]
 
+    def _restyle_fits(self, text: str) -> bool:
+        """Is this about the build going on? (Something must be in progress; a
+        build request for something else is a new build.)"""
+        current = (self._building or {}).get("title") or ""
+        kingdom = self.projects.current() is None and self.projects.state.get("kingdom") is not None
+        if not current and not kingdom:
+            return False
+        if not wants_build(text):
+            return True
+        words = {w for w in re.findall(r"[a-z]{4,}", (current or self._now_building).lower())}
+        asked = set(re.findall(r"[a-z]{4,}", text.lower()))
+        return bool(words & asked) or bool(re.search(r"\b(?:it|this|that|the rest)\b", text, re.I))
+
+    def _restyle(self, main: list[str], trim: list[str], who: str) -> str:
+        """The rest of the build going on is made of what chat asked. Returns
+        what to tell the girls."""
+        nice = lambda blocks: " and ".join(b.replace("_block", "").replace("_", " ") for b in blocks[:3])  # noqa: E731
+        building = self._building
+        if building is None:  # the Kingdom: this lot's main material
+            block = (main or trim)[0]
+            kingdom = self.projects.state.setdefault("kingdom", {"lot": 0, "piece": 0})
+            kingdom["main"] = block
+            self.projects._save()
+            self._remember(f"{who} asked for {nice([block])}: the rest of this Kingdom lot is {nice([block])}")
+            logger.info(f"Minecraft: {who} restyled the Kingdom lot: {block}")
+            return f"The rest of this Kingdom building is now made of {nice([block])}, as {who} asked."
+        steps = building["steps"][building["next"]:]
+        counts: dict[str, int] = {}
+        for step in steps:
+            for command in step["commands"]:
+                for b in re.findall(r"minecraft:([a-z_]+)", command):
+                    if b not in ("air", "water", "lava", "torch", "lantern", "glass", "glass_pane", "light"):
+                        counts[b] = counts.get(b, 0) + 1
+        order = sorted(counts, key=lambda b: -counts[b])
+        if not order:
+            return "There is almost nothing left to build, so it stays as it is: say so."
+        old_main = order[0]
+        old_trim = order[1] if len(order) > 1 else ""
+        top = max(1, len(steps) // 4)
+        for k, step in enumerate(steps):
+            mapping = {}
+            if main:
+                mapping[old_main] = main[k % len(main)]
+            if trim:
+                if old_trim:
+                    mapping[old_trim] = trim[k % len(trim)]
+                elif k >= len(steps) - top:  # one material only: the top of it gets the trim ("gold on top")
+                    mapping[old_main] = trim[k % len(trim)]
+            if mapping:
+                step["commands"] = [re.sub(r"minecraft:([a-z_]+)",
+                                           lambda m: "minecraft:" + mapping.get(m.group(1), m.group(1)), c)
+                                    for c in step["commands"]]
+        title = building["title"]
+        what = (f"{nice(main)} stripes" if len(main) > 2 else nice(main)) if main else ""
+        what = " with ".join(x for x in (what, f"{nice(trim)} trim" if trim else "") if x)
+        self._remember(f"{who} asked for {what} on {title}: the rest of it is built that way")
+        logger.info(f"Minecraft: {who} restyled '{title}': {what}")
+        return f"The rest of {title} is now built with {what}, as {who} asked: point it out as it goes up."
+
+    async def _tour(self, who: str) -> None:
+        """'Fly around your whole world': the camera girl flies high over
+        everything they built, a few seconds at each, then back to work."""
+        from .minecraft_kingdom import CENTER
+
+        cid = self._camera_girl()
+        base = self.projects.state.get("base")
+        if not base:
+            return
+        stops = [((0, 45, -40), (0, 0, 0)),  # the base and its projects
+                 ((CENTER[0], 60, CENTER[1] + 90), (CENTER[0], 0, CENTER[1])),  # the Kingdom
+                 ((PLOT_AREA_X + 30, 55, PLOT_AREA_Z + 120), (PLOT_AREA_X + 30, 0, PLOT_AREA_Z + 220))]  # chat's builds
+        if self.build_focus:
+            f = self.build_focus
+            stops.append(((f[0] - base[0], f[1] - base[1] + 12, f[2] - base[2] - 20),
+                          (f[0] - base[0], f[1] - base[1], f[2] - base[2])))
+        self._chose_at[cid] = time.time() + 30 * len(stops)
+        self._remember(f"{self.names[cid]} flew a tour of the whole world because {who} asked")
+        logger.info(f"Minecraft: {who} asked for a tour: {self.names[cid]} flies over everything")
+        for view, focus in stops:
+            await self._arrive(cid, view, focus, await self._fly(cid, view, focus))
+            await asyncio.sleep(6.0)
+        self._chose_at[cid] = time.time() + 3  # then back to work
+
+    async def _to_friend(self, who: str) -> None:
+        """'Where's Luna? come to her': the camera girl flies next to her friend."""
+        cid = self._camera_girl()
+        friend = self._friend(cid)
+        base = self.projects.state.get("base")
+        if not base or friend == cid or friend not in self._pos:
+            return
+        bx, by, bz = base
+        fx, fy, fz = self._pos[friend]
+        view, focus = (fx - bx + 3, fy - by + 1, fz - bz + 3), (fx - bx, fy - by + 1, fz - bz)
+        self._chose_at[cid] = time.time() + SHOW_HOLD
+        logger.info(f"Minecraft: {who} wants {self.names[cid]} with {self.names[friend]}: she flies over")
+        self._remember(f"{self.names[cid]} flew over to {self.names[friend]} because {who} asked")
+        await self._arrive(cid, view, focus, await self._fly(cid, view, focus))
+
+    async def _net_push(self, op: dict[str, Any]) -> None:
+        """The network panel on screen: always with VR_MINECRAFT_NETWORK_TALK=1;
+        otherwise only for a moment when a viewer's digit was just read."""
+        if op.get("kind") != "net" or NETWORK_TALK:
+            await self._push({**op, "always": True} if op.get("kind") == "net" else op)
+            return
+        last = op.get("last")
+        if isinstance(last, dict) and last.get("digit") is not None and last is not self._net_shown:
+            self._net_shown = last
+            await self._push(op)
+
     async def _show_place(self, place: str, who: str) -> None:
         """'I want to see the neural network': the camera girl (her eyes are
         the stream) flies there right away and stays a while."""
@@ -3203,6 +3342,7 @@ class MinecraftEngine:
                 self._answered_before = {c["author"] for c in batch}
             if line:
                 self._answered_out_loud[first["who"]] = time.time()
+                _soon(self._push({"kind": "answered", "who": first["who"], "authors": [c["author"] for c in batch]}))
             # Her bot hears the comments AND what she said out loud, so what
             # she does next matches her words (one memory, not two minds).
             # When the engine already does what was asked (a build, a potion,

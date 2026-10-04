@@ -161,14 +161,24 @@ def main() -> None:
     mind = LOGS / "mindcraft.log"
     mind_errors = []
     if mind.exists():
+        # Mindcraft writes no times: each run starts with our dated line, so
+        # only the runs that were going on in the window are looked at.
+        runs: list[tuple[str, list[str]]] = [("", [])]
         for line in _open(mind):
-            if re.search(r"error|Error|disconnect|kicked|ECONNRESET|timed out|crash", line):
-                mind_errors.append(line.strip()[:180])
+            started = re.match(r"=== VR Agent: Mindcraft started (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)", line)
+            if started:
+                runs.append((f"{started.group(1)} {started.group(2)}", []))
+            elif re.search(r"error|Error|disconnect|kicked|ECONNRESET|timed out|crash", line):
+                runs[-1][1].append(line.strip()[:180])
+        window_end = f"{day} {end or '23:59:59'}"
+        window_start = f"{day} {start or '00:00:00'}"
+        for i, (began, errors) in enumerate(runs):
+            ended = runs[i + 1][0] if i + 1 < len(runs) else "9999"
+            if began and began <= window_end and ended >= window_start:
+                mind_errors.extend(f"[run from {began[11:]}] {e}" for e in errors)
+        if len(runs) == 1:
+            mind_errors = runs[0][1]  # an old log without our dated lines: everything (times unknown)
 
-    if covered:
-        print("Our logs (a run each; pick your window inside one):")
-        for line in covered:
-            print("  " + line)
     events.sort()
     seen = set()
     print(f"=== Timeline {day} {start or '00:00'}-{end or '23:59'} ===")
@@ -188,10 +198,10 @@ def main() -> None:
         for clock, who, secs in slow[:30]:
             print(f"  {clock}  {who} waited {secs / 60:.1f} min")
     if mind_errors:
-        print(f"\nLast bot (Mindcraft) errors ({len(mind_errors)} in all):")
+        print(f"\nBot (Mindcraft) errors in this window ({len(mind_errors)}):")
         for line in mind_errors[-25:]:
             print("  " + line)
-    if not events and not waits:
+    if not events and not waits and not mind_errors:
         print("Nothing found: are the logs in logs/? (run this from the project folder)")
 
 

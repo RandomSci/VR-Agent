@@ -29,6 +29,12 @@
   let focusAt = 0;
   const FOCUS_HOLD = 15000;
   const CHAT_SHOW_MS = 2000; // a viewer comment stays on screen this long
+  // The chat box: the last comments stay on the side (viewers see theirs on
+  // stream, and a ✓ when it was answered). ?chatbox=0 brings back the old
+  // two second popup in the middle.
+  const CHATBOX = new URLSearchParams(location.search).get("chatbox") !== "0";
+  const CHATBOX_ROWS = 5;
+  const CHATBOX_MS = 90000;
   // "client": the owner's real Minecraft is the camera (OBS window capture
   // under this page), so the page is see-through and the web views stay off.
   let camera = "web";
@@ -44,6 +50,7 @@
     over.innerHTML = `
       <div id="mc-panes"></div>
       <div id="mc-chat"></div>
+      <div id="mc-chatbox"><div class="mc-chead">💬 Live chat</div><div class="mc-clist"></div></div>
       <div id="mc-problem"></div>
       <div id="mc-status"></div>
       <div id="mc-project"><div class="mc-ptitle"></div><div class="mc-pstep"></div><i><b></b></i><div class="mc-psteps"></div></div>
@@ -244,6 +251,7 @@
   }
 
   function chat(op) {
+    if (CHATBOX) return chatRow(op);
     const box = $("mc-chat");
     if (!box) return;
     const row = el("div", "mc-msg");
@@ -256,6 +264,38 @@
     // On screen for 2 seconds at most, then gone.
     setTimeout(() => row.classList.add("old"), CHAT_SHOW_MS - 350);
     setTimeout(() => row.remove(), CHAT_SHOW_MS);
+  }
+
+  function chatRow(op) {
+    const box = $("mc-chatbox");
+    if (!box) return;
+    const list = box.querySelector(".mc-clist");
+    const row = el("div", "mc-crow");
+    row.dataset.author = op.author || "";
+    row.append(el("b", "", op.author || "viewer"));
+    row.append(el("span", "", op.text || ""));
+    row.append(el("em", "mc-tick", ""));
+    list.append(row);
+    while (list.children.length > CHATBOX_ROWS) list.firstChild.remove();
+    box.classList.add("show");
+    setTimeout(() => {
+      row.classList.add("old");
+      setTimeout(() => {
+        row.remove();
+        if (!list.children.length) box.classList.remove("show");
+      }, 400);
+    }, CHATBOX_MS);
+  }
+
+  function answered(op) {
+    const box = $("mc-chatbox");
+    if (!box) return;
+    for (const row of box.querySelectorAll(".mc-crow")) {
+      if ((op.authors || []).includes(row.dataset.author) && !row.classList.contains("done")) {
+        row.classList.add("done");
+        row.querySelector(".mc-tick").textContent = `✓ ${names[op.who] || op.who || ""}`;
+      }
+    }
   }
 
   function status(op) {
@@ -279,10 +319,14 @@
   }
 
   // The real network: live training numbers and its last guess.
+  let netTimer = 0;
   function net(op) {
     const box = $("mc-net");
     if (!box) return;
     box.classList.add("show");
+    // Only a moment after a viewer's digit was read (unless the network show is on)
+    clearTimeout(netTimer);
+    if (!op.always) netTimer = setTimeout(() => box.classList.remove("show"), 20000);
     const acc = Math.round((op.accuracy || 0) * 100);
     box.querySelector(".mc-nstats").textContent =
       `${op.training ? "training · " : ""}${op.steps || 0} steps · loss ${(op.loss || 0).toFixed(2)} · accuracy ${acc}%`;
@@ -401,6 +445,7 @@
       case "say": if (!root) return; say(op); break;
       case "said": if (!root) return; said(op); break;
       case "chat": if (!root) return; chat(op); break;
+      case "answered": if (!root) return; answered(op); break;
       case "status": if (!root) return; status(op); break;
       case "project": if (!root) return; project(op); break;
       case "project_done": if (!root) return; projectDone(op); break;

@@ -350,3 +350,42 @@ def test_a_member_is_welcomed_not_thanked_for_money():
         assert "MEMBER" in eng.chat_queue[-1]["text"] and "SUPER CHAT" not in eng.chat_queue[-1]["text"]
 
     asyncio.run(run())
+
+
+def test_chat_can_change_the_build_going_on():
+    """'It's too simple, make it more colorful, add gold on it! Build me a golden
+    tower!' during the Finance Tower started a second build; now the tower changes."""
+    eng = _engine()
+    eng.creative = True
+    steps = [{"commands": [f"fill {{x0}} {{y{i}}} {{z0}} {{x4}} {{y{i}}} {{z0}} minecraft:stone_bricks",
+                           f"setblock {{x2}} {{y{i}}} {{z1}} minecraft:glass"]} for i in range(8)]
+    eng._building = {"steps": steps, "next": 2, "title": "Finance Tower", "who": "FRCFinance"}
+    text = "It's too simple can you make it more colorful? Like adding gold on it! Build me a golden tower!"
+    eng.enqueue("FRCFinance", text)
+    assert not eng._free_waiting and not eng._free_busy  # no second build
+    assert "stone_bricks" in steps[1]["commands"][0]  # what is built already stays
+    later = " ".join(c for st in steps[2:] for c in st["commands"])
+    assert "stone_bricks" not in later and "_concrete" in later and "gold_block" in later
+    assert "Finance Tower" in eng.chat_queue[-1]["text"]
+
+
+def test_tour_friend_and_speed_are_understood():
+    assert asks.tour_asked("are you building something? Mike fly around your whole world! I wanna see it")
+    assert asks.friend_asked("Mike, where's luna? come to her and give her invisibility potion HAHA", "Luna")
+    assert not asks.wants_build("Build faster mika don't stop until it's all done!")
+    assert asks.wants_build("Can you build a tower?")
+    assert mm.SPLASH_ASK.search("give her invisibility potion")
+
+
+def test_the_network_panel_only_shows_after_a_viewer_digit():
+    async def run():
+        eng = _engine()
+        await eng._net_push({"kind": "net", "steps": 3, "last": None})
+        assert not eng.pushed  # training numbers alone: not on screen
+        read = {"digit": 7, "guess": 7, "right": True}
+        await eng._net_push({"kind": "net", "steps": 3, "last": read})
+        await eng._net_push({"kind": "net", "steps": 4, "last": read})
+        assert len(eng.pushed) == 1  # once, for the viewer's digit
+        assert not any("draw 7" in h for h in mm.HINTS)
+
+    asyncio.run(run())

@@ -159,3 +159,16 @@ html.minecraft-mode.mc-creative .mc-tag { display: none !important; }
 .mc-effect { padding: .35vh .7vw; border-radius: 99px; background: #5b2a8ccc; color: #f1dcff; font-weight: 800;
   font-size: clamp(10px, .8vw, 16px); font-variant-numeric: tabular-nums; animation: mc-in .25s ease-out both; }
 @media (prefers-reduced-motion: reduce) { .mc-pop.show, .mc-pop.show.mc-right, .mc-toast, #mc-score.tick span { animation-duration: .01s; } }
+
+/* The chat box: the last comments on the side, a check when answered */
+#mc-chatbox { position: absolute; top: 12vh; right: 1.2vw; width: 21vw; display: none; flex-direction: column; gap: .5vh;
+  padding: .8vh .7vw; border-radius: 14px; background: #0b0f17c4; box-shadow: 0 6px 20px #0008; color: #eaf1ff; }
+#mc-chatbox.show { display: flex; }
+.mc-chead { font-weight: 900; font-size: clamp(11px, .85vw, 17px); color: #c9a6ff; letter-spacing: .03em; }
+.mc-clist { display: flex; flex-direction: column; gap: .5vh; }
+.mc-crow { padding: .5vh .6vw; border-radius: 10px; background: #182040d0; font-size: clamp(11px, .9vw, 18px); font-weight: 700;
+  line-height: 1.25; animation: mc-in .25s ease-out both; transition: opacity .4s; overflow-wrap: anywhere; }
+.mc-crow.old { opacity: 0; }
+.mc-crow b { color: #5fe3c8; margin-right: .4vw; }
+.mc-crow .mc-tick { display: block; font-style: normal; font-size: .8em; color: #8fffd8; margin-top: .2vh; }
+.mc-crow.done { background: #14302ad0; }

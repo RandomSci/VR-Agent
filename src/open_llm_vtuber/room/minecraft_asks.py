@@ -44,6 +44,11 @@ NOT_A_BUILD = re.compile(
 )
 
 
+# "build faster", "build it bigger", "make it gold": about the build going on, not a new one
+NOT_A_NEW_BUILD = re.compile(
+    r"(?:faster|quicker|quickly|slower|more|again|better|it\b|that\b|this\b|the rest|on\b|it'?s)", re.I)
+
+
 def wants_build(text: str) -> bool:
     """'Mika build a dragon', 'can you make two towers?', 'create a pumpkin',
     'dig a hole', 'how about a pirate ship' (not 'first place!', 'I dig it',
@@ -55,7 +60,7 @@ def wants_build(text: str) -> bool:
     rest = match.group(1).strip(" !.?,")
     verb = re.search(rf"(?:{BUILD_VERB})\b", text[match.start():], re.I)
     loose = bool(verb) and verb.group(0).lower() in ("make", "put", "place", "add", "craft", "design", "create")
-    if len(rest) < 3 or (loose and NOT_A_BUILD.match(rest)):
+    if len(rest) < 3 or (loose and NOT_A_BUILD.match(rest)) or NOT_A_NEW_BUILD.match(rest):
         return False
     return not re.fullmatch(r"(?:it|that|this|me|us|them|him|her|sure|ok)\W*", rest, re.I)
 
@@ -116,3 +121,62 @@ def says_stuck(text: str) -> bool:
     # a short message that is only the complaint: "stuck?", "GLITCHING", "lag lol"
     words = re.findall(r"[a-z']+", text.lower())
     return 0 < len(words) <= 3 and bool(re.search(r"\b(?:" + bad + r"|lag)\b", text, re.I)) and not _NOT.search(text)
+
+
+# ---------------------------------------------------------------- the build going on
+# "make it more colorful", "add gold on it", "build me a golden tower" while
+# a tower is being built: the build going on changes, no new build is started.
+MATERIAL_WORDS = {
+    "gold": "gold_block", "golden": "gold_block", "diamond": "diamond_block", "diamonds": "diamond_block",
+    "emerald": "emerald_block", "iron": "iron_block", "netherite": "netherite_block", "copper": "copper_block",
+    "glass": "glass", "quartz": "quartz_block", "obsidian": "obsidian", "amethyst": "amethyst_block",
+    "lapis": "lapis_block", "redstone": "redstone_block", "brick": "bricks", "bricks": "bricks",
+    "wood": "oak_planks", "wooden": "oak_planks", "stone": "stone_bricks", "sandstone": "smooth_sandstone",
+    "prismarine": "prismarine_bricks", "ice": "packed_ice", "snow": "snow_block", "glowstone": "glowstone",
+    "red": "red_concrete", "orange": "orange_concrete", "yellow": "yellow_concrete", "green": "lime_concrete",
+    "lime": "lime_concrete", "blue": "blue_concrete", "cyan": "cyan_concrete", "purple": "purple_concrete",
+    "pink": "pink_concrete", "magenta": "magenta_concrete", "white": "white_concrete", "black": "black_concrete",
+    "gray": "gray_concrete", "grey": "gray_concrete", "brown": "brown_concrete",
+}
+RAINBOW = ("red_concrete", "orange_concrete", "yellow_concrete", "lime_concrete", "light_blue_concrete",
+           "blue_concrete", "purple_concrete", "magenta_concrete")
+_COLORFUL = re.compile(r"\b(?:colou?rful|more colou?rs?|rainbow|colou?r it|paint it|brighter|more vibrant|so plain|"
+                       r"too (?:simple|plain|boring|grey|gray))\b", re.I)
+_CHANGE = re.compile(r"\b(?:make it|make the|add|adding|put|use|with|change|paint|turn it|cover|decorate|trim|"
+                     r"more|golden|all|too simple|too plain)\b", re.I)
+_ACCENT = re.compile(r"\b(?:add|adding|put|trim|details?|accents?|decorat\w*|on it|on top|stripes?)\b", re.I)
+
+
+def restyle_asked(text: str) -> tuple[list[str], list[str]]:
+    """What the build going on should be made of now: (main blocks, trim blocks).
+    'make it more colorful' -> (RAINBOW, []); 'add gold on it' -> ([], [gold]);
+    'make it all diamond' -> ([diamond], []); both lists empty when not asked."""
+    low = (text or "").lower()
+    colorful = bool(_COLORFUL.search(low))
+    blocks = list(dict.fromkeys(MATERIAL_WORDS[w] for w in re.findall(r"[a-z]+", low) if w in MATERIAL_WORDS))
+    if not colorful and not (blocks and _CHANGE.search(low)):
+        return [], []
+    main = list(RAINBOW) if colorful else []
+    trim: list[str] = []
+    if blocks:
+        if colorful or (_ACCENT.search(low) and not re.search(r"\b(?:all|whole|entire|make it)\b", low)):
+            trim = blocks
+        else:
+            main = blocks
+    return main, trim
+
+
+def tour_asked(text: str) -> bool:
+    """'Mika fly around your whole world', 'give us a tour', 'show me everything you built'."""
+    return _asked(text, r"(?:fly|go|walk|look) around|(?:give (?:me|us) |do )?a tour|tour\b|show (?:me|us) (?:around|"
+                        r"everything|all|your (?:whole )?world)|(?:i (?:wanna|want to) see|show me) (?:the |your )?(?:whole|"
+                        r"entire) (?:world|map|kingdom)") or bool(re.search(r"\bfly around (?:your|the) (?:whole )?world\b",
+                                                                             text or "", re.I))
+
+
+def friend_asked(text: str, friend: str) -> bool:
+    """'where's Luna? come to her', 'go to Luna', 'find Luna' (to the camera girl)."""
+    f = re.escape(friend)
+    return bool(re.search(rf"\b(?:where(?:'?s| is| are you)\s+{f}|(?:come|go|fly) (?:to|back to|over to|near) "
+                          rf"(?:{f}|her)|find {f}|visit {f}|stand (?:next to|with|near) (?:{f}|her)|look at {f})\b",
+                          text or "", re.I))
