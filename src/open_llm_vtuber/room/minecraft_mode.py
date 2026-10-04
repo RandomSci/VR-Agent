@@ -312,6 +312,7 @@ ADMIRE_SECONDS = 7.0  # a finished build: she looks at all of it this long
 SHOW_HOLD = 35.0  # after "show me ...", the builder leaves the camera girl alone this much longer
 PLACE_WORDS = {"neural network": "network", "network": "network", "castle": "castle", "farm": "farm",
                "garden": "garden", "base": "base", "sky": "sky", "kingdom": "kingdom"}
+KEPT_MAX = 2000  # blocks chat asked for that builds go around (the oldest are forgotten)
 MODERATION_WAIT = 0.8  # an answer waits at most this long for the moderation check
 SAID_IT_ALREADY = 25.0  # after an answer out loud, her bot's chat lines to viewers are shown, not spoken again
 CAMERA_MOVE_GAP = 20.0  # "show me X" / "zoom out" move the camera at most this often (chat kept the build paused)
@@ -679,6 +680,7 @@ class MinecraftEngine:
         self._net_shown: Any = None
         self._topic: dict[str, tuple] = {}
         self._kingdom_panel: dict[str, Any] = {}
+        self._kingdom_site: dict[str, Any] = {}  # the lot being built: its box and main block
         self._last_request: dict[str, tuple[str, float]] = {}  # each viewer's last build request ("another one")  # what each viewer last talked about ("let's visit it")
         self._building: Optional[dict[str, Any]] = None  # the free build going on: its pieces and the next one
         self._bots_started = False  # the first Mindcraft start greets; a restart does not
@@ -814,7 +816,8 @@ class MinecraftEngine:
         elif (main or trim) and self._restyle_fits(text):
             # "make it more colorful", "add gold on it", "build me a golden tower" while
             # a tower is built: the build going on changes (it used to start another build)
-            heard += f" ({self._restyle(main, trim, author)} Right now, no command needed.)"
+            whole = bool(re.search(r"\b(?:all of it|whole|entire|everything|all)\b", text, re.I))
+            heard += f" ({self._restyle(main, trim, author, whole)} Right now, no command needed.)"
             acted = True
         # Spells before builds: "make Luna giant" is magic, not a build called "Luna giant".
         elif self.creative and spells_asked(text):
@@ -2072,7 +2075,9 @@ class MinecraftEngine:
                 and hand_blocks(self.projects.absolute(runs[0])) is None):
             # one big move (clearing the site, a huge lawn): she watches it from the piece's spot
             await self._arrive(cid, step["view"], step["focus"], await self._fly(cid, step["view"], step["focus"]))
-            return await self.projects.place_one(runs[0])
+            ok = await self.projects.place_one(runs[0])
+            await self._restore_kept(self.projects.absolute(runs[0]))
+            return ok
         # first a proper flight to the piece, then short hops along it
         first = center(runs[0])
         start = (first[0] + dx * back, first[1] + up, first[2] + dz * back)
@@ -2104,7 +2109,8 @@ class MinecraftEngine:
         await self._arrive(cid, hover, look, await self._fly(cid, hover, look))
         return True
 
-    async def _lay_by_hand(self, cid: str, run: str, hover: Optional[tuple] = None, look: Optional[tuple] = None) -> bool:
+    async def _lay_by_hand(self, cid: str, run: str, hover: Optional[tuple] = None, look: Optional[tuple] = None,
+                           keep: bool = False) -> bool:
         """She lays a run block by block with her hand: block in hand, a look
         and a swing per block, and each block appears on its swing (with the
         place sound). Whatever she could not lay (interrupted, an old
@@ -2112,8 +2118,22 @@ class MinecraftEngine:
         absolute = self.projects.absolute(run)
         blocks = hand_blocks(absolute)
         if blocks is None:  # a summon, clearing, a special fill: it just happens
-            return await self.projects.place_one(run)
+            ok = await self.projects.place_one(run)
+            await self._restore_kept(absolute)
+            return ok
         spots, block = blocks
+        kept = self._kept()
+        if keep:  # chat asked for these: nothing builds over them later
+            for x, y, z in spots:
+                kept[f"{x} {y} {z}"] = block
+            del_over = len(kept) - KEPT_MAX
+            for key in list(kept)[:max(0, del_over)]:
+                kept.pop(key)
+            self.projects._save()
+        else:  # a build never lays over what chat asked for (the gold block vanished)
+            spots = [p for p in spots if f"{p[0]} {p[1]} {p[2]}" not in kept]
+            if not spots:
+                return True
         sound = place_sound(block)
         for _attempt in range(3):
             started = time.time()
@@ -2151,6 +2171,25 @@ class MinecraftEngine:
             logger.debug(f"Minecraft: {self.names[cid]} could not lay {missed} blocks by hand")
             break
         return await self.projects.place_one(run)  # last resort: she could not lay them at all
+
+    def _kept(self) -> dict[str, str]:
+        """Blocks chat asked for, by world spot: builds go around them."""
+        return self.projects.state.setdefault("kept", {})
+
+    async def _restore_kept(self, absolute: str) -> None:
+        """A clearing or fill that ran over kept blocks: they are set again."""
+        kept = self._kept()
+        nums = [int(v) for v in re.findall(r"-?\d+", absolute.split("minecraft:", 1)[0])]
+        if not kept or len(nums) < 3:
+            return
+        a = nums[:3]
+        b = nums[3:6] if len(nums) >= 6 else a
+        lo = [min(a[i], b[i]) for i in range(3)]
+        hi = [max(a[i], b[i]) for i in range(3)]
+        for spot, block in kept.items():
+            x, y, z = (int(v) for v in spot.split())
+            if lo[0] <= x <= hi[0] and lo[1] <= y <= hi[1] and lo[2] <= z <= hi[2]:
+                await rcon_command(f"setblock {x} {y} {z} {block}")
 
     async def _hand_event(self, words: list[str]) -> None:
         """'put <job> <i>': her hand hit block i, set it now. 'laid <job>': done."""
@@ -3039,6 +3078,10 @@ class MinecraftEngine:
             self.projects._save()
         ground = int(state["ground"])
         origin = (gx, ground, gz - min(z1, 0))
+        self._kingdom_site = {"box": (base[0] + box[0], ground - 1, base[2] + box[1],
+                                      base[0] + box[2], ground + top + 1, base[2] + box[3]),
+                              "main": state.get("main") or lot["main"], "accent": lot.get("accent", ""),
+                              "title": lot["title"]}
         steps = fb.pieces_of(fb.ordered(spots), origin, tuple(base), (0, 1))
         n, total = int(state["lot"]), len(self._kingdom)
         panel = {"kind": "project", "title": "🏰 The Kingdom", "steps": []}
@@ -3270,7 +3313,7 @@ class MinecraftEngine:
         asked = set(re.findall(r"[a-z]{4,}", text.lower()))
         return bool(words & asked) or bool(re.search(r"\b(?:it|this|that|the rest)\b", text, re.I))
 
-    def _restyle(self, main: list[str], trim: list[str], who: str) -> str:
+    def _restyle(self, main: list[str], trim: list[str], who: str, whole: bool = False) -> str:
         """The rest of the build going on is made of what chat asked. Returns
         what to tell the girls."""
         nice = lambda blocks: " and ".join(b.replace("_block", "").replace("_", " ") for b in blocks[:3])  # noqa: E731
@@ -3278,8 +3321,14 @@ class MinecraftEngine:
         if building is None:  # the Kingdom: this lot's main material
             block = (main or trim)[0]
             kingdom = self.projects.state.setdefault("kingdom", {"lot": 0, "piece": 0})
+            old = self._kingdom_site.get("main", "")
             kingdom["main"] = block
             self.projects._save()
+            if whole and old and self._kingdom_site.get("box"):  # what is built already turns too
+                for was in {old, self._kingdom_site.get("accent") or old}:
+                    _soon(self._recolor_box(self._kingdom_site["box"], was, block))
+                self._kingdom_site["main"] = block
+                return f"ALL of this Kingdom building turns into {nice([block])} right now, as {who} asked."
             self._remember(f"{who} asked for {nice([block])}: the rest of this Kingdom lot is {nice([block])}")
             logger.info(f"Minecraft: {who} restyled the Kingdom lot: {block}")
             return f"The rest of this Kingdom building is now made of {nice([block])}, as {who} asked."
@@ -3310,6 +3359,9 @@ class MinecraftEngine:
                                            lambda m: "minecraft:" + mapping.get(m.group(1), m.group(1)), c)
                                     for c in step["commands"]]
         title = building["title"]
+        if whole and main:  # "replace ALL of it with gold": the built part too
+            done_steps = building["steps"][:building["next"]]
+            _soon(self._recolor_commands([c for st in done_steps for c in st["commands"]], old_main, main[0]))
         what = (f"{nice(main)} stripes" if len(main) > 2 else nice(main)) if main else ""
         what = " with ".join(x for x in (what, f"{nice(trim)} trim" if trim else "") if x)
         self._remember(f"{who} asked for {what} on {title}: the rest of it is built that way")
@@ -3361,9 +3413,10 @@ class MinecraftEngine:
         here = self._pos.get(cid)
         hover = (here[0] - bx, here[1] - by, here[2] - bz) if here else None
         logger.info(f"Minecraft: {who} asked for {count} {block} on the {under} {self.names[cid]} looks at")
+        keep = True
         self._remember(f"{self.names[cid]} put {count} {block.replace('_', ' ')} on that {under.replace('_', ' ')} "
                        f"for {who}")
-        await self._lay_by_hand(cid, run, hover, (x - bx, y + 1 - by, z - bz))
+        await self._lay_by_hand(cid, run, hover, (x - bx, y + 1 - by, z - bz), keep=keep)
 
     async def look_toward(self, cid: str, what: str, player: bool = False) -> bool:
         """She turns her head to something she sees (a creature kind or a
@@ -3410,6 +3463,29 @@ class MinecraftEngine:
         logger.info(f"Minecraft: {who} wants to see {build['title']} again: {self.names[cid]} flies back to it")
         self._remember(f"{self.names[cid]} flew back to show {build['title']} because {who} asked")
         await self._admire(build["frame"], 6.0)
+
+    async def _recolor_commands(self, commands: list[str], old: str, new: str) -> None:
+        """The pieces built already: each one's blocks of `old` become `new`
+        (fill ... replace), with sparkles, like a spell going over it."""
+        for command in commands:
+            absolute = self.projects.absolute(command)
+            nums = [int(v) for v in re.findall(r"-?\d+", absolute.split("minecraft:", 1)[0])]
+            if len(nums) < 3:
+                continue
+            a, b = nums[:3], (nums[3:6] if len(nums) >= 6 else nums[:3])
+            await rcon_command(f"fill {a[0]} {a[1]} {a[2]} {b[0]} {b[1]} {b[2]} minecraft:{new} replace minecraft:{old}")
+            await rcon_command(f"particle minecraft:wax_on {(a[0] + b[0]) / 2 + 0.5:.1f} {(a[1] + b[1]) / 2 + 0.5:.1f} "
+                               f"{(a[2] + b[2]) / 2 + 0.5:.1f} 1 1 1 0.1 12 force")
+            await asyncio.sleep(0.05)
+
+    async def _recolor_box(self, box: tuple, old: str, new: str) -> None:
+        """A whole Kingdom building: every block of `old` in its box becomes `new`."""
+        x1, y1, z1, x2, y2, z2 = (int(v) for v in box)
+        for y in range(min(y1, y2), max(y1, y2) + 1):  # a layer at a time: within the fill limit, a nice wave
+            await rcon_command(f"fill {x1} {y} {z1} {x2} {y} {z2} minecraft:{new} replace minecraft:{old}")
+            await rcon_command(f"particle minecraft:wax_on {(x1 + x2) / 2:.1f} {y + 0.5} {(z1 + z2) / 2:.1f} "
+                               f"{abs(x2 - x1) / 3:.1f} 0.2 {abs(z2 - z1) / 3:.1f} 0.1 40 force")
+            await asyncio.sleep(0.15)
 
     async def _tour(self, who: str) -> None:
         """'Fly around your whole world': the camera girl flies high over

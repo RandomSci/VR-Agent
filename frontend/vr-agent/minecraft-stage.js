@@ -29,10 +29,9 @@
   let focusAt = 0;
   const FOCUS_HOLD = 15000;
   const CHAT_SHOW_MS = 2000; // a viewer comment stays on screen this long
-  // The chat box: the last comments stay on the side (viewers see theirs on
-  // stream, and a ✓ when it was answered). ?chatbox=0 brings back the old
-  // two second popup in the middle.
-  const CHATBOX = new URLSearchParams(location.search).get("chatbox") !== "0";
+  // A comment shows for two seconds in the middle (the default). ?chatbox=1:
+  // the side box instead, where comments stay until answered (a ✓).
+  const CHATBOX = new URLSearchParams(location.search).get("chatbox") === "1";
   const CHATBOX_ROWS = 4;
   const CHATBOX_MS = 20000; // gone after this at most
   const CHATBOX_ANSWERED_MS = 6000; // and this long after it was answered

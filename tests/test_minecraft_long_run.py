@@ -446,7 +446,7 @@ def test_the_camera_girl_builds_from_further_back():
         async def hop(cid, hover, look, last):
             return 0.0
 
-        async def lay(cid, run, hover=None, look=None):
+        async def lay(cid, run, hover=None, look=None, keep=False):
             return True
 
         eng._fly, eng._arrive, eng._hop, eng._lay_by_hand = fly, arrive, hop, lay
@@ -688,7 +688,7 @@ def test_splash_that_chicken_and_place_gold_there():
             eng.eyes.looking_at[cid] = (5, 64, 7, "grass_block", mm.time.time())
             return ""
 
-        async def lay(cid, run, hover=None, look=None):
+        async def lay(cid, run, hover=None, look=None, keep=False):
             laid.append((cid, run))
             return True
 
@@ -775,7 +775,7 @@ def test_gold_goes_in_front_of_her_when_her_eyes_do_not_say(monkeypatch):
         async def look(cid, reason=""):
             return ""  # an old bot: no looked-at block
 
-        async def lay(cid, run, hover=None, look=None):
+        async def lay(cid, run, hover=None, look=None, keep=False):
             laid.append(run)
             return True
 
@@ -786,5 +786,48 @@ def test_gold_goes_in_front_of_her_when_her_eyes_do_not_say(monkeypatch):
         eng.eyes.look, eng._lay_by_hand = look, lay
         await eng._place_there("gold_block", 1, "fan")
         assert laid and laid[0].endswith("minecraft:gold_block") and "{y1}" in laid[0]  # on the ground (y 64 + 1)
+
+    asyncio.run(run())
+
+
+def test_gold_placed_for_chat_stays_and_all_of_it_turns_gold(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng.projects.state.update({"base": [0, 64, 0]})
+        sent, jobs = [], []
+
+        async def rcon(cmd, reply=False):
+            sent.append(cmd)
+            return ""
+
+        async def command(cid, text):
+            jobs.append(text)
+            return True
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        monkeypatch.setattr(mm, "HAND_WAIT", 0.01)
+        eng._command = command
+        await eng._lay_by_hand("mika", "setblock {x5} {y1} {z5} minecraft:gold_block", keep=True)
+        assert "5 65 5" in eng._kept()
+        jobs.clear()
+        # a build piece over that spot: the gold spot is skipped
+        await eng._lay_by_hand("mika", "fill {x4} {y1} {z5} {x6} {y1} {z5} minecraft:spruce_planks")
+        assert jobs and "5 65 5" not in jobs[-1] and "4 65 5" in jobs[-1]
+        # a clearing over it: the gold is put back
+        sent.clear()
+        await eng._restore_kept("fill 0 60 0 10 70 10 minecraft:air")
+        assert "setblock 5 65 5 minecraft:gold_block" in sent or "setblock 5 65 5 gold_block" in sent
+        # "replace all of it with gold" on the Kingdom house
+        eng._kingdom_site = {"box": (0, 64, 0, 4, 66, 4), "main": "spruce_planks", "accent": "bricks"}
+        eng.projects.state["kingdom"] = {"lot": 1, "piece": 3}
+        sent.clear()
+        eng._restyle(["gold_block"], [], "fan", whole=True)
+        for _ in range(30):
+            await asyncio.sleep(0)
+        fills = [c for c in sent if c.startswith("fill ") and "replace" in c]
+        assert any("replace minecraft:spruce_planks" in c for c in fills)
+        assert any("replace minecraft:bricks" in c for c in fills)
+        for task in list(mm._BACKGROUND):
+            task.cancel()
 
     asyncio.run(run())
