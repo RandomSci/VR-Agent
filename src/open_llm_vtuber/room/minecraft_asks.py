@@ -239,3 +239,43 @@ _HERE = re.compile(r"\b(?:where (?:you|u|yo\w*|ya) (?:stand|are|r|standing|at)|r
 def here_asked(text: str) -> bool:
     """'build another 10 where you stand right now', 'build it right here'."""
     return bool(_HERE.search(text or ""))
+
+
+_THERE_SPOT = re.compile(r"\b(?:over there|there|that block|this block|that spot|on that|on top of (?:that|it)|"
+                         r"where (?:you(?:'re| are)|u r|ur) looking|you(?:'re| are) looking at|in front of you)\b", re.I)
+_PLACE_VERB = re.compile(r"\b(?:place|put|stack|add|drop|set)\b", re.I)
+ANIMALS = ("chicken", "cow", "pig", "sheep", "horse", "camel", "rabbit", "spider", "zombie", "skeleton", "creeper",
+           "llama", "goat", "fox", "wolf", "cat", "parrot", "villager", "squid", "salmon", "cod", "bat", "bee",
+           "snow_golem", "iron_golem", "frog", "turtle", "axolotl", "panda", "allay", "dolphin", "slime", "witch",
+           "enderman", "mooshroom", "polar_bear", "ocelot", "donkey", "mule")
+
+
+def place_there_asked(text: str) -> tuple[str, int]:
+    """'place some gold on that block over there' -> ('gold_block', 3); ('', 0) when not asked."""
+    low = (text or "").lower()
+    if not (_PLACE_VERB.search(low) and _THERE_SPOT.search(low)):
+        return "", 0
+    blocks = [MATERIAL_WORDS[w] for w in re.findall(r"[a-z]+", low) if w in MATERIAL_WORDS]
+    named = re.search(r"\b([a-z]+(?:_[a-z]+)*)_block\b", low)
+    block = blocks[0] if blocks else (named.group(0) if named else "gold_block")
+    count = re.search(r"\b(\d{1,2})\b", low)
+    if count:
+        n = int(count.group(1))
+    elif re.search(r"\b(?:lots|many|a lot|tower|pillar|tall)\b", low):
+        n = 8
+    elif re.search(r"\b(?:some|few|couple|stack)\b", low):
+        n = 3
+    else:
+        n = 1
+    return block, max(1, min(20, n))
+
+
+def creature_named(text: str) -> str:
+    """'splash that chicken' -> 'chicken' ('' when no creature is named)."""
+    low = (text or "").lower()
+    for kind in ANIMALS:
+        if re.search(rf"\b{kind.replace('_', ' ')}s?\b", low):
+            return kind
+    if re.search(r"\b(?:snowman|snow golem)\b", low):
+        return "snow_golem"
+    return ""

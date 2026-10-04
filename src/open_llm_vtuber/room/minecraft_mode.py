@@ -78,7 +78,7 @@ from ..vr_agent.text_safety import strip_emoji
 from ..live.clip_marks import CLIPS
 from .minecraft_eyes import wants_look
 from .minecraft_asks import (digit_asked, friend_asked, further_asked, restyle_asked, says_stuck, show_asked,
-                             here_asked, there_asked, tour_asked, which_build)
+                             creature_named, here_asked, place_there_asked, there_asked, tour_asked, which_build)
 from .minecraft_freebuild import wants_build
 from .minecraft_safety import MODERATOR, locally_bad
 from .minecraft_fun import potion_ask, wants_race, wants_tnt
@@ -341,7 +341,8 @@ def place_ask(text: str) -> str:
     return ""
 
 
-SPLASH_ASK = re.compile(r"\b(splash|throw|give (?:her|him|luna|mika|your friend|them)|on (?:her|luna|mika))\b", re.I)
+SPLASH_ASK = re.compile(r"\b(splash|throw|give (?:her|him|luna|mika|your friend|them)|on (?:her|luna|mika)|"
+                        r"(?:in|on|at) (?:that|the|this) \w+)\b", re.I)
 # "behind" (the default camera): like a chase cam in third person
 CHASE_BACK = 6.5  # blocks behind her
 CHASE_UP = 4.0  # blocks above her feet
@@ -802,7 +803,14 @@ class MinecraftEngine:
             heard += f" (The neural network will read a {digit} on the board in a moment.)"
         acted = False  # the engine already does what was asked: her bot must not do it a second time
         main, trim = restyle_asked(text) if self.creative else ([], [])
-        if (main or trim) and self._restyle_fits(text):
+        block, count = place_there_asked(text) if self.creative else ("", 0)
+        if block:
+            # "place some gold on that block over there": where the stream (Mika's eyes) is looking
+            _soon(self._place_there(block, count, author))
+            heard += (f" ({self.names[self._camera_girl()]} is placing {count} {block.replace('_', ' ')} by hand on the "
+                      "block she is looking at, right now: no command needed.)")
+            acted = True
+        elif (main or trim) and self._restyle_fits(text):
             # "make it more colorful", "add gold on it", "build me a golden tower" while
             # a tower is built: the build going on changes (it used to start another build)
             heard += f" ({self._restyle(main, trim, author)} Right now, no command needed.)"
@@ -838,7 +846,13 @@ class MinecraftEngine:
             acted = True
         else:
             potion = potion_ask(text) if self.creative else None
-            if potion and SPLASH_ASK.search(text):
+            if potion and SPLASH_ASK.search(text) and creature_named(text):
+                kind = creature_named(text)  # "splash something on that chicken"
+                _soon(self.fun.splash(targets[0], potion, at=kind))
+                heard += (f" (You are throwing a splash potion of {potion.replace('_', ' ')} at the "
+                          f"{kind.replace('_', ' ')} right now: no command needed.)")
+                acted = True
+            elif potion and SPLASH_ASK.search(text):
                 _soon(self.fun.splash(targets[0], potion))
                 heard += (f" (You are throwing a splash potion of {potion.replace('_', ' ')} at your friend right "
                           "now: no command needed.)")
@@ -3316,6 +3330,31 @@ class MinecraftEngine:
             return dict(self._kingdom_panel)
         return {"kind": "project", **self.projects.view()}
 
+    async def _place_there(self, block: str, count: int, who: str) -> None:
+        """'Place some gold on that block over there': the block in the middle
+        of the camera girl's view (what the stream shows) gets them on top,
+        laid by hand."""
+        cid = self._camera_girl()
+        base = self.projects.state.get("base")
+        await self.eyes.look(cid)  # what she is looking at right now
+        spot = self.eyes.looking_at.get(cid)
+        if not base or not spot or time.time() - spot[4] > 10:
+            await self.link.emit("send-message", self.names[cid], {"from": "system", "message": (
+                f"You are not looking at any block close enough to put {block.replace('_', ' ')} on. Say so and "
+                "ask chat to point you to one.")})
+            return
+        x, y, z, under, _at = spot
+        bx, by, bz = base
+        self._chose_at[cid] = time.time() + 12 - CHOICE_HOLD  # the build waits while she does it
+        run = (f"fill {{x{x - bx}}} {{y{y + 1 - by}}} {{z{z - bz}}} {{x{x - bx}}} {{y{y + count - by}}} {{z{z - bz}}} "
+               f"minecraft:{block}")
+        here = self._pos.get(cid)
+        hover = (here[0] - bx, here[1] - by, here[2] - bz) if here else None
+        logger.info(f"Minecraft: {who} asked for {count} {block} on the {under} {self.names[cid]} looks at")
+        self._remember(f"{self.names[cid]} put {count} {block.replace('_', ' ')} on that {under.replace('_', ' ')} "
+                       f"for {who}")
+        await self._lay_by_hand(cid, run, hover, (x - bx, y + 1 - by, z - bz))
+
     async def look_toward(self, cid: str, what: str, player: bool = False) -> bool:
         """She turns her head to something she sees (a creature kind or a
         player) and keeps looking a few seconds: her eyes are the stream, so
@@ -3983,7 +4022,7 @@ CAMERA_GLIDE = (
 FLY_ANCHOR = """    {
         name: '!searchForBlock',"""
 FLY_MARK = "    { // VR Agent: creative flight"
-FLY_COMMANDS = FLY_MARK + """ for building on stream (v15)
+FLY_COMMANDS = FLY_MARK + """ for building on stream (v16)
         name: '!flyTo',
         description: 'Creative mode only: fly to x, y, z (over cruise height) and look at lx, ly, lz.',
         params: {
@@ -4397,7 +4436,10 @@ FLY_COMMANDS = FLY_MARK + """ for building on stream (v15)
             const out = {looking: '', near: [], players: []};
             try {
                 const b = bot.blockAtCursor(48);
-                if (b) out.looking = b.name + ' ' + Math.round(b.position.distanceTo(me)) + ' blocks away';
+                if (b) {
+                    out.looking = b.name + ' ' + Math.round(b.position.distanceTo(me)) + ' blocks away';
+                    out.at = [b.position.x, b.position.y, b.position.z]; // "put gold on that block over there"
+                }
             } catch (e) { /* nothing in reach */ }
             const skip = new Set(['item', 'experience_orb', 'armor_stand', 'marker', 'arrow', 'firework_rocket']);
             for (const e of Object.values(bot.entities)) {

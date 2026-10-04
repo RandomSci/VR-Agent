@@ -76,7 +76,8 @@ class Eyes:
         self._notable_at: dict[str, float] = {}
         self._waiting: dict[str, asyncio.Event] = {}
         self._known: set[str] = set()
-        self.nearest: dict[str, Any] = {}  # (name, is a player) of the closest thing she saw  # creature kinds already reacted to this stream
+        self.nearest: dict[str, Any] = {}  # (name, is a player) of the closest thing she saw
+        self.looking_at: dict[str, tuple] = {}  # (x, y, z, block, when) of the block in the middle of her view  # creature kinds already reacted to this stream
         self._reactions: list[float] = []
 
     @staticmethod
@@ -149,6 +150,10 @@ class Eyes:
         old = self.things.get(cid, set())
         self.sight[cid] = (time.time(), text)
         self.things[cid] = names | players
+        spot = seen.get("at")
+        if isinstance(spot, list) and len(spot) == 3 and all(isinstance(v, (int, float)) for v in spot):
+            block = str(seen.get("looking", "")).split(" ")[0]
+            self.looking_at[cid] = (int(spot[0]), int(spot[1]), int(spot[2]), block, time.time())
         nearest = (seen.get("near") or [None])[0] or next(
             (q for q in seen.get("players") or [] if str(q.get("name", "")).lower() != friend), None)
         self.nearest[cid] = (str(nearest.get("name", "")), nearest in (seen.get("players") or [])) if nearest else None

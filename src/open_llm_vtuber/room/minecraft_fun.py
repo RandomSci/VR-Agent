@@ -139,10 +139,13 @@ class FunShow:
         CLIPS.mark("potion", f"{who} drank {what} ({name})", 1.5 if mystery else 1.0)
         await self.tell(cid, f"You drank {what}. It is {name.replace('_', ' ')}! React to how it feels, out loud.")
 
-    async def splash(self, cid: str, effect: str) -> None:
+    async def splash(self, cid: str, effect: str, at: str = "") -> None:
         name = effect_name(effect)
         if name not in EFFECTS:
             await self.tell(cid, f"No splash potion of {effect}. Pick one of: {', '.join(EFFECTS)}.")
+            return
+        if at:  # "splash that chicken": at the nearest one of them
+            await self._splash_creature(cid, name, at)
             return
         friend = self.e._friend(cid)
         if friend == cid:
@@ -167,6 +170,32 @@ class FunShow:
         self.remember(f"{who} splashed {target} with {name.replace('_', ' ')}")
         CLIPS.mark("potion", f"{who} splashed {target} with {name}", 1.5)
         await self.tell(friend, f"{who} just hit you with a splash potion of {name.replace('_', ' ')}! React!")
+
+    async def _splash_creature(self, cid: str, name: str, kind: str) -> None:
+        from .minecraft_mode import _numbers
+
+        who = self.e.names[cid]
+        sel = f"@e[type=minecraft:{kind},sort=nearest,limit=1,distance=..32]"
+        pos = _numbers(await self.rcon(f"execute at {who} run data get entity {sel} Pos", reply=True))
+        if len(pos) < 3:
+            await self.tell(cid, f"There is no {kind.replace('_', ' ')} close enough to splash. Say so, funny.")
+            return
+        seconds, level = EFFECTS[name]
+        await self.rcon(
+            f"item replace entity {who} weapon.mainhand with minecraft:splash_potion"
+            f'[minecraft:potion_contents={{custom_effects:[{{id:"minecraft:{name}",duration:{seconds * 20},'
+            f"amplifier:{level}}}]}}]")
+        self.e._chose_at[cid] = time.time() + 6 - CHOICE_HOLD()
+        await asyncio.sleep(0.3)
+        await self.e._command(cid, f"!gesture({pos[0]:.1f}, {pos[1] + 0.6:.1f}, {pos[2]:.1f}, 1)")
+        await asyncio.sleep(1.4)
+        at = f"@e[type=minecraft:{kind},sort=nearest,limit=1,x={pos[0]:.1f},y={pos[1]:.1f},z={pos[2]:.1f},distance=..4]"
+        await self.rcon(f"effect give {at} minecraft:{name} {seconds} {level}")  # also when the throw missed
+        await self.rcon(f"particle minecraft:splash {pos[0]:.1f} {pos[1] + 0.5:.1f} {pos[2]:.1f} 0.5 0.5 0.5 0.2 50")
+        self.remember(f"{who} splashed a {kind.replace('_', ' ')} with {name.replace('_', ' ')}")
+        CLIPS.mark("potion", f"{who} splashed a {kind} with {name}", 1.5)
+        await self.tell(cid, f"You hit the {kind.replace('_', ' ')} with a splash potion of {name.replace('_', ' ')}! "
+                             "React to what happens to it, out loud.")
 
     async def brew(self, cid: str) -> None:
         """A mystery brew: a brewing stand appears next to her, it bubbles, she drinks."""
@@ -370,4 +399,7 @@ def potion_ask(text: str) -> Optional[str]:
         for name in (effect_name(f"{a}_{b}"), effect_name(a)):
             if name in EFFECTS:
                 return name
+    if re.search(r"\b(?:something|anything|random|mystery|surprise|any|whatever)\b", low) or re.search(
+            r"\bsplash\b", low):
+        return random.choice(MYSTERY)  # "splash something on that chicken": a surprise
     return None

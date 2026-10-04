@@ -663,3 +663,42 @@ def test_magic_is_not_a_build():
         assert sp.spells_asked("make the tower bigger") == [] and sp.spells_asked("build a giant tower") == []
 
     asyncio.run(run())
+
+
+def test_splash_that_chicken_and_place_gold_there():
+    from src.open_llm_vtuber.room import minecraft_fun as fun
+
+    assert fun.potion_ask("splash something on that chicken") in fun.MYSTERY
+    assert asks.creature_named("splash something on that chicken") == "chicken"
+    assert asks.place_there_asked("place some in that block over there, use gold") == ("gold_block", 3)
+    assert asks.place_there_asked("put 5 diamond blocks where you're looking") == ("diamond_block", 5)
+    assert asks.place_there_asked("put your hands up") == ("", 0)
+
+    async def run():
+        eng = _engine()
+        eng.creative = True
+        eng.projects.state.update({"base": [0, 64, 0]})
+        eng._pos["mika"] = (0.0, 70.0, 0.0)
+        splashed, laid = [], []
+
+        async def splash(cid, effect, at=""):
+            splashed.append((cid, at))
+
+        async def look(cid, reason=""):
+            eng.eyes.looking_at[cid] = (5, 64, 7, "grass_block", mm.time.time())
+            return ""
+
+        async def lay(cid, run, hover=None, look=None):
+            laid.append((cid, run))
+            return True
+
+        eng.fun.splash, eng.eyes.look, eng._lay_by_hand = splash, look, lay
+        eng.enqueue("fan", "Mika splash something on that chicken")
+        eng.enqueue("fan2", "place some in that block over there, use gold")
+        for _ in range(3):
+            await asyncio.sleep(0)
+        assert splashed == [("mika", "chicken")]
+        assert laid == [("mika", "fill {x5} {y1} {z7} {x5} {y3} {z7} minecraft:gold_block")]  # 3 on top of it
+        assert not eng._free_waiting  # not a build, not a restyle
+
+    asyncio.run(run())
