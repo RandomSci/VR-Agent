@@ -3337,13 +3337,22 @@ class MinecraftEngine:
         laid by hand."""
         cid = self._camera_girl()
         base = self.projects.state.get("base")
+        if not base:
+            return
         await self.eyes.look(cid)  # what she is looking at right now
         spot = self.eyes.looking_at.get(cid)
-        if not base or not spot or time.time() - spot[4] > 10:
-            await self.link.emit("send-message", self.names[cid], {"from": "system", "message": (
-                f"You are not looking at any block close enough to put {block.replace('_', ' ')} on. Say so and "
-                "ask chat to point you to one.")})
-            return
+        if not spot or time.time() - spot[4] > 10:
+            # her eyes did not say (a bot from before the restart, or she looks
+            # at the sky): on the ground right in front of her, never nothing
+            here = self._pos.get(cid)
+            if not here:
+                logger.warning(f"Minecraft: {who}'s {block} could not be placed (no position for {self.names[cid]})")
+                return
+            fx, fz = self._facing(cid)
+            gx, gz = int(here[0] + fx * 4), int(here[2] + fz * 4)
+            gy = await ground_height(gx, gz, int(here[1])) - 1
+            spot = (gx, gy, gz, "ground", time.time())
+            logger.info(f"Minecraft: no looked-at block from {self.names[cid]}'s eyes, {block} goes in front of her")
         x, y, z, under, _at = spot
         bx, by, bz = base
         self._chose_at[cid] = time.time() + 12 - CHOICE_HOLD  # the build waits while she does it

@@ -763,3 +763,28 @@ def test_effect_spells_and_a_beam_from_her_hand(monkeypatch):
         assert first < 2 and last > 5
 
     asyncio.run(run())
+
+
+def test_gold_goes_in_front_of_her_when_her_eyes_do_not_say(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng.projects.state.update({"base": [0, 64, 0]})
+        eng._pos["mika"] = (0.0, 70.0, 0.0)
+        laid = []
+
+        async def look(cid, reason=""):
+            return ""  # an old bot: no looked-at block
+
+        async def lay(cid, run, hover=None, look=None):
+            laid.append(run)
+            return True
+
+        async def ground(x, z, near):
+            return 65
+
+        monkeypatch.setattr(mm, "ground_height", ground)
+        eng.eyes.look, eng._lay_by_hand = look, lay
+        await eng._place_there("gold_block", 1, "fan")
+        assert laid and laid[0].endswith("minecraft:gold_block") and "{y1}" in laid[0]  # on the ground (y 64 + 1)
+
+    asyncio.run(run())
