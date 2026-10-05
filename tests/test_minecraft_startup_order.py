@@ -56,6 +56,28 @@ def test_minecraft_graphical_client_timeout_falls_back(monkeypatch):
     assert asyncio.run(run()) == (True, False)
 
 
+def test_failed_camera_client_attempt_does_not_release_obs_readiness(monkeypatch):
+    async def run():
+        session = NS(mode_engine=None)
+        monkeypatch.setattr(mm, "minecraft_mode_enabled", lambda: True)
+        monkeypatch.setattr(mm, "MinecraftEngine", FakeEngine)
+        monkeypatch.setenv("MINECRAFT_OBS_START_WAIT_SECONDS", "30")
+        task = asyncio.create_task(mm.prepare_minecraft_before_obs(session))
+        await asyncio.sleep(0)
+        session.mode_engine.camera_client_ok = False
+        # A failed internal attempt must not set readiness. OBS should still wait.
+        await asyncio.sleep(0)
+        waiting = not task.done()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return waiting
+
+    assert asyncio.run(run()) is True
+
+
 def test_startup_wait_cancels_cleanly(monkeypatch):
     async def run():
         session = NS(mode_engine=None)

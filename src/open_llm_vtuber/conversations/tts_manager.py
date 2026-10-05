@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import uuid
 from datetime import datetime
@@ -11,6 +12,10 @@ from ..live2d_model import Live2dModel
 from ..tts.tts_interface import TTSInterface
 from ..utils.stream_audio import prepare_audio_payload
 from .types import WebSocketSend
+
+
+def _speech_debug() -> bool:
+    return os.environ.get("VR_SPEECH_DEBUG", "1").strip().lower() not in ("0", "false", "off", "no")
 
 
 class TTSTaskManager:
@@ -65,6 +70,11 @@ class TTSTaskManager:
         logger.debug(
             f"🏃Queuing TTS task for: '''{tts_text}''' (by {display_text.name})"
         )
+        if _speech_debug():
+            logger.warning(
+                "SPEECH_DIAG tts request queued "
+                f"speaker={display_text.name} chars={len(tts_text)} engine={type(tts_engine).__module__}.{type(tts_engine).__name__}"
+            )
 
         # Get current sequence number
         current_sequence = self._sequence_counter
@@ -105,6 +115,15 @@ class TTSTaskManager:
                 # Send payloads in order
                 while self._next_sequence_to_send in buffered_payloads:
                     next_payload = buffered_payloads.pop(self._next_sequence_to_send)
+                    if _speech_debug():
+                        audio = next_payload.get("audio")
+                        logger.warning(
+                            "SPEECH_DIAG websocket audio send "
+                            f"seq={self._next_sequence_to_send} type={next_payload.get('type')} "
+                            f"audio_chars={len(audio) if isinstance(audio, str) else 0} "
+                            f"volumes={len(next_payload.get('volumes') or [])} "
+                            f"slice_ms={next_payload.get('slice_length')}"
+                        )
                     await websocket_send(json.dumps(next_payload))
                     self._next_sequence_to_send += 1
 
@@ -139,7 +158,15 @@ class TTSTaskManager:
         """Process TTS generation and queue the result for ordered delivery"""
         audio_file_path = None
         try:
+            if _speech_debug():
+                logger.warning(f"SPEECH_DIAG tts synthesis begin seq={sequence_number} chars={len(tts_text)}")
             audio_file_path = await self._generate_audio(tts_engine, tts_text)
+            if _speech_debug():
+                try:
+                    size = os.path.getsize(str(audio_file_path))
+                except Exception:
+                    size = -1
+                logger.warning(f"SPEECH_DIAG tts synthesis result seq={sequence_number} path={audio_file_path} bytes={size}")
             payload = prepare_audio_payload(
                 audio_path=audio_file_path,
                 display_text=display_text,
@@ -169,6 +196,8 @@ class TTSTaskManager:
 
         usage.record_tts(getattr(tts_engine, "_vr_usage_source", None) or "tts_manager")
         logger.debug(f"🏃Generating audio for '''{text}'''...")
+        if _speech_debug():
+            logger.warning(f"SPEECH_DIAG tts engine call begin engine={type(tts_engine).__name__} chars={len(text)}")
         return await tts_engine.async_generate_audio(
             text=text,
             file_name_no_ext=f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}",

@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import contextvars
 import json
+import os
 import time
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -330,6 +331,10 @@ INSIDE_INTERACTION: contextvars.ContextVar[bool] = contextvars.ContextVar(
 TTS_TIMEOUT = 30.0  # one line's audio must be ready within this (a hung voice service)
 
 
+def _speech_debug() -> bool:
+    return os.environ.get("VR_SPEECH_DEBUG", "1").strip().lower() not in ("0", "false", "off", "no")
+
+
 class SpeakingCoordinator:
     """One voice at a time. Every line goes through ``say``."""
 
@@ -383,6 +388,12 @@ class SpeakingCoordinator:
             self.session.record_failure(character_id, "tts unavailable")
             return False
         client_uid, send = target
+        if _speech_debug():
+            logger.warning(
+                "SPEECH_DIAG room say start "
+                f"character={character_id} client_uid={client_uid} text_chars={len(text)} "
+                f"engine={type(engine).__module__}.{type(engine).__name__}"
+            )
         produced = {"audio": 0, "silent": 0, "ms": 0.0}
 
         async def tagged_send(payload: str) -> None:
@@ -399,6 +410,13 @@ class SpeakingCoordinator:
                 else:
                     produced["silent"] += 1
                 payload = json.dumps(data)
+                if _speech_debug():
+                    logger.warning(
+                        "SPEECH_DIAG room tagged audio payload "
+                        f"character={character_id} audio={bool(data.get('audio'))} "
+                        f"audio_chars={len(data.get('audio') or '')} volumes={len(data.get('volumes') or [])} "
+                        f"slice_ms={data.get('slice_length')} client_uid={client_uid}"
+                    )
             await send(payload)
 
         async with self._turn():
@@ -456,8 +474,16 @@ class SpeakingCoordinator:
                     )
                 )
                 await asyncio.sleep(0)
+                if _speech_debug():
+                    logger.warning(
+                        "SPEECH_DIAG backend-synth-complete send "
+                        f"client_uid={client_uid} audio_chunks={produced['audio']} silent={produced['silent']} "
+                        f"audio_ms={produced['ms']:.0f}"
+                    )
                 await send(json.dumps({"type": "backend-synth-complete"}))
                 await waiter
+                if _speech_debug():
+                    logger.warning(f"SPEECH_DIAG frontend playback complete received client_uid={client_uid}")
                 ok = produced["audio"] > 0
                 if ok:
                     self.lines_spoken += 1

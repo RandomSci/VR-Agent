@@ -69,6 +69,7 @@ def test_preventive_reconnect_disabled_for_zero(monkeypatch):
 
 
 def test_preventive_reconnect_valid_sixty_minutes(monkeypatch):
+    monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_ENABLED", "1")
     monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
     assert _engine()._preventive_reconnect_seconds == 3600.0
 
@@ -125,6 +126,7 @@ def test_profile_has_no_emoji_and_no_fighting_modes():
 
 def test_preventive_reconnect_calls_existing_helper(monkeypatch):
     async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_ENABLED", "1")
         monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
         eng = _engine()
         eng._preventive_next_at = 1.0
@@ -154,6 +156,7 @@ def test_preventive_reconnect_calls_existing_helper(monkeypatch):
 
 def test_preventive_reconnect_does_not_run_while_recovery_lock_held(monkeypatch):
     async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_ENABLED", "1")
         monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
         eng = _engine()
         eng._preventive_next_at = 1.0
@@ -180,11 +183,12 @@ def test_preventive_reconnect_does_not_run_while_recovery_lock_held(monkeypatch)
 
 def test_preventive_timer_resets_after_successful_watchdog_recovery(monkeypatch):
     async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_ENABLED", "1")
         monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
         eng = _engine()
         eng._preventive_next_at = 1.0
 
-        async def recovered():
+        async def recovered(reason="visual"):
             return True
 
         eng._run_visual_recovery_locked = recovered
@@ -196,6 +200,7 @@ def test_preventive_timer_resets_after_successful_watchdog_recovery(monkeypatch)
 
 def test_failed_preventive_reconnect_escalates_existing_recovery(monkeypatch):
     async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_ENABLED", "1")
         monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
         eng = _engine()
         eng._preventive_next_at = 1.0
@@ -292,6 +297,7 @@ def test_camera_client_task_exits_during_shutdown(monkeypatch):
 
 def test_preventive_reconnect_cannot_escalate_during_shutdown(monkeypatch):
     async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_ENABLED", "1")
         monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
         eng = _engine()
         eng._preventive_next_at = 1.0
@@ -321,6 +327,7 @@ def test_preventive_reconnect_cannot_escalate_during_shutdown(monkeypatch):
 
 def test_preventive_reconnect_task_shuts_down_cleanly(monkeypatch):
     async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_ENABLED", "1")
         monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
         eng = _engine()
         eng._ending = True
@@ -370,32 +377,32 @@ def test_follow_luna_and_return_to_mika():
     assert eng.cam_focus == "mika"
 
 
-def test_physical_0_maps_to_follow_mika(monkeypatch):
+def test_physical_f7_maps_to_follow_mika(monkeypatch):
     async def run():
         eng = _engine()
         eng.enter_free_roam()
         monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_true())
-        assert await eng._handle_camera_key("0")
+        assert await eng._handle_camera_key("F7")
         return eng.camera_mode, eng.cam_focus
 
     assert asyncio.run(run()) == (mm.FOLLOW_MIKA, "mika")
 
 
-def test_physical_9_maps_to_follow_luna(monkeypatch):
+def test_physical_f8_maps_to_follow_luna(monkeypatch):
     async def run():
         eng = _engine()
         monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_true())
-        assert await eng._handle_camera_key("9")
+        assert await eng._handle_camera_key("F8")
         return eng.camera_mode, eng.cam_focus
 
     assert asyncio.run(run()) == (mm.FOLLOW_LUNA, "luna")
 
 
-def test_physical_8_maps_to_free_roam(monkeypatch):
+def test_physical_f6_maps_to_free_roam(monkeypatch):
     async def run():
         eng = _engine()
         monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_true())
-        assert await eng._handle_camera_key("8")
+        assert await eng._handle_camera_key("F6")
         return eng.camera_mode
 
     assert asyncio.run(run()) == mm.FREE_ROAM
@@ -405,7 +412,7 @@ def test_physical_keys_ignored_if_minecraft_not_focused(monkeypatch):
     async def run():
         eng = _engine()
         monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_false())
-        assert not await eng._handle_camera_key("8")
+        assert not await eng._handle_camera_key("F6")
         return eng.camera_mode
 
     assert asyncio.run(run()) == mm.FOLLOW_MIKA
@@ -426,6 +433,20 @@ def test_camera_key_listener_inactive_outside_minecraft_mode(monkeypatch):
         return called
 
     assert asyncio.run(run()) is False
+
+
+def test_camera_key_listener_missing_xinput_disables_without_crash(monkeypatch):
+    async def run():
+        eng = _engine()
+        monkeypatch.setattr(mm.shutil, "which", lambda name: None)
+        await eng._camera_key_loop()
+        return True
+
+    assert asyncio.run(run()) is True
+
+
+def test_camera_key_map_defaults_to_function_keys():
+    assert _engine()._camera_key_map() == {72: "F6", 73: "F7", 74: "F8"}
 
 
 def test_camera_key_listener_stops_on_shutdown(monkeypatch):
@@ -458,7 +479,7 @@ def test_camera_mode_uses_existing_methods_for_physical_keys(monkeypatch):
             calls.append("mika")
 
         eng.return_to_mika = follow
-        await eng._handle_camera_key("0")
+        await eng._handle_camera_key("F7")
         return calls
 
     assert asyncio.run(run()) == ["mika"]
@@ -468,14 +489,25 @@ def test_follow_modes_resume_after_physical_keys(monkeypatch):
     async def run():
         eng = _engine()
         monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_true())
-        await eng._handle_camera_key("8")
-        await eng._handle_camera_key("0")
+        await eng._handle_camera_key("F6")
+        await eng._handle_camera_key("F7")
         mika = eng.camera_mode
-        await eng._handle_camera_key("9")
+        await eng._handle_camera_key("F8")
         luna = eng.camera_mode
         return mika, luna
 
     assert asyncio.run(run()) == (mm.FOLLOW_MIKA, mm.FOLLOW_LUNA)
+
+
+def test_number_keys_no_longer_control_camera(monkeypatch):
+    async def run():
+        eng = _engine()
+        monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_true())
+        return [await eng._handle_camera_key(k) for k in ("0", "9", "8")], eng.camera_mode
+
+    handled, mode = asyncio.run(run())
+    assert handled == [False, False, False]
+    assert mode == mm.FOLLOW_MIKA
 
 
 def test_manual_detach_state_persists():
@@ -664,6 +696,117 @@ def test_reconnect_recovery_sets_grace_period(monkeypatch):
     active, calls = asyncio.run(run())
     assert active
     assert calls == ["reconnect", "restart"]
+
+
+def test_static_visual_with_multiplayer_healthy_does_not_recover(monkeypatch):
+    async def run():
+        eng = _engine()
+        calls = []
+
+        async def health():
+            return {"process_alive": True, "game_window_exists": True, "multiplayer_connected": True}
+
+        async def recover(reason="visual"):
+            calls.append(reason)
+
+        monkeypatch.setattr(mm, "minecraft_hard_health", health)
+        eng._recover_visual = recover
+        await eng._handle_visual_suspect(0.0, "Scene 1")
+        return calls, eng._visual_detector.strikes
+
+    assert asyncio.run(run()) == ([], 0)
+
+
+def test_missing_multiplayer_connection_reconnects_not_restart(monkeypatch):
+    async def run():
+        eng = _engine()
+        calls = []
+
+        async def health():
+            return {"process_alive": True, "game_window_exists": True, "multiplayer_connected": False}
+
+        async def recover(reason="visual"):
+            calls.append(reason)
+
+        monkeypatch.setattr(mm, "minecraft_hard_health", health)
+        eng._recover_visual = recover
+        await eng._handle_visual_suspect(0.0, "Scene 1")
+        return calls
+
+    assert asyncio.run(run()) == ["reconnect"]
+
+
+def test_missing_process_and_window_allows_restart(monkeypatch):
+    async def run():
+        eng = _engine()
+        calls = []
+
+        async def health():
+            return {"process_alive": False, "game_window_exists": False, "multiplayer_connected": False}
+
+        async def recover(reason="visual"):
+            calls.append(reason)
+
+        monkeypatch.setattr(mm, "minecraft_hard_health", health)
+        eng._recover_visual = recover
+        await eng._handle_visual_suspect(0.0, "Scene 1")
+        return calls
+
+    assert asyncio.run(run()) == ["restart"]
+
+
+def test_one_valid_frame_with_multiplayer_health_verifies_recovery(monkeypatch):
+    async def run():
+        eng = _engine()
+
+        async def health():
+            return {"process_alive": True, "game_window_exists": True, "multiplayer_connected": True}
+
+        async def capture(*args, **kwargs):
+            import io
+            from PIL import Image
+
+            img = Image.new("L", (4, 4), 1)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+
+        monkeypatch.setattr(mm, "minecraft_hard_health", health)
+        from src.open_llm_vtuber.publishing import obs_control
+
+        monkeypatch.setattr(obs_control, "capture_obs_frame", capture)
+        assert await eng._verify_visual_movement()
+
+    asyncio.run(run())
+
+
+def test_backup_scene_returns_after_confirmed_multiplayer_health(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng._visual_in_backup = True
+        eng._visual_scene = "Scene 1"
+        calls = []
+
+        async def health():
+            return {"process_alive": True, "game_window_exists": True, "multiplayer_connected": True}
+
+        async def set_scene(scene):
+            calls.append(scene)
+
+        monkeypatch.setattr(mm, "minecraft_hard_health", health)
+        from src.open_llm_vtuber.publishing import obs_control
+
+        monkeypatch.setattr(obs_control, "set_program_scene", set_scene)
+        await eng._maybe_return_from_backup(force=True)
+        return calls, eng._visual_in_backup
+
+    assert asyncio.run(run()) == (["Scene 1"], False)
+
+
+def test_preventive_reconnect_defaults_disabled_even_when_minutes_set(monkeypatch):
+    monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
+    monkeypatch.delenv("MINECRAFT_PREVENTIVE_RECONNECT_ENABLED", raising=False)
+    assert _engine()._preventive_reconnect_seconds == 0.0
 
 
 class FakeLink:

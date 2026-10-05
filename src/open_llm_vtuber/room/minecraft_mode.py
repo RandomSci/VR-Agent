@@ -94,6 +94,7 @@ from .minecraft_visual_watchdog import (
     disconnect_reconnect_minecraft_client,
     ensure_minecraft_client_connected,
     focus_and_click_minecraft,
+    minecraft_hard_health,
     minecraft_window_exists,
     parse_crop,
     restart_minecraft_camera_client,
@@ -789,6 +790,7 @@ class MinecraftEngine:
         self._visual_last_switch = 0.0
         self._visual_grace_until = 0.0
         self._visual_diag_at = 0.0
+        self._last_visual_checksum = 0
         self._visual_recovery_lock = asyncio.Lock()
         self._preventive_reconnect_seconds = self._preventive_reconnect_interval()
         self._preventive_next_at = 0.0
@@ -1564,27 +1566,27 @@ class MinecraftEngine:
             self.camera_client_ok = True
             self.camera_client_ready.set()
             return
-        try:
-            while not await port_open(self.port):
-                if self._ending:
-                    return
-                await asyncio.sleep(3.0)
+        while not await port_open(self.port):
             if self._ending:
                 return
-            self._visual_grace("startup")
-            ok = await ensure_minecraft_client_connected()
-            self.camera_client_ok = bool(ok)
-            if self._ending:
-                return
-            if ok:
-                logger.info("Minecraft: graphical camera client is connected")
-                self._reset_preventive_reconnect_timer()
-            else:
-                logger.warning("Minecraft: graphical camera client could not be connected automatically")
-        finally:
+            await asyncio.sleep(3.0)
+        if self._ending:
+            return
+        self._visual_grace("startup")
+        ok = await ensure_minecraft_client_connected()
+        self.camera_client_ok = bool(ok)
+        if self._ending:
+            return
+        if ok:
+            logger.info("Minecraft: graphical camera client is connected")
+            self._reset_preventive_reconnect_timer()
             self.camera_client_ready.set()
+        else:
+            logger.warning("Minecraft: graphical camera client could not be connected automatically")
 
     def _preventive_reconnect_interval(self) -> float:
+        if os.environ.get("MINECRAFT_PREVENTIVE_RECONNECT_ENABLED", "0").strip().lower() not in ("1", "true", "yes", "on"):
+            return 0.0
         raw = os.environ.get("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "").strip()
         if not raw:
             return 0.0
@@ -1710,8 +1712,7 @@ class MinecraftEngine:
                     if self._ending or self._visual_grace_active():
                         self._visual_detector.reset()
                         continue
-                    logger.warning("WATCHDOG visual unhealthy")
-                    await self._recover_visual()
+                    await self._handle_visual_suspect(sample.score, current_scene)
                 elif sample.strikes:
                     logger.warning(
                         f"WATCHDOG visual diff={sample.score:.2f} strike={sample.strikes}/"
@@ -1724,6 +1725,31 @@ class MinecraftEngine:
                 raise
             except Exception as exc:
                 logger.debug(f"WATCHDOG visual check failed: {exc}")
+
+    async def _handle_visual_suspect(self, diff: float, current_scene: str) -> None:
+        health = await minecraft_hard_health()
+        if health["process_alive"] and health["game_window_exists"] and health["multiplayer_connected"]:
+            self._visual_detector.reset()
+            self.health_state.visual_healthy = True
+            self._log_watchdog_health(diff, current_scene, "NONE_STATIC_ALLOWED", health)
+            if self._visual_in_backup:
+                await self._maybe_return_from_backup(force=True)
+            return
+        if health["process_alive"] and health["game_window_exists"] and not health["multiplayer_connected"]:
+            self._log_watchdog_health(diff, current_scene, "RECONNECT", health)
+            await self._recover_visual(reason="reconnect")
+            return
+        self._log_watchdog_health(diff, current_scene, "RESTART_CLIENT", health)
+        await self._recover_visual(reason="restart")
+
+    def _log_watchdog_health(self, diff: float, current_scene: str, action: str, health: dict[str, bool]) -> None:
+        logger.warning(
+            "WATCHDOG HEALTH "
+            f"process={int(health.get('process_alive', False))} "
+            f"window={int(health.get('game_window_exists', False))} "
+            f"multiplayer={int(health.get('multiplayer_connected', False))} "
+            f"visual_diff={diff:.2f} program_scene={current_scene!r} action={action}"
+        )
 
     def _log_visual_diagnostics(
         self,
@@ -1793,6 +1819,12 @@ class MinecraftEngine:
         previous = decode_gray(
             await obs_control.capture_obs_frame(width, height, quality, source_name=self._visual_source), crop
         )
+        health = await minecraft_hard_health()
+        if health["process_alive"] and health["game_window_exists"] and health["multiplayer_connected"]:
+            self._visual_detector.reset()
+            self.health_state.visual_healthy = True
+            logger.info("WATCHDOG visual recovery verified by hard health plus valid OBS frame")
+            return True
         healthy = 0
         for _ in range(needed):
             await asyncio.sleep(wait)
@@ -1818,7 +1850,7 @@ class MinecraftEngine:
             return True
         return False
 
-    async def _recover_visual(self) -> None:
+    async def _recover_visual(self, reason: str = "visual") -> None:
         if self._ending:
             return
         now = time.time()
@@ -1830,7 +1862,7 @@ class MinecraftEngine:
             try:
                 if self._ending:
                     return
-                success = await self._run_visual_recovery_locked()
+                success = await self._run_visual_recovery_locked(reason=reason)
                 if success:
                     self._reset_preventive_reconnect_timer()
             except Exception as exc:
@@ -1838,9 +1870,17 @@ class MinecraftEngine:
             finally:
                 self._visual_recovery.finish_recovery(success, time.time())
 
-    async def _run_visual_recovery_locked(self) -> bool:
+    async def _run_visual_recovery_locked(self, reason: str = "visual") -> bool:
         """Run the shared visual recovery ladder while the recovery lock is held."""
         if self._ending:
+            return False
+        health = await minecraft_hard_health()
+        if reason != "restart" and health.get("process_alive") and health.get("game_window_exists") and health.get("multiplayer_connected"):
+            logger.warning("WATCHDOG visual static but hard health is good; destructive recovery cancelled")
+            self._visual_detector.reset()
+            return True
+        if reason == "restart" and (health.get("process_alive") or health.get("game_window_exists")):
+            logger.warning("WATCHDOG restart blocked: process/window still exists")
             return False
         logger.warning("WATCHDOG focusing Minecraft")
         clicked = await focus_and_click_minecraft()
@@ -1856,7 +1896,7 @@ class MinecraftEngine:
             logger.warning("WATCHDOG visual recovered after focus/click")
             await self._maybe_return_from_backup(force=True)
             return True
-        if step.name == "DISCONNECT_RECONNECT":
+        if step.name == "DISCONNECT_RECONNECT" and reason != "restart":
             if self._ending:
                 return False
             self._visual_grace("disconnect/reconnect")
@@ -1874,7 +1914,11 @@ class MinecraftEngine:
                 logger.warning("WATCHDOG visual recovered after disconnect/reconnect")
                 await self._maybe_return_from_backup(force=True)
                 return True
-        if step.name == "BACKUP":
+        health = await minecraft_hard_health()
+        if health.get("process_alive") or health.get("game_window_exists"):
+            logger.warning("WATCHDOG backup/restart blocked: Minecraft process or window still exists")
+            return False
+        if step.name == "BACKUP" or reason == "restart":
             if self._ending:
                 return False
             self._visual_grace("backup scene")
@@ -1930,6 +1974,9 @@ class MinecraftEngine:
         if self._ending:
             return
         if not self._visual_in_backup:
+            return
+        health = await minecraft_hard_health()
+        if not (health["process_alive"] and health["game_window_exists"] and health["multiplayer_connected"]):
             return
         cooldown = float(os.environ.get("MINECRAFT_BACKUP_COOLDOWN", "20") or 20)
         if not force and time.time() - self._visual_last_switch < cooldown:
@@ -2301,6 +2348,7 @@ class MinecraftEngine:
 
     def enter_free_roam(self) -> None:
         self.set_camera_mode(FREE_ROAM)
+        self.cam_focus = ""
         self._shot = None
         self._cam_ready = False
         logger.info("Minecraft camera: FREE_ROAM mode")
@@ -2313,26 +2361,26 @@ class MinecraftEngine:
             return False
         if not await active_window_is_minecraft():
             return False
-        if key == "0":
+        if key == "F7":
             self.return_to_mika()
             if self.camera_on:
                 await self._spectate()
-            logger.info("Minecraft camera: physical 0 -> FOLLOW_MIKA")
+            logger.info("Minecraft camera: physical F7 -> FOLLOW_MIKA")
             return True
-        if key == "9":
+        if key == "F8":
             self.return_to_luna()
             if self.camera_on:
                 await self._spectate()
-            logger.info("Minecraft camera: physical 9 -> FOLLOW_LUNA")
+            logger.info("Minecraft camera: physical F8 -> FOLLOW_LUNA")
             return True
-        if key == "8":
+        if key == "F6":
             self.enter_free_roam()
-            logger.info("Minecraft camera: physical 8 -> FREE_ROAM")
+            logger.info("Minecraft camera: physical F6 -> FREE_ROAM")
             return True
         return False
 
     def _camera_key_map(self) -> dict[int, str]:
-        raw = os.environ.get("MINECRAFT_CAMERA_KEYCODES", "19:0,18:9,17:8")
+        raw = os.environ.get("MINECRAFT_CAMERA_KEYCODES", "72:F6,73:F7,74:F8")
         out: dict[int, str] = {}
         for part in raw.split(","):
             if ":" not in part:
@@ -2342,7 +2390,7 @@ class MinecraftEngine:
                 out[int(code.strip())] = key.strip()
             except ValueError:
                 continue
-        return out or {19: "0", 18: "9", 17: "8"}
+        return out or {72: "F6", 73: "F7", 74: "F8"}
 
     async def _camera_key_loop(self) -> None:
         if os.environ.get("MINECRAFT_CAMERA_KEYS", "1").strip().lower() in ("0", "false", "off", "no"):
@@ -2350,8 +2398,9 @@ class MinecraftEngine:
         if self._ending:
             return
         if not shutil.which("xinput"):
-            logger.info("Minecraft camera keys disabled: xinput not found")
+            logger.warning("Minecraft camera keys unavailable: xinput missing")
             return
+        logger.info("Minecraft camera keys active: F6=FREE_ROAM F7=MIKA F8=LUNA")
         keymap = self._camera_key_map()
         proc = await asyncio.create_subprocess_exec(
             "xinput",

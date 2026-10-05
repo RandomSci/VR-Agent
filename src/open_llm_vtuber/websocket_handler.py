@@ -136,6 +136,7 @@ class WebSocketHandler:
             "switch-config": self._handle_config_switch,
             "fetch-backgrounds": self._handle_fetch_backgrounds,
             "audio-play-start": self._handle_audio_play_start,
+            "vr-room-audio-diagnostic": self._handle_vr_room_audio_diagnostic,
             "request-init-config": self._handle_init_config_request,
             "heartbeat": self._handle_heartbeat,
             "vr-agent-hello": self._handle_vr_agent_hello,
@@ -814,6 +815,12 @@ class WebSocketHandler:
             self.room_session.on_client_status(
                 client_uid, data.get("loaded"), data.get("failed")
             )
+
+    async def _handle_vr_room_audio_diagnostic(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        safe = {k: v for k, v in dict(data).items() if k not in {"audio", "type"}}
+        logger.warning(f"SPEECH_DIAG frontend {client_uid}: {safe}")
 
     async def broadcast_to_all(self, payload: str) -> None:
         for websocket in list(self.client_connections.values()):

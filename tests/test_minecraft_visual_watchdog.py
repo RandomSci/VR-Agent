@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from types import SimpleNamespace as NS
 
 import numpy as np
@@ -8,7 +9,6 @@ from src.open_llm_vtuber.room.minecraft_visual_watchdog import (
     RecoveryStep,
     VisualFreezeDetector,
     _crop,
-    diff_score,
 )
 from src.open_llm_vtuber.room import minecraft_visual_watchdog as wd
 
@@ -20,18 +20,34 @@ def test_default_crop_is_center_quarter():
     assert cropped.shape == (90, 160)
 
 
-def test_frame_diff_identical_and_noise_are_frozen():
+def test_frame_diff_identical_frames_are_frozen():
     detector = VisualFreezeDetector(threshold=2.0, strikes_required=3)
     frame = np.zeros((12, 12), dtype=np.uint8)
 
     assert detector.update(frame).healthy
     assert detector.update(frame.copy()).strikes == 1
-    tiny_noise = frame.copy()
-    tiny_noise[0, 0] = 1
-    sample = detector.update(tiny_noise)
+    assert detector.update(frame.copy()).strikes == 2
 
-    assert sample.strikes == 2
-    assert diff_score(frame, tiny_noise) < 2.0
+
+def test_changing_checksum_with_low_diff_does_not_accumulate_false_freeze():
+    detector = VisualFreezeDetector(threshold=2.0, strikes_required=3)
+    frame = np.zeros((12, 12), dtype=np.uint8)
+    detector.update(frame)
+    for i in range(1, 8):
+        changed = frame.copy()
+        changed[i % 12, (i * 3) % 12] = 1
+        sample = detector.update(changed)
+        assert not sample.unhealthy
+        assert sample.strikes == 0
+
+
+def test_truly_static_repeated_frames_still_trigger_recovery():
+    detector = VisualFreezeDetector(threshold=2.0, strikes_required=2)
+    frame = np.zeros((10, 10), dtype=np.uint8)
+
+    detector.update(frame)
+    assert not detector.update(frame.copy()).unhealthy
+    assert detector.update(frame.copy()).unhealthy
 
 
 def test_meaningful_movement_resets_strikes():
@@ -160,17 +176,29 @@ def test_reconnect_timeout(monkeypatch):
 
 def test_xdotool_activation_timeout_retries(monkeypatch):
     attempts = []
+    windows = ["7", "8", "8"]
 
     async def run_tool(args, timeout=4.0):
-        if args[:3] == ["xdotool", "windowactivate", "--sync"]:
+        if args[:4] == ["xdotool", "search", "--onlyvisible", "--name"]:
+            return NS(returncode=0, stdout=f"{windows.pop(0)}\n", stderr="")
+        if args[:2] == ["xdotool", "getwindowname"]:
+            return NS(returncode=0, stdout="Minecraft 1.21.6\n", stderr="")
+        if args[:2] == ["xdotool", "windowactivate"]:
+            assert "--sync" not in args
             attempts.append(args[-1])
+            if len(attempts) == 1:
+                raise subprocess.TimeoutExpired(args, timeout)
             return NS(returncode=1 if len(attempts) < 3 else 0, stdout="", stderr="timeout")
+        if args[:2] == ["xdotool", "getactivewindow"]:
+            return NS(returncode=0, stdout="8\n", stderr="")
         return NS(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(wd, "_run_tool", run_tool)
 
     assert asyncio.run(wd._activate_window("7", attempts=4)) is True
     assert len(attempts) == 3
+    assert attempts[0] == "7"
+    assert attempts[-1] == "8"
 
 
 def test_multiplayer_return_ignored_then_succeeds(monkeypatch):
@@ -247,6 +275,46 @@ def test_crash_popup_handling(monkeypatch):
 
     assert asyncio.run(wd.dismiss_crash_popup()) is True
     assert "Escape" in keys
+
+
+def test_launcher_does_not_start_duplicate_when_process_exists(monkeypatch):
+    launched = []
+
+    async def fake_shell(command):
+        launched.append(command)
+        return NS()
+
+    monkeypatch.setattr(wd.shutil, "which", lambda name: "/usr/bin/xdotool")
+    monkeypatch.setattr(wd, "verify_multiplayer_connected", lambda: _async_false())
+    monkeypatch.setattr(wd, "find_minecraft_game_window", lambda: _async_none())
+    monkeypatch.setattr(wd, "minecraft_process_exists", lambda: _async_true())
+    monkeypatch.setattr(wd.asyncio, "create_subprocess_shell", fake_shell)
+
+    assert asyncio.run(wd.launch_minecraft_client()) is False
+    assert launched == []
+
+
+def test_launcher_single_flight_lock(monkeypatch):
+    launched = []
+
+    async def slow_shell(command):
+        launched.append(command)
+        await asyncio.sleep(0.02)
+        return NS()
+
+    monkeypatch.setattr(wd.shutil, "which", lambda name: "/usr/bin/xdotool")
+    monkeypatch.setattr(wd, "verify_multiplayer_connected", lambda: _async_false())
+    monkeypatch.setattr(wd, "find_minecraft_game_window", lambda: _async_none())
+    monkeypatch.setattr(wd, "minecraft_process_exists", lambda: _async_false())
+    monkeypatch.setattr(wd, "find_launcher_window", lambda: _async_none())
+    monkeypatch.setattr(wd, "_wait_for_launcher", lambda timeout=None: _async_none())
+    monkeypatch.setattr(wd.asyncio, "create_subprocess_shell", slow_shell)
+
+    async def run():
+        return await asyncio.gather(wd.launch_minecraft_client(), wd.launch_minecraft_client())
+
+    assert asyncio.run(run()) == [False, False]
+    assert len(launched) == 1
 
 
 async def _async_true():

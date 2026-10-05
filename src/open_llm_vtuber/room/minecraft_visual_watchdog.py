@@ -8,12 +8,15 @@ import os
 import re
 import shutil
 import subprocess
+import zlib
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
 import numpy as np
 from loguru import logger
+
+_LAUNCH_LOCK: Optional[asyncio.Lock] = None
 
 
 class RecoveryStep(str, Enum):
@@ -101,21 +104,41 @@ class VisualFreezeDetector:
         self.threshold = threshold
         self.strikes_required = strikes_required
         self.previous: Optional[np.ndarray] = None
+        self.previous_checksum = 0
+        self.previous_mean = 0.0
         self.strikes = 0
 
     def reset(self) -> None:
         self.previous = None
+        self.previous_checksum = 0
+        self.previous_mean = 0.0
         self.strikes = 0
 
+    @staticmethod
+    def frame_checksum(frame: np.ndarray) -> int:
+        return int(zlib.adler32(np.ascontiguousarray(frame).tobytes()))
+
     def update(self, frame: np.ndarray, expect_activity: bool = True) -> VisualSample:
+        checksum = self.frame_checksum(frame)
+        mean = float(frame.mean())
         if self.previous is None:
             self.previous = frame
+            self.previous_checksum = checksum
+            self.previous_mean = mean
             self.strikes = 0
             return VisualSample(0.0, 0, False, True)
         score = diff_score(self.previous, frame)
         self.previous = frame
-        if expect_activity and score < self.threshold:
+        checksum_changed = checksum != self.previous_checksum
+        mean_changed = abs(mean - self.previous_mean) >= max(0.02, self.threshold * 0.02)
+        static_score = score <= max(0.03, self.threshold * 0.05)
+        truly_static = static_score and not checksum_changed and not mean_changed
+        self.previous_checksum = checksum
+        self.previous_mean = mean
+        if expect_activity and truly_static:
             self.strikes += 1
+        elif expect_activity and score < self.threshold and self.strikes:
+            self.strikes = max(0, self.strikes - 1)
         else:
             self.strikes = 0
         unhealthy = self.strikes >= self.strikes_required
@@ -193,6 +216,13 @@ async def _run_tool(args: list[str], timeout: float = 4.0) -> subprocess.Complet
     )
 
 
+def _launch_lock() -> asyncio.Lock:
+    global _LAUNCH_LOCK
+    if _LAUNCH_LOCK is None:
+        _LAUNCH_LOCK = asyncio.Lock()
+    return _LAUNCH_LOCK
+
+
 def _env_float(name: str, default: float, low: float = 0.0, high: float = 10_000.0) -> float:
     try:
         return max(low, min(high, float(os.environ.get(name, "") or default)))
@@ -248,11 +278,27 @@ async def active_window_is_minecraft() -> bool:
 
 async def _activate_window(window_id: str, label: str = "game", attempts: int = 10) -> bool:
     for attempt in range(1, attempts + 1):
+        if label == "game":
+            window_id = await find_minecraft_game_window() or window_id
+        if not window_id:
+            logger.warning(f"WATCHDOG {label} activation failed: no window; retrying")
+            await asyncio.sleep(0.5)
+            continue
         logger.warning(f"WATCHDOG {label} activation attempt {attempt}/{attempts}")
-        result = await _run_tool(["xdotool", "windowactivate", "--sync", window_id], timeout=3.0)
-        if result.returncode == 0:
-            await _run_tool(["xdotool", "windowfocus", window_id], timeout=2.0)
-            return True
+        try:
+            result = await _run_tool(["xdotool", "windowactivate", window_id], timeout=3.0)
+            if result.returncode == 0:
+                await _run_tool(["xdotool", "windowfocus", window_id], timeout=2.0)
+                await asyncio.sleep(0.25)
+                if label != "game" or await active_window_is_minecraft():
+                    return True
+            stderr = getattr(result, "stderr", "") or ""
+            if "BadWindow" in stderr:
+                logger.warning(f"WATCHDOG {label} activation BadWindow; reacquiring")
+        except (subprocess.TimeoutExpired, asyncio.TimeoutError, TimeoutError) as exc:
+            logger.warning(f"WATCHDOG {label} activation timed out ({exc}); retrying")
+        except Exception as exc:
+            logger.warning(f"WATCHDOG {label} activation failed ({exc}); retrying")
         logger.warning(f"WATCHDOG {label} activation failed; retrying")
         await asyncio.sleep(0.5)
     return False
@@ -285,6 +331,34 @@ async def verify_multiplayer_connected() -> bool:
         return False
     title = await _window_name(window_id)
     return "multiplayer" in title.lower()
+
+
+async def minecraft_process_exists() -> bool:
+    """Best-effort hard health signal for the graphical Java client."""
+    if not shutil.which("pgrep"):
+        return await find_minecraft_game_window() is not None
+    patterns = (
+        os.environ.get("MINECRAFT_PROCESS_PATTERN", "").strip(),
+        "Minecraft 1.21.6",
+        "minecraft.*client",
+        "net.minecraft.client",
+    )
+    for pattern in [p for p in patterns if p]:
+        result = await _run_tool(["pgrep", "-f", pattern], timeout=2.0)
+        if result.returncode == 0 and result.stdout.strip():
+            return True
+    return False
+
+
+async def minecraft_hard_health() -> dict[str, bool]:
+    window = await find_minecraft_game_window() is not None
+    multiplayer = await verify_multiplayer_connected() if window else False
+    process = await minecraft_process_exists() or window
+    return {
+        "process_alive": process,
+        "game_window_exists": window,
+        "multiplayer_connected": multiplayer,
+    }
 
 
 async def _wait_for_game_window(timeout: float | None = None) -> Optional[str]:
@@ -437,33 +511,44 @@ async def disconnect_reconnect_minecraft_client() -> bool:
 
 
 async def launch_minecraft_client() -> bool:
-    if await verify_multiplayer_connected():
-        return True
-    if not shutil.which("xdotool"):
-        logger.warning("WATCHDOG xdotool not found; cannot launch graphical Minecraft client")
+    lock = _launch_lock()
+    if lock.locked():
+        logger.warning("WATCHDOG launch skipped: launch already in progress")
         return False
-    launcher = await find_launcher_window()
-    if not launcher:
-        command = os.environ.get("MINECRAFT_CLIENT_RESTART_COMMAND", "").strip() or launcher_command()
-        await dismiss_crash_popup()
-        logger.warning(f"WATCHDOG full graphical client restart started: {command}")
-        await asyncio.create_subprocess_shell(command)
-        launcher = await _wait_for_launcher()
-    if not launcher:
-        logger.warning("WATCHDOG launcher timeout")
-        return False
-    if not await _click_launcher_play(launcher):
-        return False
-    logger.warning("WATCHDOG PLAY_CLICKED")
-    game = await _wait_for_game_window()
-    if not game:
-        logger.warning("WATCHDOG game-window timeout")
-        return False
-    await asyncio.sleep(_env_float("MINECRAFT_MAIN_MENU_READY_SECONDS", 8.0, 0.0, 120.0))
-    logger.warning("WATCHDOG GAME_WINDOW_READY")
-    if not await open_multiplayer_screen(game):
-        return False
-    return await join_saved_server(game)
+    async with lock:
+        if await verify_multiplayer_connected():
+            return True
+        if await find_minecraft_game_window() is not None:
+            logger.warning("WATCHDOG launch skipped: Minecraft game window already exists")
+            return False
+        if await minecraft_process_exists():
+            logger.warning("WATCHDOG launch skipped: Minecraft process already exists")
+            return False
+        if not shutil.which("xdotool"):
+            logger.warning("WATCHDOG xdotool not found; cannot launch graphical Minecraft client")
+            return False
+        launcher = await find_launcher_window()
+        if not launcher:
+            command = os.environ.get("MINECRAFT_CLIENT_RESTART_COMMAND", "").strip() or launcher_command()
+            await dismiss_crash_popup()
+            logger.warning(f"WATCHDOG full graphical client restart started: {command}")
+            await asyncio.create_subprocess_shell(command)
+            launcher = await _wait_for_launcher()
+        if not launcher:
+            logger.warning("WATCHDOG launcher timeout")
+            return False
+        if not await _click_launcher_play(launcher):
+            return False
+        logger.warning("WATCHDOG PLAY_CLICKED")
+        game = await _wait_for_game_window()
+        if not game:
+            logger.warning("WATCHDOG game-window timeout")
+            return False
+        await asyncio.sleep(_env_float("MINECRAFT_MAIN_MENU_READY_SECONDS", 8.0, 0.0, 120.0))
+        logger.warning("WATCHDOG GAME_WINDOW_READY")
+        if not await open_multiplayer_screen(game):
+            return False
+        return await join_saved_server(game)
 
 
 async def dismiss_crash_popup() -> bool:

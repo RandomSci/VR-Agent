@@ -937,14 +937,25 @@
   function enqueueAudio(payload) {
     const id = typeof payload.character === "string" ? payload.character : null;
     const character = (id && room.characters.get(id)) || primaryCharacter();
+    audioDiag("enqueue", {
+      character: id || (character && character.id) || null,
+      audioChars: typeof payload.audio === "string" ? payload.audio.length : 0,
+      volumes: Array.isArray(payload.volumes) ? payload.volumes.length : 0,
+      slice: Number(payload.slice_length) || 20,
+      rms: payload.audio_level && payload.audio_level.rms,
+      peak: payload.audio_level && payload.audio_level.peak,
+      textChars: payload.display_text && payload.display_text.text ? payload.display_text.text.length : 0,
+    });
     speech.queue.push({
       character,
       audio: typeof payload.audio === "string" ? payload.audio : null,
+      mime: typeof payload.mime === "string" ? payload.mime : "audio/wav",
       volumes: Array.isArray(payload.volumes) ? payload.volumes : [],
       slice: Number(payload.slice_length) || 20,
       text: payload.display_text && payload.display_text.text,
       actions: payload.actions || null,
       emotionMode: payload.emotion_mode === "profile" ? "profile" : "raw",
+      audioLevel: payload.audio_level || null,
     });
     playNext();
   }
@@ -984,21 +995,44 @@
     };
 
     if (!item.audio) {
+      audioDiag("silent", { textChars: (item.text || "").length });
       begin();
       current.watchdog = setTimeout(finish, Math.min(6000, 800 + (item.text || "").length * 45));
       return;
     }
-    const audio = new Audio("data:audio/wav;base64," + item.audio);
+    const audio = new Audio("data:" + item.mime + ";base64," + item.audio);
     current.audio = audio;
     audio.volume = 1;
-    audio.addEventListener("ended", finish, { once: true });
-    audio.addEventListener("error", finish, { once: true });
+    audioDiag("created", {
+      srcPrefix: audio.src.slice(0, 32),
+      srcChars: audio.src.length,
+      mime: item.mime,
+      muted: audio.muted,
+      volume: audio.volume,
+      playbackRate: audio.playbackRate,
+      readyState: audio.readyState,
+      networkState: audio.networkState,
+      duration: audio.duration,
+      currentTime: audio.currentTime,
+      audioTracks: audio.audioTracks ? audio.audioTracks.length : null,
+      inDom: !!audio.isConnected,
+      documentHidden: document.hidden,
+      visibilityState: document.visibilityState,
+      rms: item.audioLevel && item.audioLevel.rms,
+      peak: item.audioLevel && item.audioLevel.peak,
+      music: music && music.state ? music.state() : null,
+    });
+    audio.addEventListener("playing", () => audioDiag("playing", { currentTime: audio.currentTime, readyState: audio.readyState }), { once: true });
+    audio.addEventListener("ended", () => { audioDiag("ended", { currentTime: audio.currentTime, duration: audio.duration }); finish(); }, { once: true });
+    audio.addEventListener("error", () => { audioDiag("error", { code: audio.error && audio.error.code, message: audio.error && audio.error.message }); finish(); }, { once: true });
     current.watchdog = setTimeout(finish, expectedMs + 5000);
+    audioDiag("play-called", { muted: audio.muted, volume: audio.volume, readyState: audio.readyState, networkState: audio.networkState });
     audio
       .play()
-      .then(begin)
+      .then(() => { audioDiag("play-resolved", { paused: audio.paused, currentTime: audio.currentTime }); begin(); })
       .catch((err) => {
         log("audio blocked", err && err.name);
+        audioDiag("play-rejected", { name: err && err.name, message: err && err.message });
         if (err && err.name === "NotAllowedError") ui.audioHint.hidden = false;
         // Still move the character's mouth and captions so nothing stalls.
         current.audio = null;
@@ -1053,7 +1087,26 @@
   function maybeReportPlaybackComplete() {
     if (!speech.synthComplete) return;
     speech.synthComplete = false;
+    audioDiag("frontend-playback-complete", {});
     sendToServer({ type: "frontend-playback-complete" });
+  }
+
+  function audioDiag(stage, extra) {
+    const payload = Object.assign({}, extra || {}, { type: "vr-room-audio-diagnostic", stage, at: Math.round(now()) });
+    try { log("audio diag", payload); } catch (_) {}
+    sendToServer(payload);
+  }
+
+  function testToneBase64() {
+    const rate = 16000, seconds = 0.35, n = Math.floor(rate * seconds), bytes = 44 + n * 2;
+    const b = new ArrayBuffer(bytes), v = new DataView(b);
+    const s = (o, x) => { for (let i = 0; i < x.length; i++) v.setUint8(o + i, x.charCodeAt(i)); };
+    s(0, "RIFF"); v.setUint32(4, bytes - 8, true); s(8, "WAVEfmt "); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true); s(36, "data"); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.sin(i / rate * Math.PI * 2 * 660) * 12000, true);
+    let out = ""; new Uint8Array(b).forEach((x) => { out += String.fromCharCode(x); });
+    return btoa(out);
   }
 
   function queuePendingAction(name) {
@@ -1906,5 +1959,32 @@
 
       return true;
     },
+  });
+  window.__vrSpeechDiag = () => ({
+    current: speech.current ? {
+      character: speech.current.character && speech.current.character.id,
+      muted: speech.current.audio ? speech.current.audio.muted : null,
+      volume: speech.current.audio ? speech.current.audio.volume : null,
+      paused: speech.current.audio ? speech.current.audio.paused : null,
+      currentTime: speech.current.audio ? speech.current.audio.currentTime : null,
+      duration: speech.current.audio ? speech.current.audio.duration : null,
+      readyState: speech.current.audio ? speech.current.audio.readyState : null,
+      networkState: speech.current.audio ? speech.current.audio.networkState : null,
+      rms: speech.current.item && speech.current.item.audioLevel && speech.current.item.audioLevel.rms,
+      peak: speech.current.item && speech.current.item.audioLevel && speech.current.item.audioLevel.peak,
+    } : null,
+    queue: speech.queue.length,
+    music: music && music.state ? music.state() : null,
+    documentHidden: document.hidden,
+    visibilityState: document.visibilityState,
+  });
+  window.__vrSpeechAudioTest = () => enqueueAudio({
+    type: "audio",
+    mime: "audio/wav",
+    audio: testToneBase64(),
+    volumes: [0.6, 0.9, 0.6],
+    slice_length: 100,
+    display_text: { text: "Speech audio test" },
+    audio_level: { rms: 0.25, peak: 0.75, silent: false },
   });
 })();
