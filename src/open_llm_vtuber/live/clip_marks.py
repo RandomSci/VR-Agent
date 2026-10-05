@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from loguru import logger
 
@@ -48,6 +48,11 @@ class ClipMarks:
         self.live_since: Optional[float] = None
         self.video_id = ""
         self._exact = False  # live_since comes from YouTube itself
+        self._listeners: list[Callable[[Mark], None]] = []
+
+    def add_listener(self, listener: Callable[[Mark], None]) -> None:
+        if listener not in self._listeners:
+            self._listeners.append(listener)
 
     def set_live(
         self, started_at: float, video_id: str = "", exact: bool = True
@@ -73,12 +78,18 @@ class ClipMarks:
     ) -> None:
         at = at or time.time()
         self.marks.append(Mark(at, kind, text.strip()[:120], weight))
+        mark = self.marks[-1]
         when = (
             stamp(self.offset(at))
             if self.live_since
             else time.strftime("%H:%M:%S", time.localtime(at))
         )
         logger.info(f"✂ CLIP {when}  {kind}: {text[:100]}")
+        for listener in list(self._listeners):
+            try:
+                listener(mark)
+            except Exception as exc:
+                logger.debug(f"Clip listener failed: {exc}")
 
     def clips(self) -> list[dict]:
         """Moments merged into clips (45 s around each, close ones together),

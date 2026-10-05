@@ -84,6 +84,18 @@ from .minecraft_safety import MODERATOR, locally_bad
 from .minecraft_fun import potion_ask, wants_race, wants_tnt
 from .minecraft_spells import Spells, creature_asked, spells_asked, target_asked
 from .minecraft_projects import MATERIALS, center, hand_blocks, hand_item, lay, place_sound, write_atomic
+from .minecraft_visual_watchdog import (
+    HealthState,
+    RecoveryStateMachine,
+    VisualFreezeDetector,
+    decode_gray,
+    focus_and_click_minecraft,
+    minecraft_window_exists,
+    parse_crop,
+    reload_minecraft_chunks,
+    restart_minecraft_client_from_env,
+    watchdog_enabled,
+)
 
 MC_DIR = Path("minecraft")
 SERVER_DIR = MC_DIR / "server"
@@ -714,6 +726,20 @@ class MinecraftEngine:
         self._target: dict[str, tuple[float, float, float]] = {}  # where each girl is flying to (absolute)
         self._close_since = 0.0
         self._parted_at = 0.0
+        self.health_state = HealthState()
+        self._visual_detector = VisualFreezeDetector(
+            threshold=float(os.environ.get("MINECRAFT_FREEZE_THRESHOLD", "1.2") or 1.2),
+            strikes_required=int(os.environ.get("MINECRAFT_FREEZE_STRIKES", "4") or 4),
+        )
+        self._visual_recovery = RecoveryStateMachine(
+            int(os.environ.get("MINECRAFT_BACKUP_AFTER_FAILURES", "2") or 2)
+        )
+        self._visual_source = os.environ.get("MINECRAFT_OBS_SOURCE", "").strip()
+        self._visual_scene = ""
+        self._visual_in_backup = False
+        self._visual_healthy_checks = 0
+        self._visual_last_switch = 0.0
+        self._last_latency: dict[str, float] = {}
         from .minecraft_net_show import NetShow
 
         self.net_show = NetShow(self.projects, lambda *a, **k: rcon_command(*a, **k), self._tell_one, self._net_push)
@@ -760,7 +786,14 @@ class MinecraftEngine:
         self.lines.clear()
         self.outbox.clear()
 
-    def enqueue(self, author: str, text: str, paid: str = "", member: bool = False) -> None:
+    def enqueue(
+        self,
+        author: str,
+        text: str,
+        paid: str = "",
+        member: bool = False,
+        received_at: float | None = None,
+    ) -> None:
         """A YouTube chat message for the bots."""
         if self._ending:
             return  # saying goodbye
@@ -773,6 +806,14 @@ class MinecraftEngine:
             logger.info(f"Minecraft: a comment from {author[:3]}... was kept off the stream (unsafe)")
             return
         now = time.time()
+        latency = {
+            "comment_received_at": received_at or now,
+            "intent_started_at": now,
+            "intent_finished_at": 0.0,
+            "ack_started_at": 0.0,
+            "first_audio_at": 0.0,
+            "action_started_at": 0.0,
+        }
         # A regular typing "mika" then "build a dragon" lost the second
         # message (one per 8 s). Now quick messages are answered together;
         # only a real flood is ignored.
@@ -807,6 +848,8 @@ class MinecraftEngine:
         acted = False  # the engine already does what was asked: her bot must not do it a second time
         main, trim = restyle_asked(text) if self.creative else ([], [])
         block, count = place_there_asked(text) if self.creative else ("", 0)
+        ack = ""
+        ack_suppresses_reply = False
         if block:
             # "place some gold on that block over there": where the stream (Mika's eyes) is looking
             _soon(self._place_there(block, count, author))
@@ -827,7 +870,9 @@ class MinecraftEngine:
             if target == caster and not re.search(r"\b(?:yourself|herself|on you)\b", text, re.I):
                 caster = self._friend(caster)  # "make Luna giant": Mika casts it on Luna
             creature = creature_asked(text) if "summon" in spells else ""
-            _soon(self.spells.cast(caster, spells, target, author, creature))
+            ack = f"{author}, spell time. {self.names[caster]} is casting it now!"
+            ack_suppresses_reply = True
+            _soon(self._clip_then("spell", f"{self.names[caster]} casts {'+'.join(spells)}", self.spells.cast(caster, spells, target, author, creature), author, text, latency))
             mixed = " mixed together" if len(spells) > 1 else ""
             heard += (f" ({self.names[caster]} is casting {' and '.join(spells)}{mixed} right now"
                       f"{' (a ' + creature.replace('_', ' ') + ')' if creature else ''}: say a spell word, "
@@ -841,6 +886,8 @@ class MinecraftEngine:
                 # "build another 10 where you stand": another of what they asked before (10 snowmen)
                 request = f"{before[0]} (again, as asked now: {text})"
             self._last_request[author] = (request, now)
+            ack = f"{author}, yes. We're building that next."
+            _soon(self._start_clip("build_request", f"{author}: {request}", author, request))
             heard += self.request_build(request, author, viewer=True, here=here_asked(text))
             acted = True
         elif self.creative and says_stuck(text):
@@ -852,26 +899,36 @@ class MinecraftEngine:
             potion = potion_ask(text) if self.creative else None
             if potion and SPLASH_ASK.search(text) and creature_named(text):
                 kind = creature_named(text)  # "splash something on that chicken"
-                _soon(self.fun.splash(targets[0], potion, at=kind))
+                ack = f"{author}, absolutely. Splash potion incoming."
+                ack_suppresses_reply = True
+                _soon(self._clip_then("potion", f"{self.names[targets[0]]} splashes {kind} with {potion}", self.fun.splash(targets[0], potion, at=kind), author, text, latency))
                 heard += (f" (You are throwing a splash potion of {potion.replace('_', ' ')} at the "
                           f"{kind.replace('_', ' ')} right now: no command needed.)")
                 acted = True
             elif potion and SPLASH_ASK.search(text):
-                _soon(self.fun.splash(targets[0], potion))
+                ack = f"{author}, you're on. Potion prank starting now."
+                ack_suppresses_reply = True
+                _soon(self._clip_then("potion", f"{self.names[targets[0]]} splashes potion {potion}", self.fun.splash(targets[0], potion), author, text, latency))
                 heard += (f" (You are throwing a splash potion of {potion.replace('_', ' ')} at your friend right "
                           "now: no command needed.)")
                 acted = True
             elif potion:
-                _soon(self.fun.drink(targets[0], potion))
+                ack = f"{author}, potion accepted. Let's see what happens."
+                ack_suppresses_reply = True
+                _soon(self._clip_then("potion", f"{self.names[targets[0]]} drinks potion {potion}", self.fun.drink(targets[0], potion), author, text, latency))
                 heard += f" (You are drinking a potion of {potion.replace('_', ' ')} right now: no command needed.)"
                 acted = True
             elif self.creative and wants_race(text):
                 if not self.fun.racing:
-                    _soon(self.fun.race(targets[0]))
+                    ack = f"{author}, you're on. Luna, let's race!"
+                    ack_suppresses_reply = True
+                    _soon(self._clip_then("race", f"{author} requested a race", self.fun.race(targets[0]), author, text, latency))
                 heard += " (The sky race starts right now: no command needed.)"
                 acted = True
             elif self.creative and wants_tnt(text):
-                _soon(self.fun.tnt(targets[0]))
+                ack = f"{author}, TNT coming up. Safely far from the builds!"
+                ack_suppresses_reply = True
+                _soon(self._clip_then("tnt", f"{author} requested TNT", self.fun.tnt(targets[0]), author, text, latency))
                 heard += " (You are placing TNT right now, by hand: no command needed. It only goes off away from your builds.)"
                 acted = True
             elif self.creative and self._finished_builds() and which_build(
@@ -920,6 +977,7 @@ class MinecraftEngine:
                     _soon(self._step_back(author))
                 heard += " (The camera is moving back and up right now for a wider view: no command needed.)"
                 acted = True
+        latency["intent_finished_at"] = time.time()
         # The asked girl answers out loud right away (one short AI call here).
         # Mindcraft alone took minutes: a bot drops its reply whenever another
         # message reaches it while it is still thinking.
@@ -934,7 +992,12 @@ class MinecraftEngine:
         if mentioned and author not in self._topic_fresh(now):
             self._topic[author] = ("place", mentioned, now)
         item = {"who": answer, "author": author, "text": heard, "at": now, "first": first_time,
-                "paid": paid, "member": member, "acted": acted, "raw": text, "named": named}
+                "paid": paid, "member": member, "acted": acted, "raw": text, "named": named,
+                "latency": latency, "acknowledged": bool(ack), "ack_suppresses_reply": ack_suppresses_reply}
+        if ack:
+            latency["ack_started_at"] = time.time()
+            self.viewer_lines.appendleft({"who": answer, "text": ack, "at": time.time(), "latency": latency})
+            self.line_ready.set()
         check = _soon(MODERATOR.flagged(text))  # started now: done before her turn to answer
         item["checks"] = [check] if check is not None else []
         if wants_look(text):
@@ -962,6 +1025,46 @@ class MinecraftEngine:
             # No emoji reaches the bots: they copy what they read.
             self.outbox.append({"to": cid, "from": author, "text": strip_emoji(heard) or heard, "at": now})
         _soon(self._push({"kind": "chat", "author": author, "text": text, "to": targets}))
+
+    async def _start_clip(self, kind: str, text: str, viewer: str = "", request: str = "") -> None:
+        try:
+            from ..publishing.clip_automation import start_clip_event
+
+            await start_clip_event(kind, text, viewer=viewer, request=request)
+        except Exception as exc:
+            logger.debug(f"Minecraft: clip start skipped: {exc}")
+
+    async def _clip_then(
+        self,
+        kind: str,
+        label: str,
+        action: Awaitable[Any],
+        viewer: str,
+        request: str,
+        latency: dict[str, float],
+    ) -> None:
+        await self._start_clip(kind, label, viewer, request)
+        try:
+            delay = max(0.0, min(2.0, float(os.environ.get("CLIP_START_SAFETY_DELAY", "0.3") or 0.3)))
+        except ValueError:
+            delay = 0.3
+        if delay:
+            await asyncio.sleep(delay)
+        latency["action_started_at"] = time.time()
+        self._log_latency(latency)
+        await action
+
+    def _log_latency(self, latency: dict[str, float]) -> None:
+        received = latency.get("comment_received_at") or 0.0
+        if not received:
+            return
+        parts = []
+        if latency.get("first_audio_at"):
+            parts.append(f"comment -> first speech = {(latency['first_audio_at'] - received) * 1000:.0f} ms")
+        if latency.get("action_started_at"):
+            parts.append(f"comment -> action start = {(latency['action_started_at'] - received) * 1000:.0f} ms")
+        if parts:
+            logger.info("LATENCY: " + ", ".join(parts))
 
     async def stop(self) -> None:
         tasks = [t for t in [*self._tasks, self.task, self._answer_task] if t is not None]
@@ -1053,6 +1156,7 @@ class MinecraftEngine:
                 self._supervised("mc-deliver", self._deliver_loop),
                 self._supervised("mc-fidget", self._fidget_loop),
                 self._supervised("mc-watchdog", self._watchdog),
+                self._supervised("mc-visual-watchdog", self._visual_watchdog_loop),
                 self._supervised("mc-camera", self._camera_loop),
                 self._supervised("mc-camera-follow", self._camera_follow),
                 self._supervised("mc-net", self._net_loop),
@@ -1383,6 +1487,184 @@ class MinecraftEngine:
                 logger.warning(f"Minecraft: {names} left the world, restarting Mindcraft")
                 await asyncio.to_thread(stop_one, "mindcraft", 10.0)
                 since = time.time()
+
+    async def _visual_watchdog_loop(self) -> None:
+        """OBS-rendered visual health is separate from server/bot health."""
+        if not watchdog_enabled():
+            return
+        from ..publishing import obs_control
+
+        interval = max(1.0, float(os.environ.get("MINECRAFT_WATCHDOG_INTERVAL", "5") or 5))
+        crop = parse_crop(os.environ.get("MINECRAFT_WATCHDOG_CROP", ""))
+        width = int(os.environ.get("MINECRAFT_WATCHDOG_WIDTH", "320") or 320)
+        height = int(os.environ.get("MINECRAFT_WATCHDOG_HEIGHT", "180") or 180)
+        quality = int(os.environ.get("MINECRAFT_WATCHDOG_QUALITY", "50") or 50)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self._update_health_state()
+                if not self._visual_source:
+                    self._visual_scene = await obs_control.current_program_scene()
+                    self._visual_source = self._visual_scene
+                elif not self._visual_scene:
+                    self._visual_scene = await obs_control.current_program_scene()
+                frame = await obs_control.capture_obs_frame(
+                    width, height, quality, source_name=self._visual_source
+                )
+                gray = decode_gray(frame, crop)
+                sample = self._visual_detector.update(gray, expect_activity=self._backend_visually_active())
+                self.health_state.visual_healthy = not sample.unhealthy
+                self.view["health"] = self.health_state.as_dict()
+                if sample.unhealthy:
+                    logger.warning("WATCHDOG visual unhealthy")
+                    await self._recover_visual()
+                elif sample.strikes:
+                    logger.warning(
+                        f"WATCHDOG visual diff={sample.score:.2f} strike={sample.strikes}/"
+                        f"{self._visual_detector.strikes_required}"
+                    )
+                else:
+                    logger.debug(f"WATCHDOG visual diff={sample.score:.2f} healthy")
+                    await self._maybe_return_from_backup()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug(f"WATCHDOG visual check failed: {exc}")
+
+    async def _update_health_state(self) -> None:
+        now = time.time()
+        self.health_state.server_healthy = await port_open(self.port)
+        self.health_state.agents_healthy = self.link.connected.is_set() and any(
+            now - self._seen_at.get(c, 0) < 45 for c in self.cast
+        )
+        try:
+            self.health_state.minecraft_client_healthy = await minecraft_window_exists()
+        except Exception:
+            self.health_state.minecraft_client_healthy = False
+        self.health_state.stream_healthy = True
+
+    def _backend_visually_active(self) -> bool:
+        now = time.time()
+        if self.fun.racing or self._free_busy or self._building:
+            return True
+        if any(now - t < 90 for t in self._ordered_at.values()):
+            return True
+        if any(kind not in ("", "idle", "stopped", "chatting") for kind in self._kind.values()):
+            return True
+        if any(now - self._seen_at.get(c, 0) < 15 for c in self.cast):
+            # Even idle Minecraft has small camera/HUD changes during the show;
+            # this keeps the visual renderer honest without using vision AI.
+            return True
+        return False
+
+    async def _verify_visual_movement(self) -> bool:
+        from ..publishing import obs_control
+
+        crop = parse_crop(os.environ.get("MINECRAFT_WATCHDOG_CROP", ""))
+        wait = max(1.0, float(os.environ.get("MINECRAFT_RECOVERY_VERIFY_SECONDS", "5") or 5))
+        width = int(os.environ.get("MINECRAFT_WATCHDOG_WIDTH", "320") or 320)
+        height = int(os.environ.get("MINECRAFT_WATCHDOG_HEIGHT", "180") or 180)
+        quality = int(os.environ.get("MINECRAFT_WATCHDOG_QUALITY", "50") or 50)
+        a = decode_gray(await obs_control.capture_obs_frame(width, height, quality, source_name=self._visual_source), crop)
+        await asyncio.sleep(wait)
+        b = decode_gray(await obs_control.capture_obs_frame(width, height, quality, source_name=self._visual_source), crop)
+        from .minecraft_visual_watchdog import diff_score
+
+        score = diff_score(a, b)
+        ok = score >= self._visual_detector.threshold
+        logger.info(f"WATCHDOG recovery verify diff={score:.2f} {'healthy' if ok else 'still frozen'}")
+        if ok:
+            self._visual_detector.reset()
+            self.health_state.visual_healthy = True
+        return ok
+
+    async def _recover_visual(self) -> None:
+        step = self._visual_recovery.visual_failed()
+        if step.value:
+            logger.warning("WATCHDOG focusing Minecraft")
+        clicked = await focus_and_click_minecraft()
+        if clicked:
+            logger.warning("WATCHDOG click recovery sent")
+        recovered = clicked and await self._verify_visual_movement()
+        step = self._visual_recovery.focus_result(recovered)
+        if recovered:
+            logger.warning("WATCHDOG recovery verified")
+            await self._maybe_return_from_backup(force=True)
+            return
+        if step.name == "CLIENT_RELOAD":
+            logger.warning("WATCHDOG reconnect attempt 1: reloading Minecraft chunks/camera")
+            try:
+                await reload_minecraft_chunks()
+                if self.camera_on:
+                    await self._spectate()
+            except Exception as exc:
+                logger.debug(f"WATCHDOG client reload failed: {exc}")
+            recovered = await self._verify_visual_movement()
+            step = self._visual_recovery.reload_result(recovered)
+            if recovered:
+                logger.warning("WATCHDOG recovery verified")
+                await self._maybe_return_from_backup(force=True)
+                return
+        if step.name == "BACKUP":
+            await self._enter_backup_mode()
+            logger.warning("WATCHDOG reconnect attempt 2: Minecraft client restart hook")
+            if await restart_minecraft_client_from_env() and await self._verify_visual_movement():
+                self._visual_recovery.recovered()
+                await self._maybe_return_from_backup(force=True)
+                return
+            self._visual_recovery.backup_failed()
+
+    async def _enter_backup_mode(self) -> None:
+        if self._visual_in_backup:
+            return
+        scene = os.environ.get("MINECRAFT_BACKUP_SCENE", "").strip() or os.environ.get("OBS_BACKUP_SCENE", "").strip()
+        if not scene:
+            logger.warning("WATCHDOG entering backup mode skipped: MINECRAFT_BACKUP_SCENE is not set")
+            return
+        from ..publishing import obs_control
+
+        try:
+            logger.warning("WATCHDOG entering backup mode")
+            if not self._visual_scene:
+                self._visual_scene = await obs_control.current_program_scene()
+            if not self._visual_source:
+                self._visual_source = self._visual_scene
+            await obs_control.set_program_scene(scene)
+            self._visual_in_backup = True
+            self._visual_healthy_checks = 0
+            self._visual_last_switch = time.time()
+            self.viewer_lines.appendleft({
+                "who": self.cast[0],
+                "text": "Looks like our Minecraft view glitched. We're reconnecting now, but keep talking to us!",
+                "at": time.time(),
+            })
+            self.line_ready.set()
+        except Exception as exc:
+            logger.warning(f"WATCHDOG backup scene switch failed: {exc}")
+
+    async def _maybe_return_from_backup(self, force: bool = False) -> None:
+        if not self._visual_in_backup:
+            return
+        cooldown = float(os.environ.get("MINECRAFT_BACKUP_COOLDOWN", "20") or 20)
+        if not force and time.time() - self._visual_last_switch < cooldown:
+            return
+        if force:
+            self._visual_healthy_checks = 3
+        else:
+            self._visual_healthy_checks += 1
+        if self._visual_healthy_checks < int(os.environ.get("MINECRAFT_RETURN_HEALTHY_CHECKS", "3") or 3):
+            return
+        from ..publishing import obs_control
+
+        try:
+            if self._visual_scene:
+                await obs_control.set_program_scene(self._visual_scene)
+            self._visual_in_backup = False
+            self._visual_last_switch = time.time()
+            self._visual_recovery.recovered()
+            logger.warning("WATCHDOG returning to Minecraft mode")
+        except Exception as exc:
+            logger.warning(f"WATCHDOG return to Minecraft scene failed: {exc}")
 
     # ------------------------------------------------------------ events
     async def _event(self, name: str, *args: Any) -> None:
@@ -2678,6 +2960,10 @@ class MinecraftEngine:
             if self.viewer_lines:  # answers to chat always go first
                 line = self.viewer_lines.popleft()
                 if time.time() - line["at"] <= VIEWER_LINE_MAX_AGE:
+                    latency = line.get("latency")
+                    if latency and not latency.get("first_audio_at"):
+                        latency["first_audio_at"] = time.time()
+                        self._log_latency(latency)
                     # the rest of an answer: no second reaction, she just goes on
                     await self._say(line["who"], line["text"], "" if line.get("cont") else pick_mood(line["text"]))
                 continue
@@ -2699,7 +2985,14 @@ class MinecraftEngine:
                 continue
             await self._say(line["who"], line["text"], pick_mood(line["text"]), short=True)
 
-    async def _quick_reply(self, cid: str, author: str, text: str, more: Optional[list[tuple[str, str]]] = None) -> str:
+    async def _quick_reply(
+        self,
+        cid: str,
+        author: str,
+        text: str,
+        more: Optional[list[tuple[str, str]]] = None,
+        latency: Optional[dict[str, float]] = None,
+    ) -> str:
         started = time.time()
         parts: list[str] = []
         first_at = 0.0
@@ -2709,7 +3002,13 @@ class MinecraftEngine:
                 if not piece:
                     continue
                 first_at = first_at or time.time()
-                self.viewer_lines.append({"who": cid, "text": piece, "at": time.time(), "cont": bool(parts)})
+                self.viewer_lines.append({
+                    "who": cid,
+                    "text": piece,
+                    "at": time.time(),
+                    "cont": bool(parts),
+                    "latency": latency if not parts else None,
+                })
                 parts.append(piece)
                 self.line_ready.set()
         finally:
@@ -2724,6 +3023,9 @@ class MinecraftEngine:
             f"Minecraft: {self.names[cid]} answers {who} (speaking after {first_at - started:.1f}s, "
             f"all {time.time() - started:.1f}s): {line}"
         )
+        if latency is not None:
+            latency["finished_at"] = time.time()
+            self._log_latency(latency)
         return line
 
     async def reply_pieces(self, cid: str, author: str, text: str, more: Optional[list[tuple[str, str]]] = None):
@@ -3708,6 +4010,14 @@ class MinecraftEngine:
                 continue
             for c in batch:
                 self._answered.add(c["author"])
+            if all(c.get("acted") and c.get("ack_suppresses_reply") for c in batch):
+                for c in batch:
+                    self._remember(f"{c['author']} asked: {c.get('raw', c['text'])[:80]} (being done)")
+                    latency = c.get("latency")
+                    if latency:
+                        latency["finished_at"] = time.time()
+                        self._log_latency(latency)
+                continue
             for c in batch:  # "what do you see?": the fresh picture first (a few seconds at most)
                 if c.get("eyes") is not None:
                     try:
@@ -3718,7 +4028,7 @@ class MinecraftEngine:
             line = ""
             try:
                 line = await self._quick_reply(first["who"], first["author"], first["text"],
-                                               [(c["author"], c["text"]) for c in rest])
+                                               [(c["author"], c["text"]) for c in rest], first.get("latency"))
             except Exception as exc:  # pragma: no cover - network dependent
                 logger.warning(f"Minecraft: chat answer failed: {exc}")
             self._answered_before.update(c["author"] for c in batch)  # roasting starts from their second answer

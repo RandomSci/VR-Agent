@@ -494,7 +494,7 @@ class WebSocketHandler:
     def class_active(self) -> bool:
         return self._chat_engine() is not None
 
-    def class_message(self, message) -> None:
+    def class_message(self, message, received_at: float | None = None) -> None:
         """Chat during class or a mode: a quiz answer, a question, or a message for the bots."""
         engine = self._chat_engine()
         if engine is None:
@@ -509,7 +509,7 @@ class WebSocketHandler:
             if kind == "member":
                 paid = "a new membership"
             member = str(getattr(message, "author_type", "") or "") in ("member", "moderator", "owner")
-            engine.enqueue(message.author_display_name, message.text or "", paid=paid, member=member)
+            engine.enqueue(message.author_display_name, message.text or "", paid=paid, member=member, received_at=received_at)
             return
         engine.enqueue(message.author_display_name, message.text)
 

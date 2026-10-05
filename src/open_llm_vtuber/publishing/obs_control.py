@@ -419,6 +419,117 @@ async def _connect_when_ready(wait_seconds: float) -> Optional[OBS]:
     return None
 
 
+def _image_bytes(image_data: str) -> bytes:
+    """OBS returns either raw base64 or a data URL; callers need bytes."""
+    if "," in image_data and image_data[:32].lower().startswith("data:image"):
+        image_data = image_data.split(",", 1)[1]
+    return base64.b64decode(image_data)
+
+
+async def current_program_scene() -> str:
+    obs = await _connect_when_ready(6)
+    if obs is None:
+        raise OBSError("no remote control")
+    try:
+        data = await obs.call("GetCurrentProgramScene")
+        return data.get("currentProgramSceneName") or data.get("sceneName") or ""
+    finally:
+        await obs.__aexit__()
+
+
+async def set_program_scene(scene: str) -> str:
+    """Switch OBS to a scene and return the previous scene name."""
+    obs = await _connect_when_ready(6)
+    if obs is None:
+        raise OBSError("no remote control")
+    try:
+        before = (await obs.call("GetCurrentProgramScene")).get("currentProgramSceneName") or ""
+        if scene and scene != before:
+            await obs.call("SetCurrentProgramScene", {"sceneName": scene})
+        return before
+    finally:
+        await obs.__aexit__()
+
+
+async def capture_obs_frame(
+    width: int,
+    height: int,
+    quality: int,
+    save_path: str | Path | None = None,
+    source_name: str = "",
+) -> bytes:
+    """Capture the rendered OBS output or a named source/scene.
+
+    ``source_name`` defaults to the current program scene. Watchdogs keep this
+    in memory; social screenshots pass ``save_path``.
+    """
+    obs = await _connect_when_ready(float(os.environ.get("OBS_CAPTURE_CONNECT_TIMEOUT", "6") or 6))
+    if obs is None:
+        raise OBSError("no remote control")
+    try:
+        if not source_name:
+            source_name = (await obs.call("GetCurrentProgramScene")).get("currentProgramSceneName") or ""
+        data = await obs.call(
+            "GetSourceScreenshot",
+            {
+                "sourceName": source_name,
+                "imageFormat": "jpg",
+                "imageWidth": int(width),
+                "imageHeight": int(height),
+                "imageCompressionQuality": int(quality),
+            },
+        )
+        image = _image_bytes(str(data.get("imageData") or ""))
+        if save_path:
+            path = Path(save_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(image)
+        return image
+    finally:
+        await obs.__aexit__()
+
+
+async def record_status() -> dict[str, Any]:
+    obs = await _connect_when_ready(6)
+    if obs is None:
+        raise OBSError("no remote control")
+    try:
+        return await obs.call("GetRecordStatus")
+    finally:
+        await obs.__aexit__()
+
+
+async def start_recording() -> bool:
+    """Start OBS recording without touching streaming. True when recording."""
+    obs = await _connect_when_ready(6)
+    if obs is None:
+        raise OBSError("no remote control")
+    try:
+        status = await obs.call("GetRecordStatus")
+        if status.get("outputActive"):
+            return True
+        await obs.call("StartRecord")
+        return True
+    finally:
+        await obs.__aexit__()
+
+
+async def stop_recording() -> Optional[Path]:
+    """Stop OBS recording and return the local output path when OBS reports it."""
+    obs = await _connect_when_ready(6)
+    if obs is None:
+        raise OBSError("no remote control")
+    try:
+        status = await obs.call("GetRecordStatus")
+        if not status.get("outputActive"):
+            return None
+        data = await obs.call("StopRecord")
+        output = data.get("outputPath") or data.get("outputFilename") or ""
+        return Path(output) if output else None
+    finally:
+        await obs.__aexit__()
+
+
 async def _stage_source(obs: OBS) -> tuple[str, str]:
     """(browser source name, scene that holds it). Creates the source when missing."""
     inputs = (await obs.call("GetInputList", {"inputKind": "browser_source"})).get("inputs") or []

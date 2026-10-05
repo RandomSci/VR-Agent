@@ -829,7 +829,11 @@ class YouTubeLiveChatService:
         for message in self.buffer.get_eligible(self.config.selector_max_messages):
             self.buffer.mark_answered(message)
             logger.info(f"Class chat from {message.author_display_name}: {_truncate(message.text, 60)}")
-            self.connection_provider.class_message(message)
+            received_at = self._received_at.pop(message.message_id, time.time())
+            try:
+                self.connection_provider.class_message(message, received_at=received_at)
+            except TypeError:
+                self.connection_provider.class_message(message)
         return True
 
     def _maybe_side_chat(self) -> None:

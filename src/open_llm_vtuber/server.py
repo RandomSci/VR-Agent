@@ -11,6 +11,7 @@ import os
 import shutil
 
 from fastapi import FastAPI
+from loguru import logger
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles as StarletteStaticFiles
@@ -189,6 +190,12 @@ class WebSocketServer:
                 await self.youtube_live_service.start()
             else:
                 runtime.set(VRAgentState.IDLE, "youtube live disabled")
+            try:
+                from .publishing.clip_automation import install_clip_automation
+
+                install_clip_automation()
+            except Exception as exc:
+                logger.warning(f"OBS clip automation unavailable: {exc}")
             # VR_START_OBS=1: OBS gets the Stage ready, then starts streaming.
             from .publishing.obs_control import go_live
 
