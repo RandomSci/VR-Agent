@@ -66,6 +66,7 @@ import math
 import os
 import random
 import re
+import shutil
 import signal
 import time
 from collections import deque
@@ -88,6 +89,7 @@ from .minecraft_visual_watchdog import (
     HealthState,
     RecoveryStateMachine,
     VisualFreezeDetector,
+    active_window_is_minecraft,
     decode_gray,
     disconnect_reconnect_minecraft_client,
     ensure_minecraft_client_connected,
@@ -440,6 +442,39 @@ def minecraft_mode_enabled() -> bool:
     ).strip().lower() in ("1", "true", "yes", "on")
 
 
+async def prepare_minecraft_before_obs(room_session: Any) -> Any:
+    """Start Minecraft server/bots/graphical camera before OBS opens.
+
+    The Stage room page attaches later and wires speech/autopilot. This helper
+    only breaks the old cycle where OBS had to open before the graphical
+    Minecraft client existed.
+    """
+    if not minecraft_mode_enabled():
+        return None
+    engine = getattr(room_session, "mode_engine", None)
+    if engine is None:
+        engine = MinecraftEngine(None, room_session)
+        room_session.mode_engine = engine
+    engine.start()
+    try:
+        timeout = max(0.0, float(os.environ.get("MINECRAFT_OBS_START_WAIT_SECONDS", "240") or 240))
+    except ValueError:
+        timeout = 240.0
+    if timeout <= 0:
+        return engine
+    logger.info(f"Minecraft: waiting up to {timeout:.0f}s for graphical client before OBS")
+    try:
+        await asyncio.wait_for(engine.camera_client_ready.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("Minecraft: graphical client not ready before OBS timeout; starting OBS fallback")
+        return engine
+    if engine.camera_client_ok:
+        logger.info("Minecraft: graphical client ready; starting OBS")
+    else:
+        logger.warning("Minecraft: graphical client startup failed; starting OBS fallback")
+    return engine
+
+
 def clean_line(message: str) -> tuple[str, str]:
     """A bot chat line -> (spoken text, who it was said to). Commands are cut."""
     text = str(message or "").replace("\t", " ")
@@ -757,6 +792,8 @@ class MinecraftEngine:
         self._visual_recovery_lock = asyncio.Lock()
         self._preventive_reconnect_seconds = self._preventive_reconnect_interval()
         self._preventive_next_at = 0.0
+        self.camera_client_ready = asyncio.Event()
+        self.camera_client_ok = False
         self._last_latency: dict[str, float] = {}
         from .minecraft_net_show import NetShow
 
@@ -1168,22 +1205,25 @@ class MinecraftEngine:
                 "hints": list(HINTS if self.creative else SURVIVAL_HINTS),  # what viewers can do, rotating
                 "stats": self.stats,
             }
-            await self._wait_ready()
-            await self._push({"kind": "start", **self.view})
             if self.problem:
                 logger.error(f"Minecraft mode: {self.problem}")
             self._tasks = [
                 self._supervised("mc-server", self._keep_server),
                 self._supervised("mc-mindcraft", self._keep_mindcraft),
                 self._supervised("mc-link", self.link.run),
+                self._supervised("mc-watchdog", self._watchdog),
+                self._supervised("mc-camera-client", self._ensure_camera_client_loop),
+            ]
+            await self._wait_ready()
+            await self._push({"kind": "start", **self.view})
+            self._tasks += [
                 self._supervised("mc-speak", self._speak_loop),
                 self._supervised("mc-deliver", self._deliver_loop),
                 self._supervised("mc-fidget", self._fidget_loop),
-                self._supervised("mc-watchdog", self._watchdog),
-                self._supervised("mc-camera-client", self._ensure_camera_client_loop),
                 self._supervised("mc-visual-watchdog", self._visual_watchdog_loop),
                 self._supervised("mc-preventive-reconnect", self._preventive_reconnect_loop),
                 self._supervised("mc-camera", self._camera_loop),
+                self._supervised("mc-camera-keys", self._camera_key_loop),
                 self._supervised("mc-camera-follow", self._camera_follow),
                 self._supervised("mc-net", self._net_loop),
                 self._supervised("mc-build", self._build_loop),
@@ -1230,7 +1270,11 @@ class MinecraftEngine:
     async def _title_loop(self) -> None:
         """Title, description, thumbnail and playlist: tried every 30 s until
         they are on the live video (it can take minutes to go live)."""
-        if not self.on_start:
+        for _ in range(60):
+            if self.on_start or self._ending:
+                break
+            await asyncio.sleep(1.0)
+        if not self.on_start or self._ending:
             return
         title, head = (CREATIVE_TITLE, CREATIVE_HEAD) if self.creative else (STREAM_TITLE, STREAM_HEAD)
         for attempt in range(40):  # 20 minutes
@@ -1517,22 +1561,28 @@ class MinecraftEngine:
     async def _ensure_camera_client_loop(self) -> None:
         """Make sure the real graphical Minecraft camera client is in the local server."""
         if os.environ.get("MINECRAFT_CAMERA_CLIENT_AUTO", "1").strip().lower() in ("0", "false", "off", "no"):
+            self.camera_client_ok = True
+            self.camera_client_ready.set()
             return
-        while not await port_open(self.port):
+        try:
+            while not await port_open(self.port):
+                if self._ending:
+                    return
+                await asyncio.sleep(3.0)
             if self._ending:
                 return
-            await asyncio.sleep(3.0)
-        if self._ending:
-            return
-        self._visual_grace("startup")
-        ok = await ensure_minecraft_client_connected()
-        if self._ending:
-            return
-        if ok:
-            logger.info("Minecraft: graphical camera client is connected")
-            self._reset_preventive_reconnect_timer()
-        else:
-            logger.warning("Minecraft: graphical camera client could not be connected automatically")
+            self._visual_grace("startup")
+            ok = await ensure_minecraft_client_connected()
+            self.camera_client_ok = bool(ok)
+            if self._ending:
+                return
+            if ok:
+                logger.info("Minecraft: graphical camera client is connected")
+                self._reset_preventive_reconnect_timer()
+            else:
+                logger.warning("Minecraft: graphical camera client could not be connected automatically")
+        finally:
+            self.camera_client_ready.set()
 
     def _preventive_reconnect_interval(self) -> float:
         raw = os.environ.get("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "").strip()
@@ -2257,6 +2307,95 @@ class MinecraftEngine:
 
     def camera_overview(self) -> None:
         self.set_camera_mode(OVERVIEW)
+
+    async def _handle_camera_key(self, key: str) -> bool:
+        if self._ending:
+            return False
+        if not await active_window_is_minecraft():
+            return False
+        if key == "0":
+            self.return_to_mika()
+            if self.camera_on:
+                await self._spectate()
+            logger.info("Minecraft camera: physical 0 -> FOLLOW_MIKA")
+            return True
+        if key == "9":
+            self.return_to_luna()
+            if self.camera_on:
+                await self._spectate()
+            logger.info("Minecraft camera: physical 9 -> FOLLOW_LUNA")
+            return True
+        if key == "8":
+            self.enter_free_roam()
+            logger.info("Minecraft camera: physical 8 -> FREE_ROAM")
+            return True
+        return False
+
+    def _camera_key_map(self) -> dict[int, str]:
+        raw = os.environ.get("MINECRAFT_CAMERA_KEYCODES", "19:0,18:9,17:8")
+        out: dict[int, str] = {}
+        for part in raw.split(","):
+            if ":" not in part:
+                continue
+            code, key = part.split(":", 1)
+            try:
+                out[int(code.strip())] = key.strip()
+            except ValueError:
+                continue
+        return out or {19: "0", 18: "9", 17: "8"}
+
+    async def _camera_key_loop(self) -> None:
+        if os.environ.get("MINECRAFT_CAMERA_KEYS", "1").strip().lower() in ("0", "false", "off", "no"):
+            return
+        if self._ending:
+            return
+        if not shutil.which("xinput"):
+            logger.info("Minecraft camera keys disabled: xinput not found")
+            return
+        keymap = self._camera_key_map()
+        proc = await asyncio.create_subprocess_exec(
+            "xinput",
+            "test-xi2",
+            "--root",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        last: dict[str, float] = {}
+        try:
+            pending_raw_key = False
+            while True:
+                if self._ending:
+                    return
+                line = await proc.stdout.readline() if proc.stdout else b""
+                if not line:
+                    return
+                text = line.decode(errors="replace").strip()
+                if "RawKeyPress" in text:
+                    pending_raw_key = True
+                    continue
+                if not pending_raw_key or "detail:" not in text:
+                    continue
+                pending_raw_key = False
+                match = re.search(r"detail:\s*(\d+)", text)
+                if not match:
+                    continue
+                key = keymap.get(int(match.group(1)))
+                if not key:
+                    continue
+                now = time.time()
+                if now - last.get(key, 0) < 0.35:
+                    continue
+                if await self._handle_camera_key(key):
+                    last[key] = now
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2.0)
+                except Exception:
+                    proc.kill()
 
     def _mode_follow_target(self) -> str:
         if self.camera_mode == FOLLOW_LUNA:

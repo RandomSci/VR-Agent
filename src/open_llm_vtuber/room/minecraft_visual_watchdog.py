@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -232,6 +233,17 @@ async def _search_visible(pattern: str, timeout: float = 2.0) -> list[str]:
 async def _window_name(window_id: str) -> str:
     result = await _run_tool(["xdotool", "getwindowname", window_id], timeout=2.0)
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+async def active_window_is_minecraft() -> bool:
+    if not shutil.which("xdotool"):
+        return False
+    result = await _run_tool(["xdotool", "getactivewindow"], timeout=2.0)
+    window_id = result.stdout.strip() if result.returncode == 0 else ""
+    if not window_id:
+        return False
+    title = await _window_name(window_id)
+    return bool(re.search(minecraft_game_pattern(), title) and "launcher" not in title.lower())
 
 
 async def _activate_window(window_id: str, label: str = "game", attempts: int = 10) -> bool:

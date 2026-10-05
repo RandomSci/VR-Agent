@@ -197,11 +197,13 @@ class WebSocketServer:
             except Exception as exc:
                 logger.warning(f"OBS clip automation unavailable: {exc}")
             # VR_START_OBS=1: OBS gets the Stage ready, then starts streaming.
-            from .publishing.obs_control import go_live
+            from .publishing.obs_control import go_live, manage_obs
 
             session = self.ws_handler.room_session
             from .publishing.obs_control import keep_task
 
+            if manage_obs():
+                await self._prepare_minecraft_before_obs()
             self._go_live_task = asyncio.create_task(go_live(lambda since: session.stage_loaded(since)))
             keep_task(self._go_live_task)  # Ctrl+C during the start cancels it
 
@@ -217,3 +219,14 @@ class WebSocketServer:
         if os.path.exists(cache_dir):
             shutil.rmtree(cache_dir)
             os.makedirs(cache_dir)
+
+    async def _prepare_minecraft_before_obs(self) -> None:
+        """Minecraft mode: bring up server/bots/graphical client before OBS opens.
+
+        The normal Stage WebSocket still attaches later and supplies speech/OBS
+        lifecycle. This only starts the mode engine early enough for screen
+        capture sources to see the real Minecraft window.
+        """
+        from .room.minecraft_mode import prepare_minecraft_before_obs
+
+        await prepare_minecraft_before_obs(self.ws_handler.room_session)

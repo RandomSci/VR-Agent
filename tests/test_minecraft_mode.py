@@ -85,6 +85,14 @@ from src.open_llm_vtuber.room.speech import playback_wait  # noqa: E402
 from src.open_llm_vtuber.vr_agent.text_safety import strip_emoji  # noqa: E402
 
 
+async def _async_true():
+    return True
+
+
+async def _async_false():
+    return False
+
+
 def test_no_emoji_is_ever_spoken():
     assert mm.clean_line("We did it!! 🎉🏰✨ Castle time 😂")[0] == "We did it!! Castle time"
     assert mm.clean_line("Love you ❤️ Luna :) <3 xD")[0] == "Love you Luna"
@@ -360,6 +368,114 @@ def test_follow_luna_and_return_to_mika():
     eng.return_to_mika()
     assert eng.camera_mode == mm.FOLLOW_MIKA
     assert eng.cam_focus == "mika"
+
+
+def test_physical_0_maps_to_follow_mika(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng.enter_free_roam()
+        monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_true())
+        assert await eng._handle_camera_key("0")
+        return eng.camera_mode, eng.cam_focus
+
+    assert asyncio.run(run()) == (mm.FOLLOW_MIKA, "mika")
+
+
+def test_physical_9_maps_to_follow_luna(monkeypatch):
+    async def run():
+        eng = _engine()
+        monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_true())
+        assert await eng._handle_camera_key("9")
+        return eng.camera_mode, eng.cam_focus
+
+    assert asyncio.run(run()) == (mm.FOLLOW_LUNA, "luna")
+
+
+def test_physical_8_maps_to_free_roam(monkeypatch):
+    async def run():
+        eng = _engine()
+        monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_true())
+        assert await eng._handle_camera_key("8")
+        return eng.camera_mode
+
+    assert asyncio.run(run()) == mm.FREE_ROAM
+
+
+def test_physical_keys_ignored_if_minecraft_not_focused(monkeypatch):
+    async def run():
+        eng = _engine()
+        monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_false())
+        assert not await eng._handle_camera_key("8")
+        return eng.camera_mode
+
+    assert asyncio.run(run()) == mm.FOLLOW_MIKA
+
+
+def test_camera_key_listener_inactive_outside_minecraft_mode(monkeypatch):
+    async def run():
+        eng = _engine()
+        monkeypatch.setenv("MINECRAFT_CAMERA_KEYS", "0")
+        called = False
+
+        async def create(*args, **kwargs):
+            nonlocal called
+            called = True
+
+        monkeypatch.setattr(mm.asyncio, "create_subprocess_exec", create)
+        await eng._camera_key_loop()
+        return called
+
+    assert asyncio.run(run()) is False
+
+
+def test_camera_key_listener_stops_on_shutdown(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng._ending = True
+        monkeypatch.setattr(mm.shutil, "which", lambda name: "/usr/bin/xinput")
+        called = False
+
+        async def create(*args, **kwargs):
+            nonlocal called
+            called = True
+            return None
+
+        monkeypatch.setattr(mm.asyncio, "create_subprocess_exec", create)
+        await eng._camera_key_loop()
+        return called
+
+    # The process may be created before the loop sees _ending; it must still return cleanly.
+    asyncio.run(run())
+
+
+def test_camera_mode_uses_existing_methods_for_physical_keys(monkeypatch):
+    async def run():
+        eng = _engine()
+        calls = []
+        monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_true())
+
+        def follow():
+            calls.append("mika")
+
+        eng.return_to_mika = follow
+        await eng._handle_camera_key("0")
+        return calls
+
+    assert asyncio.run(run()) == ["mika"]
+
+
+def test_follow_modes_resume_after_physical_keys(monkeypatch):
+    async def run():
+        eng = _engine()
+        monkeypatch.setattr(mm, "active_window_is_minecraft", lambda: _async_true())
+        await eng._handle_camera_key("8")
+        await eng._handle_camera_key("0")
+        mika = eng.camera_mode
+        await eng._handle_camera_key("9")
+        luna = eng.camera_mode
+        return mika, luna
+
+    assert asyncio.run(run()) == (mm.FOLLOW_MIKA, mm.FOLLOW_LUNA)
 
 
 def test_manual_detach_state_persists():
