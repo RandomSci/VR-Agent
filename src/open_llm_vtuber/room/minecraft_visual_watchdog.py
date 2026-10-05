@@ -511,19 +511,34 @@ async def disconnect_reconnect_minecraft_client() -> bool:
 
 
 async def launch_minecraft_client() -> bool:
+    if not await ensure_minecraft_game_window_ready():
+        return False
+    game = await find_minecraft_game_window()
+    if not game:
+        return False
+    if await verify_multiplayer_connected():
+        return True
+    if not await open_multiplayer_screen(game):
+        return False
+    return await join_saved_server(game)
+
+
+async def ensure_minecraft_game_window_ready() -> bool:
+    """Start only as far as the real Minecraft Java window.
+
+    OBS may start as soon as this succeeds; joining Multiplayer can continue
+    independently afterward.
+    """
     lock = _launch_lock()
     if lock.locked():
         logger.warning("WATCHDOG launch skipped: launch already in progress")
         return False
     async with lock:
-        if await verify_multiplayer_connected():
-            return True
         if await find_minecraft_game_window() is not None:
-            logger.warning("WATCHDOG launch skipped: Minecraft game window already exists")
-            return False
+            return True
         if await minecraft_process_exists():
-            logger.warning("WATCHDOG launch skipped: Minecraft process already exists")
-            return False
+            logger.warning("WATCHDOG waiting for existing Minecraft process to create a game window")
+            return await _wait_for_game_window() is not None
         if not shutil.which("xdotool"):
             logger.warning("WATCHDOG xdotool not found; cannot launch graphical Minecraft client")
             return False
@@ -546,9 +561,7 @@ async def launch_minecraft_client() -> bool:
             return False
         await asyncio.sleep(_env_float("MINECRAFT_MAIN_MENU_READY_SECONDS", 8.0, 0.0, 120.0))
         logger.warning("WATCHDOG GAME_WINDOW_READY")
-        if not await open_multiplayer_screen(game):
-            return False
-        return await join_saved_server(game)
+        return True
 
 
 async def dismiss_crash_popup() -> bool:

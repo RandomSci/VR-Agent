@@ -104,6 +104,38 @@ def test_register_sends_config_and_availability_follows_client_status():
     assert s.state.available_characters() == ["mika", "luna"]
 
 
+def test_speech_target_prefers_latest_scene1_stage_over_backup_room():
+    s = session()
+    old_stage, backup, new_stage = FakeSocket(), FakeSocket(), FakeSocket()
+
+    async def scenario():
+        await s.register("old", old_stage.send_text, role="scene1-stage")
+        await s.register("backup", backup.send_text, role="backup-room")
+        await s.register("new", new_stage.send_text, role="scene1-stage")
+        s.on_client_status("old", ["mika", "luna"], [])
+        s.on_client_status("backup", ["mika", "luna"], [])
+        await asyncio.sleep(0.001)
+        s.on_client_status("new", ["mika", "luna"], [])
+
+    asyncio.run(scenario())
+    assert s.speech_target()[0] == "new"
+
+
+def test_stale_stage_client_removed_from_speech_routing():
+    s = session()
+    old_stage, backup = FakeSocket(), FakeSocket()
+
+    async def scenario():
+        await s.register("old", old_stage.send_text, role="scene1-stage")
+        await s.register("backup", backup.send_text, role="backup-room")
+        s.on_client_status("old", ["mika", "luna"], [])
+        s.on_client_status("backup", ["mika", "luna"], [])
+        s.unregister("old")
+
+    asyncio.run(scenario())
+    assert s.speech_target()[0] == "backup"
+
+
 # ---------------------------------------------------------------------------
 # WebSocketHandler integration
 # ---------------------------------------------------------------------------
@@ -138,6 +170,17 @@ def test_room_page_is_registered_and_preferred_for_the_stream(monkeypatch):
     # Without the room page the classic livestream page speaks again.
     handler.room_client_uids.discard("room")
     assert handler._get_primary_client()[0] == "live"
+
+
+def test_room_hello_records_page_role(monkeypatch):
+    handler = build_handler(monkeypatch)
+    page = FakeSocket()
+    handler.client_connections = {"stage": page}
+    handler.client_contexts = {"stage": object()}
+
+    asyncio.run(handler._handle_vr_agent_hello(page, "stage", {"mode": "room", "role": "scene1-stage"}))
+
+    assert handler.room_session._client_roles["stage"] == "scene1-stage"
 
 
 def test_room_page_gets_disabled_config_when_room_is_off(monkeypatch):

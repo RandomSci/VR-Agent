@@ -70,6 +70,7 @@ class RoomSession:
             self.state.objects[object_id] = RoomObject(id=object_id, **box)
         self._clients: dict[str, Send] = {}
         self._client_models: dict[str, dict[str, list[str]]] = {}
+        self._client_roles: dict[str, str] = {}
         self._loop_task: Optional[asyncio.Task] = None
         # Directors. All deterministic and local: no LLM, no TTS.
         self.bus = EventBus()
@@ -145,11 +146,15 @@ class RoomSession:
     def client_uids(self) -> list[str]:
         return list(self._clients)
 
-    async def register(self, client_uid: str, send: Send) -> None:
+    def client_role(self, client_uid: str) -> str:
+        return self._client_roles.get(client_uid, "")
+
+    async def register(self, client_uid: str, send: Send, role: str = "standalone-room") -> None:
         self._clients[client_uid] = send
+        self._client_roles[client_uid] = role or "standalone-room"
         await self._send(client_uid, self.config_payload())
         self.ensure_loop()
-        logger.info(f"VR Room: client {client_uid} registered as a room page.")
+        logger.info(f"VR Room: client {client_uid} registered as a room page role={self._client_roles[client_uid]}.")
 
     # ------------------------------------------------------------------
     # events and the local tick
@@ -204,10 +209,17 @@ class RoomSession:
     # viewers, speech gating and failures
     # ------------------------------------------------------------------
     def speech_target(self) -> Optional[tuple[str, Send]]:
+        candidates = []
         for client_uid, send in self._clients.items():
             models = self._client_models.get(client_uid)
             if models is None or models.get("loaded"):
-                return client_uid, send
+                candidates.append((client_uid, send, self._client_roles.get(client_uid, "standalone-room"), (models or {}).get("at", 0)))
+        order = {"scene1-stage": 0, "backup-room": 1, "standalone-room": 2, "room": 3}
+        candidates.sort(key=lambda x: (order.get(x[2], 9), -float(x[3] or 0)))
+        if candidates:
+            client_uid, send, role, _at = candidates[0]
+            logger.debug(f"SPEECH_ROUTE target_role={role} client_uid={client_uid}")
+            return client_uid, send
         return None
 
     def stage_loaded(self, since: float = 0.0) -> bool:
@@ -386,6 +398,9 @@ class RoomSession:
     def unregister(self, client_uid: str) -> None:
         self._clients.pop(client_uid, None)
         self._client_models.pop(client_uid, None)
+        role = self._client_roles.pop(client_uid, "")
+        if role:
+            logger.info(f"SPEECH_ROUTE dropped_stale_client={client_uid} role={role}")
         self._recompute_availability()
 
     def on_client_status(self, client_uid: str, loaded: Any, failed: Any) -> None:
@@ -536,6 +551,7 @@ class RoomSession:
             "traces": list(self.traces)[-60:],
             "room": self.room.describe(),
             "clients": {uid: self._client_models.get(uid, {}) for uid in self._clients},
+            "client_roles": {uid: self._client_roles.get(uid, "") for uid in self._clients},
             "state": self.state.snapshot(),
             "events": self.bus.recent(40),
         }

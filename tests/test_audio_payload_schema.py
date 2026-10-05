@@ -39,3 +39,11 @@ def test_frontend_audio_diagnostics_do_not_overwrite_message_type():
         assert 'type: "audio/wav"' not in text
         assert 'mime: item.mime' in text
         assert 'type: "vr-room-audio-diagnostic"' in text
+
+
+def test_frontend_room_pages_identify_roles():
+    stage = (ROOT / "frontend/vr-agent/teaching-dev-room.js").read_text(encoding="utf-8")
+    room = (ROOT / "frontend/vr-agent/room.js").read_text(encoding="utf-8")
+
+    assert 'role: "scene1-stage"' in stage
+    assert 'role: "standalone-room"' in room

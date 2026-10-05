@@ -772,10 +772,11 @@ class WebSocketHandler:
     ) -> None:
         mode = data.get("mode")
         if mode == "room":
+            role = str(data.get("role") or "standalone-room")[:40]
             self.live_client_uids.discard(client_uid)
             if self.room_session.active:
                 self.room_client_uids.add(client_uid)
-                await self.room_session.register(client_uid, websocket.send_text)
+                await self.room_session.register(client_uid, websocket.send_text, role=role)
                 try:
                     # Runtimes (and the YouTube autopilot) start with the Stage,
                     # not with the first chat message.

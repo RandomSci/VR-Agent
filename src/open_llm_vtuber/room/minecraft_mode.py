@@ -93,6 +93,7 @@ from .minecraft_visual_watchdog import (
     decode_gray,
     disconnect_reconnect_minecraft_client,
     ensure_minecraft_client_connected,
+    ensure_minecraft_game_window_ready,
     focus_and_click_minecraft,
     minecraft_hard_health,
     minecraft_window_exists,
@@ -465,14 +466,14 @@ async def prepare_minecraft_before_obs(room_session: Any) -> Any:
         return engine
     logger.info(f"Minecraft: waiting up to {timeout:.0f}s for graphical client before OBS")
     try:
-        await asyncio.wait_for(engine.camera_client_ready.wait(), timeout=timeout)
+        await asyncio.wait_for(engine.game_window_ready.wait(), timeout=timeout)
     except asyncio.TimeoutError:
-        logger.warning("Minecraft: graphical client not ready before OBS timeout; starting OBS fallback")
+        logger.warning("Minecraft: game window not ready before OBS timeout; starting OBS fallback")
         return engine
-    if engine.camera_client_ok:
-        logger.info("Minecraft: graphical client ready; starting OBS")
+    if engine.game_window_ok:
+        logger.info("Minecraft: game window ready; starting OBS")
     else:
-        logger.warning("Minecraft: graphical client startup failed; starting OBS fallback")
+        logger.warning("Minecraft: game window startup failed; starting OBS fallback")
     return engine
 
 
@@ -796,6 +797,8 @@ class MinecraftEngine:
         self._preventive_next_at = 0.0
         self.camera_client_ready = asyncio.Event()
         self.camera_client_ok = False
+        self.game_window_ready = asyncio.Event()
+        self.game_window_ok = False
         self._last_latency: dict[str, float] = {}
         from .minecraft_net_show import NetShow
 
@@ -1573,6 +1576,12 @@ class MinecraftEngine:
         if self._ending:
             return
         self._visual_grace("startup")
+        self.game_window_ok = await ensure_minecraft_game_window_ready()
+        if self.game_window_ok:
+            logger.info("Minecraft: graphical game window is ready")
+            self.game_window_ready.set()
+        if self._ending:
+            return
         ok = await ensure_minecraft_client_connected()
         self.camera_client_ok = bool(ok)
         if self._ending:
@@ -1680,6 +1689,8 @@ class MinecraftEngine:
             try:
                 current_scene = await obs_control.current_program_scene()
                 await self._update_health_state()
+                if await self._handle_hard_health_failure(current_scene):
+                    continue
                 if not self._visual_source_explicit and not self._visual_in_backup and current_scene:
                     if self._visual_source and self._visual_source != current_scene:
                         logger.warning(
@@ -1725,6 +1736,20 @@ class MinecraftEngine:
                 raise
             except Exception as exc:
                 logger.debug(f"WATCHDOG visual check failed: {exc}")
+
+    async def _handle_hard_health_failure(self, current_scene: str) -> bool:
+        if self._ending or self._visual_grace_active():
+            return False
+        health = await minecraft_hard_health()
+        if health["process_alive"] and health["game_window_exists"] and health["multiplayer_connected"]:
+            return False
+        if health["process_alive"] and health["game_window_exists"] and not health["multiplayer_connected"]:
+            self._log_watchdog_health(0.0, current_scene, "RECONNECT", health)
+            await self._recover_visual(reason="reconnect")
+            return True
+        self._log_watchdog_health(0.0, current_scene, "RESTART_CLIENT", health)
+        await self._recover_visual(reason="restart")
+        return True
 
     async def _handle_visual_suspect(self, diff: float, current_scene: str) -> None:
         health = await minecraft_hard_health()

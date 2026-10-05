@@ -755,6 +755,64 @@ def test_missing_process_and_window_allows_restart(monkeypatch):
     assert asyncio.run(run()) == ["restart"]
 
 
+def test_composite_motion_does_not_hide_missing_minecraft_window(monkeypatch):
+    async def run():
+        eng = _engine()
+        calls = []
+
+        async def health():
+            return {"process_alive": False, "game_window_exists": False, "multiplayer_connected": False}
+
+        async def recover(reason="visual"):
+            calls.append(reason)
+
+        monkeypatch.setattr(mm, "minecraft_hard_health", health)
+        eng._recover_visual = recover
+        handled = await eng._handle_hard_health_failure("Scene 1")
+        return handled, calls
+
+    assert asyncio.run(run()) == (True, ["restart"])
+
+
+def test_browser_overlay_motion_does_not_count_as_minecraft_capture_health(monkeypatch):
+    async def run():
+        eng = _engine()
+        calls = []
+
+        async def health():
+            return {"process_alive": True, "game_window_exists": True, "multiplayer_connected": False}
+
+        async def recover(reason="visual"):
+            calls.append(reason)
+
+        monkeypatch.setattr(mm, "minecraft_hard_health", health)
+        eng._recover_visual = recover
+        # Simulate a moving OBS composite: hard health still forces reconnect.
+        handled = await eng._handle_hard_health_failure("Scene 1")
+        return handled, calls
+
+    assert asyncio.run(run()) == (True, ["reconnect"])
+
+
+def test_stale_pipewire_frame_is_not_healthy_without_hard_client_health(monkeypatch):
+    async def run():
+        eng = _engine()
+        calls = []
+
+        async def health():
+            return {"process_alive": False, "game_window_exists": False, "multiplayer_connected": False}
+
+        async def recover(reason="visual"):
+            calls.append(reason)
+
+        monkeypatch.setattr(mm, "minecraft_hard_health", health)
+        eng._recover_visual = recover
+        await eng._handle_visual_suspect(0.0, "Scene 1")
+        return calls
+
+    assert asyncio.run(run()) == ["restart"]
+
+
 def test_one_valid_frame_with_multiplayer_health_verifies_recovery(monkeypatch):
     async def run():
         eng = _engine()

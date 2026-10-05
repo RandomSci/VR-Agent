@@ -389,11 +389,13 @@ class SpeakingCoordinator:
             return False
         client_uid, send = target
         if _speech_debug():
+            role = getattr(self.session, "client_role", lambda _uid: "")(client_uid)
             logger.warning(
                 "SPEECH_DIAG room say start "
-                f"character={character_id} client_uid={client_uid} text_chars={len(text)} "
+                f"character={character_id} client_uid={client_uid} target_role={role} text_chars={len(text)} "
                 f"engine={type(engine).__module__}.{type(engine).__name__}"
             )
+            logger.warning(f"SPEECH_ROUTE character={character_id} target_role={role} client_uid={client_uid}")
         produced = {"audio": 0, "silent": 0, "ms": 0.0}
 
         async def tagged_send(payload: str) -> None:

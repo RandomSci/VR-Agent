@@ -1560,7 +1560,7 @@
     socket.addEventListener("open", () => {
       reconnectDelay = 1000;
       lastMessageAt = now();
-      sendToServer({ type: "vr-agent-hello", mode: "room" });
+      sendToServer({ type: "vr-agent-hello", mode: "room", role: "scene1-stage" });
       // A server without room support never answers the hello.
       setTimeout(() => {
         if (!configReceived && socket && socket.readyState === WebSocket.OPEN) {
