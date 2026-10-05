@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,7 +14,7 @@ from typing import Any, Optional
 from loguru import logger
 
 from . import obs_control
-from .shorts import make_short, safe_slug
+from .shorts import safe_slug
 
 
 def _flag(name: str, default: str = "0") -> bool:
@@ -61,6 +63,7 @@ class AutoClipRecorder:
         self.tail_seconds = _float("CLIP_TAIL_SECONDS", 3.0, 0.0, 20.0)
         self.safety_delay = _float("CLIP_START_SAFETY_DELAY", 0.3, 0.0, 2.0)
         self.initial_hold = _float("CLIP_INITIAL_HOLD_SECONDS", 90.0, 5.0, 1800.0)
+        self.output_dir = Path(os.environ.get("CLIPS_DIR", "clips"))
         self.kinds = _kinds()
         self._lock = asyncio.Lock()
         self._session: Optional[ClipSession] = None
@@ -137,29 +140,73 @@ class AutoClipRecorder:
             logger.warning("OBS clip: OBS stopped recording but did not report a file")
             return
         session.source_clip = output
-        logger.info(f"OBS clip: saved {output}")
-        if _flag("CLIP_SHORTS_ENABLED", "1"):
-            asyncio.create_task(self._make_short(session), name="obs-clip-short")
+        finalized = await asyncio.to_thread(self._finalize_clip, session)
+        if finalized:
+            logger.info(f"OBS clip: finalized source clip {finalized}")
 
-    async def _make_short(self, session: ClipSession) -> None:
+    def _finalize_clip(self, session: ClipSession) -> Optional[Path]:
         if session.source_clip is None:
-            return
+            return None
+        source = Path(session.source_clip)
+        if not self._wait_for_final_file(source):
+            logger.warning(f"OBS clip: recording file is not finalized/readable: {source}")
+            return None
         event = session.event
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        ext = source.suffix or ".mp4"
+        stamp = time.strftime("%Y-%m-%d-%H%M%S", time.localtime(session.started_at))
+        target = self.output_dir / f"{stamp}-{safe_slug(event.kind + '-' + (event.viewer or event.text))}{ext}"
+        n = 2
+        while target.exists():
+            target = self.output_dir / f"{stamp}-{safe_slug(event.kind + '-' + (event.viewer or event.text))}-{n}{ext}"
+            n += 1
         try:
-            output, sidecar = await asyncio.to_thread(
-                make_short,
-                session.source_clip,
-                event.kind,
-                event.request or event.text,
-                event.viewer,
-                session.started_at,
-                time.time(),
-                os.environ.get("SHORTS_DIR", "shorts"),
-                os.environ.get("CLIP_BACKGROUND", "Clipbg.png"),
-            )
-            logger.info(f"OBS clip: Short created {output} ({sidecar.name})")
+            shutil.copy2(source, target)
         except Exception as exc:
-            logger.warning(f"OBS clip: Short creation failed ({exc})")
+            logger.warning(f"OBS clip: could not copy finalized source clip: {exc}")
+            return None
+        if not self._ffprobe_ok(target):
+            try:
+                target.unlink(missing_ok=True)
+            except Exception:
+                pass
+            logger.warning(f"OBS clip: copied clip failed ffprobe, removed: {target}")
+            return None
+        return target
+
+    def _wait_for_final_file(self, path: Path) -> bool:
+        checks = int(_float("CLIP_FINALIZE_STABLE_CHECKS", 3, 1, 20))
+        delay = _float("CLIP_FINALIZE_CHECK_SECONDS", 1.0, 0.1, 10.0)
+        deadline = time.time() + _float("CLIP_FINALIZE_TIMEOUT_SECONDS", 60.0, 5.0, 600.0)
+        stable = 0
+        last = -1
+        while time.time() < deadline:
+            if not path.exists():
+                time.sleep(delay)
+                continue
+            size = path.stat().st_size
+            if size > 0 and size == last:
+                stable += 1
+            else:
+                stable = 0
+            last = size
+            if stable >= checks and self._ffprobe_ok(path):
+                return True
+            time.sleep(delay)
+        return False
+
+    def _ffprobe_ok(self, path: Path) -> bool:
+        if not shutil.which("ffprobe"):
+            logger.warning("OBS clip: ffprobe not found; cannot finalize clip safely")
+            return False
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_format", "-show_streams", str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+        return result.returncode == 0 and "codec_type" in result.stdout
 
 
 class SocialScreenshotter:

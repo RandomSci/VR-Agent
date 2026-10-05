@@ -58,6 +58,21 @@ def test_profile_is_in_character():
     assert settings["auto_open_ui"] is False and len(settings["profiles"]) == 2
 
 
+def test_preventive_reconnect_disabled_when_env_missing(monkeypatch):
+    monkeypatch.delenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", raising=False)
+    assert _engine()._preventive_reconnect_seconds == 0.0
+
+
+def test_preventive_reconnect_disabled_for_zero(monkeypatch):
+    monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "0")
+    assert _engine()._preventive_reconnect_seconds == 0.0
+
+
+def test_preventive_reconnect_valid_sixty_minutes(monkeypatch):
+    monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
+    assert _engine()._preventive_reconnect_seconds == 3600.0
+
+
 def test_chunks_stay_short():
     parts = mm.chunks("One. " * 200)
     assert len(parts) <= 3 and all(len(p) <= mm.MAX_SAY for p in parts)
@@ -98,6 +113,441 @@ def test_profile_has_no_emoji_and_no_fighting_modes():
     assert profile["modes"]["elbow_room"] is False and profile["modes"]["idle_staring"] is False
     assert "NEVER use emojis" in profile["conversing"]
     assert "moveAway(150)" not in profile["conversing"]
+
+
+def test_preventive_reconnect_calls_existing_helper(monkeypatch):
+    async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
+        eng = _engine()
+        eng._preventive_next_at = 1.0
+        calls = []
+
+        async def connected():
+            return True
+
+        async def reconnect():
+            calls.append("reconnect")
+            return True
+
+        async def verify():
+            calls.append("verify")
+            eng._ending = True
+            return True
+
+        monkeypatch.setattr(mm, "verify_multiplayer_connected", connected)
+        monkeypatch.setattr(mm, "disconnect_reconnect_minecraft_client", reconnect)
+        eng._verify_visual_movement = verify
+
+        await eng._preventive_reconnect_loop()
+        return calls
+
+    assert asyncio.run(run()) == ["reconnect", "verify"]
+
+
+def test_preventive_reconnect_does_not_run_while_recovery_lock_held(monkeypatch):
+    async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
+        eng = _engine()
+        eng._preventive_next_at = 1.0
+        calls = []
+
+        async def reconnect():
+            calls.append("reconnect")
+            return True
+
+        async def sleep(_seconds):
+            eng._ending = True
+
+        monkeypatch.setattr(mm, "disconnect_reconnect_minecraft_client", reconnect)
+        monkeypatch.setattr(mm.asyncio, "sleep", sleep)
+        await eng._visual_recovery_lock.acquire()
+        try:
+            await eng._preventive_reconnect_loop()
+        finally:
+            eng._visual_recovery_lock.release()
+        return calls
+
+    assert asyncio.run(run()) == []
+
+
+def test_preventive_timer_resets_after_successful_watchdog_recovery(monkeypatch):
+    async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
+        eng = _engine()
+        eng._preventive_next_at = 1.0
+
+        async def recovered():
+            return True
+
+        eng._run_visual_recovery_locked = recovered
+        await eng._recover_visual()
+        return eng._preventive_next_at
+
+    assert asyncio.run(run()) > 1.0
+
+
+def test_failed_preventive_reconnect_escalates_existing_recovery(monkeypatch):
+    async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
+        eng = _engine()
+        eng._preventive_next_at = 1.0
+        calls = []
+
+        async def connected():
+            return True
+
+        async def reconnect():
+            calls.append("reconnect")
+            return False
+
+        async def verify():
+            calls.append("verify")
+            return False
+
+        async def escalate():
+            calls.append("escalate")
+            eng._ending = True
+            return True
+
+        monkeypatch.setattr(mm, "verify_multiplayer_connected", connected)
+        monkeypatch.setattr(mm, "disconnect_reconnect_minecraft_client", reconnect)
+        eng._verify_visual_movement = verify
+        eng._run_visual_recovery_locked = escalate
+
+        await eng._preventive_reconnect_loop()
+        return calls
+
+    assert asyncio.run(run()) == ["reconnect", "escalate"]
+
+
+def test_recovery_does_not_manipulate_minecraft_during_shutdown(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng._ending = True
+        calls = []
+
+        async def focus():
+            calls.append("focus")
+            return True
+
+        monkeypatch.setattr(mm, "focus_and_click_minecraft", focus)
+        await eng._recover_visual()
+        return calls
+
+    assert asyncio.run(run()) == []
+
+
+def test_backup_scene_not_switched_during_shutdown(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng._ending = True
+        eng._visual_in_backup = False
+        await eng._enter_backup_mode()
+        return eng._visual_in_backup
+
+    assert asyncio.run(run()) is False
+
+
+def test_return_from_backup_not_switched_during_shutdown(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng._ending = True
+        eng._visual_in_backup = True
+        eng._visual_scene = "Minecraft"
+        await eng._maybe_return_from_backup(force=True)
+        return eng._visual_in_backup
+
+    assert asyncio.run(run()) is True
+
+
+def test_camera_client_task_exits_during_shutdown(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng._ending = True
+        called = False
+
+        async def ensure():
+            nonlocal called
+            called = True
+            return True
+
+        async def port_open(_port):
+            return True
+
+        monkeypatch.setattr(mm, "port_open", port_open)
+        monkeypatch.setattr(mm, "ensure_minecraft_client_connected", ensure)
+        await eng._ensure_camera_client_loop()
+        return called
+
+    assert asyncio.run(run()) is False
+
+
+def test_preventive_reconnect_cannot_escalate_during_shutdown(monkeypatch):
+    async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
+        eng = _engine()
+        eng._preventive_next_at = 1.0
+        calls = []
+
+        async def connected():
+            return True
+
+        async def reconnect():
+            calls.append("reconnect")
+            eng._ending = True
+            return False
+
+        async def escalate():
+            calls.append("escalate")
+            return True
+
+        monkeypatch.setattr(mm, "verify_multiplayer_connected", connected)
+        monkeypatch.setattr(mm, "disconnect_reconnect_minecraft_client", reconnect)
+        eng._run_visual_recovery_locked = escalate
+
+        await eng._preventive_reconnect_loop()
+        return calls
+
+    assert asyncio.run(run()) == ["reconnect"]
+
+
+def test_preventive_reconnect_task_shuts_down_cleanly(monkeypatch):
+    async def run():
+        monkeypatch.setenv("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "60")
+        eng = _engine()
+        eng._ending = True
+        await eng._preventive_reconnect_loop()
+        return True
+
+    assert asyncio.run(run()) is True
+
+
+def test_follow_mika_allows_automatic_camera_behavior():
+    eng = _engine()
+    eng.follow_mika()
+
+    assert eng.camera_mode == mm.FOLLOW_MIKA
+    assert eng._camera_follow_allowed()
+    assert eng.cam_focus == "mika"
+
+
+def test_free_roam_prevents_forced_mika_reattachment(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng.camera_on = True
+        eng.camera_player = "SelwynBuilds"
+        eng.cam_focus = "mika"
+        eng.enter_free_roam()
+        calls = []
+
+        async def rcon(cmd, reply=False):
+            calls.append(cmd)
+            return "failed"
+
+        monkeypatch.setattr(mm, "rcon_command", rcon)
+        await eng._camera_guard()
+        return calls
+
+    assert asyncio.run(run()) == []
+
+
+def test_follow_luna_and_return_to_mika():
+    eng = _engine()
+
+    eng.follow_luna()
+    assert eng.camera_mode == mm.FOLLOW_LUNA
+    assert eng.cam_focus == "luna"
+    eng.return_to_mika()
+    assert eng.camera_mode == mm.FOLLOW_MIKA
+    assert eng.cam_focus == "mika"
+
+
+def test_manual_detach_state_persists():
+    eng = _engine()
+    eng.enter_free_roam()
+    eng._camera_tick = None if False else eng._camera_tick
+    assert eng.camera_mode == mm.FREE_ROAM
+
+
+def test_directed_view_temporarily_overrides_follow():
+    eng = _engine()
+    eng.set_camera_mode(mm.DIRECTED_VIEW)
+
+    assert not eng._camera_follow_allowed()
+    assert eng._camera_directed_until > 0
+
+
+def test_camera_intent_detects_fly_around():
+    eng = _engine()
+
+    intent = eng._camera_intent("fly around")
+
+    assert intent and intent["kind"] in ("orbit", "overview")
+
+
+def test_resolves_named_landmark_and_alias_dragon():
+    eng = _engine()
+    eng.projects.state["base"] = [100, 64, 200]
+    eng.projects.state["builds"] = [{
+        "title": "Dragon Statue",
+        "who": "mika",
+        "done": True,
+        "frame": [[0, 20, -30], [0, 8, 0]],
+    }]
+
+    target = eng._resolve_landmark("show the dragon")
+
+    assert target and target["name"] == "Dragon Statue"
+    assert target["center"] == (100.0, 72.0, 200.0)
+
+
+def test_resolves_latest_build_where_possible():
+    eng = _engine()
+    eng.projects.state["base"] = [0, 64, 0]
+    eng.projects.state["builds"] = [
+        {"title": "Old Tower", "who": "ana", "done": True, "frame": [[0, 10, -20], [0, 4, 0]]},
+        {"title": "New Park", "who": "bob", "done": True, "frame": [[20, 10, -20], [20, 4, 0]]},
+    ]
+
+    target = eng._resolve_landmark("show the latest build")
+
+    assert target and target["name"] == "New Park"
+
+
+def test_above_it_uses_previous_camera_target():
+    eng = _engine()
+    eng._camera_target_ref = {"name": "Dragon", "center": (1, 2, 3), "radius": 20}
+
+    assert eng._resolve_landmark("go above it")["name"] == "Dragon"
+
+
+def test_relative_positions_are_distinct():
+    eng = _engine()
+    target = {"name": "Tower", "center": (0, 64, 0), "radius": 30}
+
+    above = eng._camera_viewpoint(target, "above")[0]
+    below = eng._camera_viewpoint(target, "below")[0]
+    front = eng._camera_viewpoint(target, "front")[0]
+    back = eng._camera_viewpoint(target, "behind")[0]
+
+    assert above != below
+    assert front != back
+    assert above[1] > below[1]
+
+
+def test_orbit_generates_bounded_waypoints():
+    eng = _engine()
+    target = {"name": "Castle", "center": (0, 64, 0), "radius": 25}
+
+    points = eng._orbit_waypoints(target)
+
+    assert len(points) == 4
+    assert all(abs(camera[0][0]) <= 90 and abs(camera[0][2]) <= 90 for camera in points)
+
+
+def test_free_city_tour_stays_inside_known_area():
+    eng = _engine()
+    eng.projects.state["base"] = [10, 64, 20]
+
+    city = eng._resolve_landmark("show us around the city")
+    points = eng._orbit_waypoints(city)
+
+    assert city and city["name"] == "city"
+    assert all(abs(camera[0][0] - 10) <= 90 and abs(camera[0][2] - 20) <= 90 for camera in points)
+
+
+def test_camera_request_does_not_move_mika_accidentally(monkeypatch):
+    async def run():
+        eng = _live_engine(monkeypatch)
+        commands = []
+
+        async def command(cid, command):
+            commands.append((cid, command))
+            return True
+
+        eng._command = command
+        eng.enqueue("viewer", "show us the city")
+        await asyncio.sleep(0)
+        return commands
+
+    assert asyncio.run(run()) == []
+
+
+def test_explicit_character_movement_distinguished_from_camera():
+    eng = _engine()
+
+    assert eng._camera_intent("Mika go to the dragon") is None
+
+
+def test_watchdog_does_not_cancel_free_roam():
+    eng = _engine()
+    eng.enter_free_roam()
+    assert not eng._backend_visually_active() or eng.camera_mode == mm.FREE_ROAM
+
+
+def test_recovery_preserves_valid_camera_mode(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng.enter_free_roam()
+
+        async def recovered():
+            return True
+
+        eng._run_visual_recovery_locked = recovered
+        await eng._recover_visual()
+        return eng.camera_mode
+
+    assert asyncio.run(run()) == mm.FREE_ROAM
+
+
+def test_camera_navigation_shutdown_does_no_work(monkeypatch):
+    async def run():
+        eng = _engine()
+        eng._ending = True
+        moved = []
+
+        async def move(camera, look):
+            moved.append(camera)
+
+        eng._move_camera_to = move
+        await eng._handle_camera_request({"kind": "overview", "target": {"name": "city", "center": (0, 64, 0), "radius": 20}})
+        return moved
+
+    assert asyncio.run(run()) == []
+
+
+def test_startup_grace_period_blocks_visual_recovery(monkeypatch):
+    eng = _engine()
+    eng._visual_grace("startup")
+
+    assert eng._visual_grace_active()
+
+
+def test_reconnect_recovery_sets_grace_period(monkeypatch):
+    async def run():
+        eng = _engine()
+        calls = []
+
+        async def focus():
+            return False
+
+        async def reconnect():
+            calls.append("reconnect")
+            return False
+
+        async def restart():
+            calls.append("restart")
+            return False
+
+        monkeypatch.setattr(mm, "focus_and_click_minecraft", focus)
+        monkeypatch.setattr(mm, "disconnect_reconnect_minecraft_client", reconnect)
+        monkeypatch.setattr(mm, "restart_minecraft_camera_client", restart)
+        await eng._run_visual_recovery_locked()
+        return eng._visual_grace_active(), calls
+
+    active, calls = asyncio.run(run())
+    assert active
+    assert calls == ["reconnect", "restart"]
 
 
 class FakeLink:

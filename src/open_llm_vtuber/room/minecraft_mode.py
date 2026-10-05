@@ -89,11 +89,13 @@ from .minecraft_visual_watchdog import (
     RecoveryStateMachine,
     VisualFreezeDetector,
     decode_gray,
+    disconnect_reconnect_minecraft_client,
+    ensure_minecraft_client_connected,
     focus_and_click_minecraft,
     minecraft_window_exists,
     parse_crop,
-    reload_minecraft_chunks,
-    restart_minecraft_client_from_env,
+    restart_minecraft_camera_client,
+    verify_multiplayer_connected,
     watchdog_enabled,
 )
 
@@ -365,6 +367,12 @@ CHASE_EVERY = 4  # her position is read from the server every 4 frames (5 a seco
 CHASE_EASE = 0.12  # faster than the director: she flies 18 blocks a second
 CHASE_TURN = 0.25  # how quickly the camera swings round when she turns
 CAMERA_REFRESH = 20.0  # spectate again this often (a respawn ends it)
+FOLLOW_MIKA = "FOLLOW_MIKA"
+FOLLOW_LUNA = "FOLLOW_LUNA"
+FREE_ROAM = "FREE_ROAM"
+DIRECTED_VIEW = "DIRECTED_VIEW"
+OVERVIEW = "OVERVIEW"
+FOLLOW_MODES = {FOLLOW_MIKA, FOLLOW_LUNA}
 DIRECTOR = "Director"  # a plain command from this name runs right away in Mindcraft (no AI call)
 # Mindcraft's automatic behaviours. elbow_room fought our teleports (the HUD
 # showed "mode:elbow_room" for minutes) and idle_staring kept swinging the
@@ -624,6 +632,10 @@ class MinecraftEngine:
         # Default: through Mika's eyes (first person). "behind" and "director"
         # still need work on stream (her face turned to the camera).
         self.camera_style = (os.environ.get("VR_MINECRAFT_CAMERA", "") or self.cast[0]).strip().lower()
+        self.camera_mode = FOLLOW_MIKA
+        self._camera_previous_mode = FOLLOW_MIKA
+        self._camera_directed_until = 0.0
+        self._camera_target_ref: Optional[dict[str, Any]] = None
         self._chase_yaw: Optional[float] = None
         self._shot: Optional[tuple[tuple[float, float, float], tuple[float, float, float]]] = None  # target
         self._pose: Optional[list[float]] = None  # where the camera stand is now: x, y, z, lx, ly, lz
@@ -734,11 +746,17 @@ class MinecraftEngine:
         self._visual_recovery = RecoveryStateMachine(
             int(os.environ.get("MINECRAFT_BACKUP_AFTER_FAILURES", "2") or 2)
         )
+        self._visual_source_explicit = bool(os.environ.get("MINECRAFT_OBS_SOURCE", "").strip())
         self._visual_source = os.environ.get("MINECRAFT_OBS_SOURCE", "").strip()
         self._visual_scene = ""
         self._visual_in_backup = False
         self._visual_healthy_checks = 0
         self._visual_last_switch = 0.0
+        self._visual_grace_until = 0.0
+        self._visual_diag_at = 0.0
+        self._visual_recovery_lock = asyncio.Lock()
+        self._preventive_reconnect_seconds = self._preventive_reconnect_interval()
+        self._preventive_next_at = 0.0
         self._last_latency: dict[str, float] = {}
         from .minecraft_net_show import NetShow
 
@@ -855,6 +873,12 @@ class MinecraftEngine:
             _soon(self._place_there(block, count, author))
             heard += (f" ({self.names[self._camera_girl()]} is placing {count} {block.replace('_', ' ')} by hand on the "
                       "block she is looking at, right now: no command needed.)")
+            acted = True
+        elif camera_intent := self._camera_intent(text):
+            ack = f"{author}, sure, let's take a look!"
+            ack_suppresses_reply = True
+            _soon(self._handle_camera_request(camera_intent, author))
+            heard += " (The stream camera is moving to show this right now. This is a camera move, not a command for your character.)"
             acted = True
         elif (main or trim) and self._restyle_fits(text):
             # "make it more colorful", "add gold on it", "build me a golden tower" while
@@ -1156,7 +1180,9 @@ class MinecraftEngine:
                 self._supervised("mc-deliver", self._deliver_loop),
                 self._supervised("mc-fidget", self._fidget_loop),
                 self._supervised("mc-watchdog", self._watchdog),
+                self._supervised("mc-camera-client", self._ensure_camera_client_loop),
                 self._supervised("mc-visual-watchdog", self._visual_watchdog_loop),
+                self._supervised("mc-preventive-reconnect", self._preventive_reconnect_loop),
                 self._supervised("mc-camera", self._camera_loop),
                 self._supervised("mc-camera-follow", self._camera_follow),
                 self._supervised("mc-net", self._net_loop),
@@ -1488,6 +1514,102 @@ class MinecraftEngine:
                 await asyncio.to_thread(stop_one, "mindcraft", 10.0)
                 since = time.time()
 
+    async def _ensure_camera_client_loop(self) -> None:
+        """Make sure the real graphical Minecraft camera client is in the local server."""
+        if os.environ.get("MINECRAFT_CAMERA_CLIENT_AUTO", "1").strip().lower() in ("0", "false", "off", "no"):
+            return
+        while not await port_open(self.port):
+            if self._ending:
+                return
+            await asyncio.sleep(3.0)
+        if self._ending:
+            return
+        self._visual_grace("startup")
+        ok = await ensure_minecraft_client_connected()
+        if self._ending:
+            return
+        if ok:
+            logger.info("Minecraft: graphical camera client is connected")
+            self._reset_preventive_reconnect_timer()
+        else:
+            logger.warning("Minecraft: graphical camera client could not be connected automatically")
+
+    def _preventive_reconnect_interval(self) -> float:
+        raw = os.environ.get("MINECRAFT_PREVENTIVE_RECONNECT_MINUTES", "").strip()
+        if not raw:
+            return 0.0
+        try:
+            minutes = float(raw)
+        except ValueError:
+            return 0.0
+        return minutes * 60.0 if minutes > 0 else 0.0
+
+    def _reset_preventive_reconnect_timer(self) -> None:
+        if self._preventive_reconnect_seconds > 0:
+            self._preventive_next_at = time.time() + self._preventive_reconnect_seconds
+
+    def _visual_grace(self, reason: str = "") -> None:
+        seconds = max(0.0, float(os.environ.get("MINECRAFT_WATCHDOG_GRACE_SECONDS", "45") or 45))
+        self._visual_grace_until = max(self._visual_grace_until, time.time() + seconds)
+        if reason:
+            logger.info(f"WATCHDOG visual grace {seconds:.0f}s ({reason})")
+
+    def _visual_grace_active(self) -> bool:
+        return time.time() < self._visual_grace_until
+
+    async def _preventive_reconnect_loop(self) -> None:
+        if self._preventive_reconnect_seconds <= 0:
+            return
+        minutes = self._preventive_reconnect_seconds / 60.0
+        logger.info(f"Preventive reconnect due after {minutes:g} minutes")
+        if self._preventive_next_at <= 0:
+            self._reset_preventive_reconnect_timer()
+        while True:
+            if self._ending:
+                return
+            now = time.time()
+            wait = self._preventive_next_at - now
+            if wait > 0:
+                await asyncio.sleep(min(30.0, max(1.0, wait)))
+                continue
+            if self._visual_recovery_lock.locked() or self._visual_recovery.in_progress:
+                await asyncio.sleep(30.0)
+                continue
+            if not await verify_multiplayer_connected():
+                await asyncio.sleep(30.0)
+                continue
+            if not self._visual_recovery.start_recovery(time.time()):
+                await asyncio.sleep(30.0)
+                continue
+            success = False
+            async with self._visual_recovery_lock:
+                try:
+                    if self._ending:
+                        return
+                    logger.warning("Preventive Minecraft reconnect starting")
+                    reconnected = await disconnect_reconnect_minecraft_client()
+                    if self._ending:
+                        return
+                    if reconnected and self.camera_on:
+                        await self._spectate()
+                    success = reconnected and await self._verify_visual_movement()
+                    if self._ending:
+                        return
+                    if success:
+                        logger.warning("Preventive reconnect successful")
+                        self._reset_preventive_reconnect_timer()
+                    else:
+                        logger.warning("Preventive reconnect failed; escalating recovery")
+                        if self._ending:
+                            return
+                        success = await self._run_visual_recovery_locked()
+                        if success:
+                            self._reset_preventive_reconnect_timer()
+                finally:
+                    self._visual_recovery.finish_recovery(success, time.time())
+            if not success:
+                await asyncio.sleep(30.0)
+
     async def _visual_watchdog_loop(self) -> None:
         """OBS-rendered visual health is separate from server/bot health."""
         if not watchdog_enabled():
@@ -1501,21 +1623,43 @@ class MinecraftEngine:
         quality = int(os.environ.get("MINECRAFT_WATCHDOG_QUALITY", "50") or 50)
         while True:
             await asyncio.sleep(interval)
+            if self._ending:
+                return
             try:
+                current_scene = await obs_control.current_program_scene()
                 await self._update_health_state()
-                if not self._visual_source:
-                    self._visual_scene = await obs_control.current_program_scene()
-                    self._visual_source = self._visual_scene
+                if not self._visual_source_explicit and not self._visual_in_backup and current_scene:
+                    if self._visual_source and self._visual_source != current_scene:
+                        logger.warning(
+                            f"WATCHDOG OBS source changed from {self._visual_source!r} to current scene {current_scene!r}"
+                        )
+                    self._visual_source = current_scene
+                    self._visual_scene = current_scene
+                elif not self._visual_source:
+                    self._visual_scene = current_scene
+                    self._visual_source = current_scene
                 elif not self._visual_scene:
-                    self._visual_scene = await obs_control.current_program_scene()
+                    self._visual_scene = current_scene
                 frame = await obs_control.capture_obs_frame(
                     width, height, quality, source_name=self._visual_source
                 )
                 gray = decode_gray(frame, crop)
                 sample = self._visual_detector.update(gray, expect_activity=self._backend_visually_active())
+                self._log_visual_diagnostics(
+                    sample.score,
+                    current_scene=current_scene,
+                    source=self._visual_source,
+                    width=width,
+                    height=height,
+                    frame=gray,
+                    strikes=sample.strikes,
+                )
                 self.health_state.visual_healthy = not sample.unhealthy
                 self.view["health"] = self.health_state.as_dict()
                 if sample.unhealthy:
+                    if self._ending or self._visual_grace_active():
+                        self._visual_detector.reset()
+                        continue
                     logger.warning("WATCHDOG visual unhealthy")
                     await self._recover_visual()
                 elif sample.strikes:
@@ -1530,6 +1674,34 @@ class MinecraftEngine:
                 raise
             except Exception as exc:
                 logger.debug(f"WATCHDOG visual check failed: {exc}")
+
+    def _log_visual_diagnostics(
+        self,
+        diff: float,
+        current_scene: str,
+        source: str,
+        width: int,
+        height: int,
+        frame: Any,
+        strikes: int,
+    ) -> None:
+        now = time.time()
+        if diff != 0.0 and not strikes and now - self._visual_diag_at < 60:
+            return
+        self._visual_diag_at = now
+        try:
+            crop_h, crop_w = frame.shape[:2]
+            pixel_mean = float(frame.mean())
+            checksum = int(frame.astype("uint64").sum() % 1_000_000_007)
+        except Exception:
+            crop_h = crop_w = checksum = 0
+            pixel_mean = 0.0
+        logger.warning(
+            "WATCHDOG frame diagnostics "
+            f"scene={current_scene!r} source={source!r} size={width}x{height} "
+            f"crop={crop_w}x{crop_h} mean={pixel_mean:.2f} checksum={checksum} "
+            f"diff={diff:.2f} freeze_strikes={strikes}"
+        )
 
     async def _update_health_state(self) -> None:
         now = time.time()
@@ -1562,59 +1734,121 @@ class MinecraftEngine:
 
         crop = parse_crop(os.environ.get("MINECRAFT_WATCHDOG_CROP", ""))
         wait = max(1.0, float(os.environ.get("MINECRAFT_RECOVERY_VERIFY_SECONDS", "5") or 5))
+        needed = max(1, int(os.environ.get("MINECRAFT_RETURN_HEALTHY_CHECKS", "3") or 3))
         width = int(os.environ.get("MINECRAFT_WATCHDOG_WIDTH", "320") or 320)
         height = int(os.environ.get("MINECRAFT_WATCHDOG_HEIGHT", "180") or 180)
         quality = int(os.environ.get("MINECRAFT_WATCHDOG_QUALITY", "50") or 50)
-        a = decode_gray(await obs_control.capture_obs_frame(width, height, quality, source_name=self._visual_source), crop)
-        await asyncio.sleep(wait)
-        b = decode_gray(await obs_control.capture_obs_frame(width, height, quality, source_name=self._visual_source), crop)
         from .minecraft_visual_watchdog import diff_score
 
-        score = diff_score(a, b)
-        ok = score >= self._visual_detector.threshold
-        logger.info(f"WATCHDOG recovery verify diff={score:.2f} {'healthy' if ok else 'still frozen'}")
-        if ok:
+        previous = decode_gray(
+            await obs_control.capture_obs_frame(width, height, quality, source_name=self._visual_source), crop
+        )
+        healthy = 0
+        for _ in range(needed):
+            await asyncio.sleep(wait)
+            current = decode_gray(
+                await obs_control.capture_obs_frame(width, height, quality, source_name=self._visual_source), crop
+            )
+            score = diff_score(previous, current)
+            previous = current
+            if score >= self._visual_detector.threshold:
+                healthy += 1
+            else:
+                healthy = 0
+            logger.info(
+                f"WATCHDOG visual recovery verification diff={score:.2f} healthy={healthy}/{needed}"
+            )
+            if healthy >= needed:
+                self._visual_detector.reset()
+                self.health_state.visual_healthy = True
+                return True
+        if healthy >= needed:
             self._visual_detector.reset()
             self.health_state.visual_healthy = True
-        return ok
+            return True
+        return False
 
     async def _recover_visual(self) -> None:
-        step = self._visual_recovery.visual_failed()
-        if step.value:
-            logger.warning("WATCHDOG focusing Minecraft")
+        if self._ending:
+            return
+        now = time.time()
+        if self._visual_recovery_lock.locked() or not self._visual_recovery.start_recovery(now):
+            logger.warning("WATCHDOG recovery skipped: already running or cooling down")
+            return
+        success = False
+        async with self._visual_recovery_lock:
+            try:
+                if self._ending:
+                    return
+                success = await self._run_visual_recovery_locked()
+                if success:
+                    self._reset_preventive_reconnect_timer()
+            except Exception as exc:
+                logger.warning(f"WATCHDOG recovery failed: {exc}")
+            finally:
+                self._visual_recovery.finish_recovery(success, time.time())
+
+    async def _run_visual_recovery_locked(self) -> bool:
+        """Run the shared visual recovery ladder while the recovery lock is held."""
+        if self._ending:
+            return False
+        logger.warning("WATCHDOG focusing Minecraft")
         clicked = await focus_and_click_minecraft()
+        if self._ending:
+            return False
         if clicked:
             logger.warning("WATCHDOG click recovery sent")
         recovered = clicked and await self._verify_visual_movement()
+        if self._ending:
+            return False
         step = self._visual_recovery.focus_result(recovered)
         if recovered:
-            logger.warning("WATCHDOG recovery verified")
+            logger.warning("WATCHDOG visual recovered after focus/click")
             await self._maybe_return_from_backup(force=True)
-            return
-        if step.name == "CLIENT_RELOAD":
-            logger.warning("WATCHDOG reconnect attempt 1: reloading Minecraft chunks/camera")
-            try:
-                await reload_minecraft_chunks()
-                if self.camera_on:
-                    await self._spectate()
-            except Exception as exc:
-                logger.debug(f"WATCHDOG client reload failed: {exc}")
-            recovered = await self._verify_visual_movement()
-            step = self._visual_recovery.reload_result(recovered)
+            return True
+        if step.name == "DISCONNECT_RECONNECT":
+            if self._ending:
+                return False
+            self._visual_grace("disconnect/reconnect")
+            logger.warning("WATCHDOG disconnect/reconnect recovery starting")
+            connected = await disconnect_reconnect_minecraft_client()
+            if self._ending:
+                return False
+            if connected and self.camera_on:
+                await self._spectate()
+            recovered = connected and await self._verify_visual_movement()
+            if self._ending:
+                return False
+            step = self._visual_recovery.reconnect_result(recovered)
             if recovered:
-                logger.warning("WATCHDOG recovery verified")
+                logger.warning("WATCHDOG visual recovered after disconnect/reconnect")
                 await self._maybe_return_from_backup(force=True)
-                return
+                return True
         if step.name == "BACKUP":
+            if self._ending:
+                return False
+            self._visual_grace("backup scene")
             await self._enter_backup_mode()
-            logger.warning("WATCHDOG reconnect attempt 2: Minecraft client restart hook")
-            if await restart_minecraft_client_from_env() and await self._verify_visual_movement():
-                self._visual_recovery.recovered()
+            if self._ending:
+                return False
+            logger.warning("WATCHDOG full graphical client restart started")
+            self._visual_grace("graphical client restart")
+            connected = await restart_minecraft_camera_client()
+            if self._ending:
+                return False
+            if connected and self.camera_on:
+                await self._spectate()
+            recovered = connected and await self._verify_visual_movement()
+            if recovered:
+                logger.warning("WATCHDOG visual recovered after full graphical client restart")
                 await self._maybe_return_from_backup(force=True)
-                return
+                return True
             self._visual_recovery.backup_failed()
+        return False
 
     async def _enter_backup_mode(self) -> None:
+        if self._ending:
+            return
         if self._visual_in_backup:
             return
         scene = os.environ.get("MINECRAFT_BACKUP_SCENE", "").strip() or os.environ.get("OBS_BACKUP_SCENE", "").strip()
@@ -1643,6 +1877,8 @@ class MinecraftEngine:
             logger.warning(f"WATCHDOG backup scene switch failed: {exc}")
 
     async def _maybe_return_from_backup(self, force: bool = False) -> None:
+        if self._ending:
+            return
         if not self._visual_in_backup:
             return
         cooldown = float(os.environ.get("MINECRAFT_BACKUP_COOLDOWN", "20") or 20)
@@ -1662,6 +1898,7 @@ class MinecraftEngine:
             self._visual_in_backup = False
             self._visual_last_switch = time.time()
             self._visual_recovery.recovered()
+            self._visual_grace("OBS scene return")
             logger.warning("WATCHDOG returning to Minecraft mode")
         except Exception as exc:
             logger.warning(f"WATCHDOG return to Minecraft scene failed: {exc}")
@@ -1987,6 +2224,192 @@ class MinecraftEngine:
         if self.camera_on and cid == self.cam_focus:
             self._cam_sent_at = 0.0  # spectate again on the next camera tick
 
+    # ------------------------------------------------------------ camera modes and navigation
+    def set_camera_mode(self, mode: str, target: str = "") -> None:
+        mode = mode if mode in {FOLLOW_MIKA, FOLLOW_LUNA, FREE_ROAM, DIRECTED_VIEW, OVERVIEW} else FOLLOW_MIKA
+        self.camera_mode = mode
+        if mode in FOLLOW_MODES:
+            self.cam_focus = target or ("luna" if mode == FOLLOW_LUNA and "luna" in self.names else self.cast[0])
+            self._cam_sent_at = 0.0
+            self._cam_focus_at = time.time()
+        elif mode in (DIRECTED_VIEW, OVERVIEW):
+            self._camera_directed_until = time.time() + float(os.environ.get("MINECRAFT_DIRECTED_CAMERA_SECONDS", "45") or 45)
+        self.view["camera_mode"] = self.camera_mode
+
+    def follow_mika(self) -> None:
+        self.set_camera_mode(FOLLOW_MIKA, self.cast[0])
+
+    def follow_luna(self) -> None:
+        target = "luna" if "luna" in self.names else self.cast[-1]
+        self.set_camera_mode(FOLLOW_LUNA, target)
+
+    def return_to_mika(self) -> None:
+        self.follow_mika()
+
+    def return_to_luna(self) -> None:
+        self.follow_luna()
+
+    def enter_free_roam(self) -> None:
+        self.set_camera_mode(FREE_ROAM)
+        self._shot = None
+        self._cam_ready = False
+        logger.info("Minecraft camera: FREE_ROAM mode")
+
+    def camera_overview(self) -> None:
+        self.set_camera_mode(OVERVIEW)
+
+    def _mode_follow_target(self) -> str:
+        if self.camera_mode == FOLLOW_LUNA:
+            return "luna" if "luna" in self.names else self.cast[-1]
+        return self.cast[0]
+
+    def _camera_follow_allowed(self) -> bool:
+        return self.camera_mode in FOLLOW_MODES
+
+    def _camera_intent(self, text: str) -> Optional[dict[str, Any]]:
+        low = (text or "").lower()
+        if re.fullmatch(r"\s*0\s*", low):
+            return {"kind": "follow", "target": self.cast[0]}
+        if re.fullmatch(r"\s*9\s*", low):
+            return {"kind": "follow", "target": "luna" if "luna" in self.names else self.cast[-1]}
+        if re.fullmatch(r"\s*8\s*", low):
+            return {"kind": "free"}
+        if not re.search(r"\b(show|look|view|camera|fly around|circle|orbit|tour|aerial|above|under|below|front|behind|visit|go see|check out)\b", low):
+            return None
+        if re.search(r"\b(mika|luna)\b.{0,18}\b(go|stand|walk|fly|move)\b", low):
+            return None  # explicit character movement, not camera movement
+        if re.search(r"\b(free roam|let me fly|manual camera|astral)\b", low):
+            return {"kind": "free"}
+        if re.search(r"\b(aerial|overview|bird'?s eye|top view|city|show us around|show around|tour)\b", low):
+            return {"kind": "overview", "target": self._resolve_landmark(text)}
+        orbit = bool(re.search(r"\b(fly around|circle|orbit|show the whole|whole thing)\b", low))
+        rel = self._relative_camera_kind(low)
+        target = self._resolve_landmark(text)
+        if rel or target or orbit:
+            return {"kind": "orbit" if orbit else "view", "target": target, "relative": rel}
+        return None
+
+    def _relative_camera_kind(self, low: str) -> str:
+        for name, pattern in {
+            "above": r"\b(above|over|top|aerial|bird'?s eye)\b",
+            "below": r"\b(under|below|underneath)\b",
+            "front": r"\b(front|from the front)\b",
+            "behind": r"\b(behind|back side|from behind)\b",
+            "left": r"\bleft side\b",
+            "right": r"\bright side\b",
+            "closer": r"\bcloser|nearer\b",
+            "farther": r"\bfarther|further|zoom out|wide\b",
+        }.items():
+            if re.search(pattern, low):
+                return name
+        return ""
+
+    def _landmarks(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        base = self.projects.state.get("base") or (0, 64, 0)
+        bx, by, bz = (float(base[0]), float(base[1]), float(base[2]))
+        out.append({"name": "city", "aliases": ["city", "world", "town", "everything"], "center": (bx, by, bz), "radius": 90.0})
+        for cid, name in self.names.items():
+            if cid in self._pos:
+                out.append({"name": f"{name}'s area", "aliases": [name.lower(), f"{name.lower()} area", f"{name.lower()}'s area"], "center": self._pos[cid], "owner": cid, "radius": 18.0})
+        for build in self.projects.state.get("builds", []):
+            if not (build.get("done") and build.get("frame")):
+                continue
+            try:
+                view, focus = build["frame"]
+                center = (bx + float(focus[0]), by + float(focus[1]), bz + float(focus[2]))
+                camera = (bx + float(view[0]), by + float(view[1]), bz + float(view[2]))
+                radius = max(12.0, min(80.0, ((camera[0] - center[0]) ** 2 + (camera[2] - center[2]) ** 2) ** 0.5))
+            except Exception:
+                continue
+            title = str(build.get("title") or "build")
+            words = [w for w in re.findall(r"[a-z0-9]{3,}", title.lower()) if w not in {"the", "for", "build"}]
+            aliases = [title.lower(), *words]
+            owner = str(build.get("who") or "").lower()
+            if owner:
+                aliases.append(f"{owner} build")
+            out.append({"name": title, "aliases": aliases, "center": center, "radius": radius, "owner": owner, "build": build})
+        return out
+
+    def _resolve_landmark(self, text: str) -> Optional[dict[str, Any]]:
+        low = (text or "").lower()
+        if re.search(r"\b(it|that|there|this)\b", low) and self._camera_target_ref:
+            return self._camera_target_ref
+        landmarks = self._landmarks()
+        if re.search(r"\b(latest|recent|last|previous)\b", low):
+            builds = [landmark for landmark in landmarks if landmark.get("build")]
+            return builds[-1] if builds else (self._camera_target_ref or None)
+        best, score = None, 0
+        words = set(re.findall(r"[a-z0-9]{3,}", low))
+        for lm in landmarks:
+            aliases = [str(a).lower() for a in lm.get("aliases", [])]
+            hit = max([3 for a in aliases if a and a in low] + [len(words & set(re.findall(r"[a-z0-9]{3,}", a))) for a in aliases] + [0])
+            if hit > score:
+                best, score = lm, hit
+        return best if score else (self._camera_target_ref if re.search(r"\b(above|under|below|front|behind|circle|around|orbit)\b", low) else None)
+
+    def _camera_viewpoint(self, landmark: dict[str, Any], relation: str = "") -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+        cx, cy, cz = landmark.get("center") or (0.0, 80.0, 0.0)
+        radius = float(landmark.get("radius") or 24.0)
+        height = max(8.0, radius * 0.45)
+        offsets = {
+            "above": (0.0, radius * 0.35, 0.1),
+            "below": (0.0, -min(8.0, radius * 0.25), radius * 0.7),
+            "front": (0.0, height, -radius),
+            "behind": (0.0, height, radius),
+            "left": (-radius, height, 0.0),
+            "right": (radius, height, 0.0),
+            "closer": (0.0, height * 0.7, -radius * 0.55),
+            "farther": (0.0, height * 1.4, -radius * 1.7),
+        }
+        dx, dy, dz = offsets.get(relation, (0.0, height, -radius))
+        y = max(5.0, cy + dy)
+        return (cx + dx, y, cz + dz), (cx, cy + 1.5, cz)
+
+    def _orbit_waypoints(self, landmark: dict[str, Any]) -> list[tuple[tuple[float, float, float], tuple[float, float, float]]]:
+        cx, cy, cz = landmark.get("center") or (0.0, 80.0, 0.0)
+        radius = min(90.0, max(18.0, float(landmark.get("radius") or 28.0)))
+        y = max(cy + 8.0, cy + radius * 0.35)
+        return [((cx + math.cos(a) * radius, y, cz + math.sin(a) * radius), (cx, cy + 1.5, cz)) for a in (0, math.pi / 2, math.pi, math.pi * 1.5)]
+
+    async def _move_camera_to(self, camera: tuple[float, float, float], look: tuple[float, float, float]) -> None:
+        if not self.camera_player or not self.camera_on:
+            return
+        await rcon_command(f"gamemode spectator {self.camera_player}")
+        await rcon_command(
+            f"tp {self.camera_player} {camera[0]:.1f} {camera[1]:.1f} {camera[2]:.1f} "
+            f"facing {look[0]:.1f} {look[1]:.1f} {look[2]:.1f}"
+        )
+
+    async def _handle_camera_request(self, intent: dict[str, Any], author: str = "") -> None:
+        if self._ending:
+            return
+        kind = intent.get("kind")
+        if kind == "follow":
+            self.follow_luna() if intent.get("target") == "luna" else self.follow_mika()
+            await self._spectate()
+            return
+        if kind == "free":
+            self.enter_free_roam()
+            return
+        target = intent.get("target") or self._resolve_landmark("latest")
+        if target is None:
+            target = {"name": "city", "center": tuple(self.projects.state.get("base") or (0, 70, 0)), "radius": 70.0}
+        self._camera_target_ref = target
+        self._camera_previous_mode = self.camera_mode
+        self.set_camera_mode(OVERVIEW if kind == "overview" else DIRECTED_VIEW)
+        self._visual_grace("camera navigation")
+        if kind in ("orbit", "overview"):
+            waypoints = self._orbit_waypoints(target)
+        else:
+            waypoints = [self._camera_viewpoint(target, intent.get("relative") or "")]
+        logger.info(f"Minecraft camera: {kind} target={target.get('name')} waypoints={len(waypoints)}")
+        for camera, look in waypoints:
+            if self._ending:
+                return
+            await self._move_camera_to(camera, look)
+            await asyncio.sleep(3.0 if len(waypoints) > 1 else 0.5)
+
     # ------------------------------------------------------------ real game camera
     async def _camera_loop(self) -> None:
         """Your own Minecraft as the camera: spectator, through her eyes."""
@@ -2027,6 +2450,13 @@ class MinecraftEngine:
             logger.info(f"Minecraft: {self.camera_player} left, back to the web views")
         if not self.camera_on:
             return
+        if self.camera_mode == FREE_ROAM:
+            return
+        if self.camera_mode in (DIRECTED_VIEW, OVERVIEW) and time.time() < self._camera_directed_until:
+            return
+        if self.camera_mode in (DIRECTED_VIEW, OVERVIEW) and time.time() >= self._camera_directed_until:
+            self.enter_free_roam()
+            return
         # in the server list, or seen in the last 30 s (a list reply can miss a name)
         bots = [c for c in self.cast if self.names[c].lower() in online or time.time() - self._seen_at.get(c, 0) < 30]
         if not bots:
@@ -2037,15 +2467,19 @@ class MinecraftEngine:
         if self.camera_style == "behind":
             # behind and above Mika (or VR_MINECRAFT_FOLLOW), looking past her
             follow = os.environ.get("VR_MINECRAFT_FOLLOW", "").strip().lower()
-            self.cam_focus = follow if follow in self.cast else self.cast[0]
+            target = self._mode_follow_target()
+            self.cam_focus = follow if follow in self.cast and self.camera_mode == FOLLOW_MIKA else target
             if self.cam_focus in bots:
                 if self._shot is None:
                     await self._chase_target()
                 if self._shot:
                     await self._ensure_stand(self._shot)
             return
-        if self.camera_style in bots and self.cam_focus != self.camera_style:
-            self.cam_focus = self.camera_style  # always through her eyes (Mika by default)
+        mode_target = self._mode_follow_target()
+        fixed_style = self.camera_style if self.camera_style in bots and self.camera_mode == FOLLOW_MIKA else mode_target
+        if fixed_style in bots and self.cam_focus != fixed_style:
+            self.cam_focus = fixed_style  # always through selected eyes (Mika by default)
+            self._cam_focus_at = time.time()
             self._cam_sent_at = 0.0
         if self.cam_focus not in bots:
             self.cam_focus = bots[0]
@@ -2060,6 +2494,8 @@ class MinecraftEngine:
         longer with Mika. Every 10 s: is your player really where she is? If
         not for 10 s, it is brought to her and attached again."""
         now = time.time()
+        if not self._camera_follow_allowed():
+            return
         if now - self._cam_guard_at < CAMERA_GUARD_EVERY or self.cam_focus not in self.cast:
             return
         self._cam_guard_at = now
@@ -2075,18 +2511,15 @@ class MinecraftEngine:
         if "passed" in reply.lower():
             self._cam_apart_since = 0.0
             return
-        apart = CAMERA_APART
         self._cam_apart_since = self._cam_apart_since or now
         if now - self._cam_apart_since < CAMERA_GUARD_EVERY:
             return
         self._cam_apart_since = 0.0
         name = self.names[self.cam_focus]
-        logger.warning(f"Minecraft camera: {self.camera_player} was more than {apart:.0f} blocks away from {name}, "
-                       "bringing the camera back to her")
-        await rcon_command(f"gamemode spectator {self.camera_player}")
-        await rcon_command(f"tp {self.camera_player} {name}")
-        await asyncio.sleep(1.0)
-        await self._spectate()
+        logger.warning(
+            f"Minecraft camera: {self.camera_player} detached from {name}; entering FREE_ROAM instead of forcing back"
+        )
+        self.enter_free_roam()
 
     async def _spectate(self) -> None:
         self._cam_sent_at = time.time()
@@ -2207,6 +2640,8 @@ class MinecraftEngine:
         while True:
             await asyncio.sleep(1.0 / CAMERA_HZ)
             tick += 1
+            if self.camera_mode == FREE_ROAM or self.camera_mode in (DIRECTED_VIEW, OVERVIEW):
+                continue
             if self.camera_on and self.camera_style == "behind" and tick % CHASE_EVERY == 0:
                 try:
                     await self._chase_target()
@@ -2228,6 +2663,8 @@ class MinecraftEngine:
 
     async def _camera_to(self, cid: str) -> None:
         """The one who talks gets the camera (held CAMERA_HOLD so it does not flicker)."""
+        if not self._camera_follow_allowed():
+            return
         if self.camera_style != "eyes":
             return  # a fixed camera (Mika's eyes, or the director) does not follow the speaker
         if not self.camera_on or cid == self.cam_focus or time.time() - self._cam_focus_at < CAMERA_HOLD:
